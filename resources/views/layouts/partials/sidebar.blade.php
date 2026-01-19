@@ -493,9 +493,9 @@
                 roleValue: {{ $u?->roleValue() }} |
                 <!-- isBE: {{ $isBE ? 'YES' : 'NO' }} -->
             </div>
-            <div class="mt-1 text-[11px] text-slate-400">
+            <!-- <div class="mt-1 text-[11px] text-slate-400">
                 roleValue: {{ $u?->roleValue() }} | badgeTarget: {{ (int)($badgeApprovalTarget ?? 0) }}
-            </div>
+            </div> -->
 
 
         </div>
