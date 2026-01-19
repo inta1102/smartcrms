@@ -1,0 +1,18 @@
+@import 'tailwindcss';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source '../**/*.blade.php';
+@source '../**/*.js';
+
+@theme {
+    --font-sans: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji',
+        'Segoe UI Symbol', 'Noto Color Emoji';
+}
+
+/* Stepper horizontal scrollbar lebih halus */
+.sp-stepper::-webkit-scrollbar { height: 10px; }
+.sp-stepper::-webkit-scrollbar-thumb { border-radius: 9999px; background: rgba(100,116,139,.35); }
+.sp-stepper::-webkit-scrollbar-track { background: rgba(241,245,249,1); border-radius: 9999px; }
+
+<style>[x-cloak]{ display:none !important; }</style>

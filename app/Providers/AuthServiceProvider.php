@@ -1,0 +1,114 @@
+<?php
+
+namespace App\Providers;
+
+use Illuminate\Foundation\Support\Providers\AuthServiceProvider as ServiceProvider;
+use App\Models\AoAgenda;
+use App\Policies\AoAgendaPolicy;
+use Illuminate\Support\Facades\Gate;
+use App\Models\OrgAssignment;
+use App\Enums\UserRole;
+
+
+class AuthServiceProvider extends ServiceProvider
+{
+    /**
+     * The policy mappings for the application.
+     *
+     * @var array<class-string, class-string>
+     */
+    protected $policies = [
+        \App\Models\LegalAction::class => \App\Policies\LegalActionPolicy::class,
+        \App\Models\NplCase::class => \App\Policies\NplCasePolicy::class,
+        \App\Models\LegalAdminChecklist::class => \App\Policies\LegalAdminChecklistPolicy::class,
+        \App\Models\CaseResolutionTarget::class => \App\Policies\CaseResolutionTargetPolicy::class, 
+        \App\Models\AoAgenda::class => \App\Policies\AoAgendaPolicy::class,
+        \App\Models\OrgAssignment::class => \App\Policies\OrgAssignmentPolicy::class,
+        \App\Models\NonLitigationAction::class => \App\Policies\NonLitigationActionPolicy::class,
+        \App\Models\LegalActionProposal::class => \App\Policies\LegalActionProposalPolicy::class,
+        
+    ];
+
+    /**
+     * Register any application services.
+     */
+    public function register(): void
+    {
+        //
+    }
+
+    /**
+     * Bootstrap any application services.
+     */
+    public function boot(): void
+    {
+        $this->registerPolicies();
+
+        Gate::define('viewHtMonitoring', function ($user) {
+        $level = strtolower(trim($user->roleValue()));
+        logger()->info('Gate viewHtMonitoring check', [
+            'user_id' => $user->id,
+            'roleValue' => $user->roleValue(),
+            'level' => $level,
+            'level_col' => $user->level ?? null,
+            'level_role_col' => $user->level_role ?? null,
+        ]);
+        // sesuaikan role yg boleh akses monitoring HT
+        return in_array($level, ['kbl', 'kti', 'ksl', 'ksr', 'tlr','ao','so','fe','be','tll','ro','kom','dir', 'direksi'], true);
+        });
+
+        Gate::policy(OrgAssignment::class, OrgAssignmentPolicy::class);
+
+        Gate::define('is-supervisor', function ($user) {
+            return $user->inRoles(['DIREKSI','KABAG','KBL','KBO','KTI','KBF','KSR','KSL','KSO','KSA','KSF','KSD','TLR','TL','TLL','TLF']);
+        });
+
+        Gate::define('manage-org-assignments', function ($user) {
+            return $user->inRoles(['KABAG','KBL','KBO','KTI','KBF','DIREKSI']);
+        });
+
+        Gate::define('viewDashboard', function ($user) {
+            // semua user login boleh
+            return true;
+
+            // atau kalau mau strict:
+            // return $user->inRoles(['KTI','KBL','KBO','TL','KSL','KSR','DIREKSI','KOM']);
+        });
+
+        Gate::define('viewLegalMenu', function ($user) {
+            return method_exists($user, 'canLegal') ? $user->canLegal() : false;
+        });
+
+        Gate::define('viewJobMonitor', function ($user) {
+            return $user->hasAnyRole(['KTI','TI']); // sesuai keputusan kamu
+        });
+
+        Gate::define('viewLegalDashboard', function ($user) {
+            $role = $user?->role(); // UserRole|null
+            if (!$role) return false;
+
+            return in_array($role, [
+                UserRole::BE,
+                UserRole::KBL,
+                UserRole::KABAG,
+                UserRole::DIR,
+                UserRole::DIREKSI,
+                UserRole::KOM,
+            ], true);
+        });
+
+         Gate::define('manage-legal-actions', function (User $user) {
+            $role = $user->role(); // UserRole|null
+            if (!$role) return false;
+
+            return in_array($role, [
+                UserRole::BE,
+                UserRole::KBL,
+                UserRole::KABAG,
+                UserRole::DIR,
+                UserRole::DIREKSI,
+                UserRole::KOM,
+            ], true);
+        });
+    }
+}

@@ -1,0 +1,526 @@
+@extends('layouts.app')
+
+@section('title', 'Import Data Kredit')
+
+@section('content')
+<div class="w-full max-w-2xl">
+
+    <div class="bg-white shadow-sm rounded-2xl border border-slate-100 px-6 py-6">
+
+        <h2 class="text-xl font-semibold text-slate-800 mb-1">
+            Import Data Kredit dari Excel
+        </h2>
+        <p class="text-xs text-slate-500 mb-4">
+            File yang didukung: <span class="font-semibold">.xls, .xlsx</span>
+            Pastikan header kolom sudah sesuai template.
+        </p>
+
+        {{-- ALERT: ERROR / STATUS --}}
+        @if ($errors->any())
+            <div class="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                <div class="font-semibold mb-1">Terjadi error</div>
+                <ul class="list-disc list-inside">
+                    @foreach ($errors->all() as $error)
+                        <li class="text-[13px]">{{ $error }}</li>
+                    @endforeach
+                </ul>
+            </div>
+        @endif
+
+        @if (session('status'))
+            <div class="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                {{ session('status') }}
+            </div>
+        @endif
+
+        @if (session('error'))
+            <div class="mb-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                {{ session('error') }}
+            </div>
+        @endif
+
+        {{-- INFO: IMPORT TERAKHIR --}}
+        <div class="mb-4 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
+            <div class="flex items-start justify-between gap-3">
+                <div>
+                    <div class="text-xs font-semibold text-slate-700">Import Terakhir</div>
+                    <div class="mt-0.5 text-[11px] text-slate-500">
+                        Untuk memastikan posisi yang sudah masuk (audit trail).
+                    </div>
+                </div>
+
+                @if (!empty($lastImport))
+                    @php
+                        $status = strtolower((string)($lastImport->status ?? ''));
+                        $badge = $status === 'success'
+                            ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                            : ($status === 'failed'
+                                ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-200'
+                                : 'bg-slate-100 text-slate-700 ring-1 ring-slate-200');
+                    @endphp
+                    <span class="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold {{ $badge }}">
+                        {{ $status ? strtoupper($status) : 'TERCATAT' }}
+                    </span>
+                @else
+                    <span class="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold bg-slate-100 text-slate-700 ring-1 ring-slate-200">
+                        BELUM PERNAH
+                    </span>
+                @endif
+            </div>
+
+            @php
+                $pos = $lastImport->position_date ?? null;
+                $at  = $lastImport->created_at ?? null;
+
+                $posText = $pos ? \Carbon\Carbon::parse($pos)->format('d M Y') : '-';
+                $atText  = $at ? \Carbon\Carbon::parse($at)->format('d M Y H:i') : '-';
+
+                $byName  = $lastImport->importer->name
+                    ?? $lastImport->created_by_name
+                    ?? $lastImport->created_by
+                    ?? null;
+
+                $fileName = $lastImport->file_name
+                    ?? $lastImport->filename
+                    ?? $lastImport->original_name
+                    ?? null;
+            @endphp
+
+            <div class="mt-3 grid grid-cols-2 gap-3 text-[11px]">
+                <div class="rounded-xl border border-slate-100 bg-white px-3 py-2">
+                    <div class="text-slate-500">Posisi Data</div>
+                    <div class="font-semibold text-slate-800">
+                        {{ !empty($lastImport) ? $posText : '-' }}
+                    </div>
+                </div>
+
+                <div class="rounded-xl border border-slate-100 bg-white px-3 py-2">
+                    <div class="text-slate-500">Waktu Import</div>
+                    <div class="font-semibold text-slate-800">
+                        {{ !empty($lastImport) ? $atText : '-' }}
+                    </div>
+                </div>
+
+                <div class="rounded-xl border border-slate-100 bg-white px-3 py-2 col-span-2">
+                    <div class="text-slate-500">Diimport oleh</div>
+                    <div class="font-semibold text-slate-800">
+                        {{ !empty($lastImport) ? ($byName ?: '-') : '-' }}
+                    </div>
+                </div>
+
+                @if (!empty($lastImport) && !empty($fileName))
+                    <div class="rounded-xl border border-slate-100 bg-white px-3 py-2 col-span-2">
+                        <div class="text-slate-500">File</div>
+                        <div class="font-semibold text-slate-800 break-words">
+                            {{ $fileName }}
+                        </div>
+                    </div>
+                @endif
+            </div>
+        </div>
+
+        {{-- NOTE URUTAN --}}
+        <div class="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-800">
+            <div class="text-sm font-semibold">⚠️ Proses wajib berurutan</div>
+            <div class="text-xs mt-1">
+                1) <b>Import Data</b> → 2) <b>Legacy Sync</b> → 3) <b>Update Jadwal</b>.
+                Update Jadwal membaca status SP dari hasil Legacy Sync.
+            </div>
+        </div>
+
+        @php
+            // =============================
+            // POSISI YANG DIPAKAI STEP 2/3
+            // =============================
+            $posForStep = old('position_date') ?: ($lastImport->position_date ?? null);
+            $posForStepStr = $posForStep ? \Carbon\Carbon::parse($posForStep)->format('Y-m-d') : null;
+            $posHuman = $posForStepStr ? \Carbon\Carbon::parse($posForStepStr)->format('d M Y') : '-';
+
+            // =============================
+            // VALIDASI POSISI (STRICT)
+            // =============================
+            $importOkForPos = !empty($lastImport)
+                && strtolower((string)($lastImport->status ?? '')) === 'success'
+                && !empty($posForStepStr)
+                && \Carbon\Carbon::parse($lastImport->position_date)->format('Y-m-d') === $posForStepStr;
+
+            $legacyOkForPos = !empty($lastLegacy)
+                && strtolower((string)($lastLegacy->status ?? '')) === 'success'
+                && !empty($posForStepStr)
+                && \Carbon\Carbon::parse($lastLegacy->position_date)->format('Y-m-d') === $posForStepStr;
+
+            $scheduleOkForPos = !empty($lastSchedule)
+                && strtolower((string)($lastSchedule->status ?? '')) === 'success'
+                && !empty($posForStepStr)
+                && \Carbon\Carbon::parse($lastSchedule->position_date)->format('Y-m-d') === $posForStepStr;
+        @endphp
+
+        {{-- =========================
+            STEP 1 - IMPORT
+        ========================= --}}
+        <div class="rounded-2xl border border-slate-100 bg-white px-5 py-4">
+            <div class="flex items-start justify-between">
+                <div>
+                    <div class="text-sm font-semibold text-slate-800">Step 1 — Import Data</div>
+                    <div class="text-xs text-slate-500">Upload file Excel untuk mengisi/ubah data loan_accounts & case.</div>
+                </div>
+                <span class="text-[11px] px-2 py-1 rounded-full bg-slate-100 text-slate-700 ring-1 ring-slate-200">
+                    WAJIB
+                </span>
+            </div>
+
+            <form method="POST" action="{{ route('loans.import.process') }}" enctype="multipart/form-data" class="mt-4 space-y-4">
+                @csrf
+
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">
+                        Tanggal Posisi Data
+                    </label>
+                    <input
+                        type="date"
+                        name="position_date"
+                        required
+                        value="{{ old('position_date', $posForStepStr) }}"
+                        class="block w-full rounded-lg border-slate-300 focus:border-msa-blue focus:ring-msa-blue text-sm px-3 py-2.5">
+                    <div class="mt-1 text-[11px] text-slate-500">
+                        Posisi ini akan dipakai juga untuk Step 2 & 3.
+                    </div>
+                </div>
+
+                <div>
+                    <label class="block text-sm font-medium text-slate-700 mb-1">Pilih File Excel</label>
+                    <input
+                        type="file"
+                        name="file"
+                        accept=".xls,.xlsx"
+                        required
+                        class="block w-full text-sm text-slate-700
+                               file:mr-4 file:py-2 file:px-4
+                               file:rounded-md file:border-0
+                               file:text-sm file:font-semibold
+                               file:bg-msa-blue file:text-white
+                               hover:file:bg-blue-900">
+                </div>
+
+                <div class="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                    <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                        <input type="checkbox" name="reimport" value="1" {{ old('reimport') ? 'checked' : '' }}>
+                        <span class="font-semibold">Re-import</span>
+                        <span class="text-slate-500 text-[12px]">(koreksi posisi yang sama)</span>
+                    </label>
+
+                    <div class="mt-2">
+                        <textarea
+                            name="reimport_reason"
+                            rows="2"
+                            placeholder="Alasan koreksi (wajib jika re-import)"
+                            class="w-full rounded-lg border-slate-300 px-3 py-2 text-sm focus:border-msa-blue focus:ring-msa-blue"
+                        >{{ old('reimport_reason') }}</textarea>
+                        <div class="mt-1 text-[11px] text-slate-500">
+                            Isi alasan koreksi untuk kebutuhan audit & SOP.
+                        </div>
+                    </div>
+                </div>
+
+                <button
+                    type="submit"
+                    class="w-full inline-flex justify-center items-center px-4 py-2.5
+                           text-sm font-semibold rounded-lg
+                           bg-msa-blue text-white
+                           hover:bg-blue-900 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-msa-blue">
+                    Import Sekarang
+                </button>
+            </form>
+        </div>
+
+        {{-- =========================
+            STEP 2 - LEGACY SYNC (dengan progress)
+        ========================= --}}
+        <div class="mt-4 rounded-2xl border border-slate-100 bg-white px-5 py-4" id="step2Card">
+            <div class="flex items-start justify-between">
+                <div>
+                    <div class="text-sm font-semibold text-slate-800">Step 2 — Legacy Sync</div>
+                    <div class="text-xs text-slate-500">
+                        Tarik status SP/aksi dari legacy untuk menentukan tahap terakhir.
+                    </div>
+                    <div class="mt-1 text-[11px] text-slate-600">
+                        Posisi yang akan diproses: <b>{{ $posHuman }}</b>
+                    </div>
+                </div>
+
+                @php
+                    $ready2 = $importOkForPos;
+                    $badge2 = $ready2
+                        ? 'bg-sky-50 text-sky-700 ring-1 ring-sky-200'
+                        : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200';
+                @endphp
+                <span class="text-[11px] px-2 py-1 rounded-full {{ $badge2 }}">
+                    {{ $ready2 ? 'READY' : 'IMPORT DULU' }}
+                </span>
+            </div>
+
+            <form method="POST" action="{{ route('loans.legacy.sync') }}" class="mt-4 grid grid-cols-1 gap-2">
+                @csrf
+                <input type="hidden" name="position_date" value="{{ $posForStepStr }}"/>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <input type="text" name="ao" placeholder="AO code (opsional)" class="rounded-lg border-slate-300 px-3 py-2 text-sm" />
+                    <input type="number" name="chunk" placeholder="Chunk (default 150)" class="rounded-lg border-slate-300 px-3 py-2 text-sm" />
+                    <div class="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600 flex items-center">
+                        Disarankan jalankan via queue.
+                    </div>
+                </div>
+
+                <button type="submit"
+                    {{ ($ready2 && $posForStepStr) ? '' : 'disabled' }}
+                    class="inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold
+                    {{ ($ready2 && $posForStepStr) ? 'bg-sky-600 text-white hover:bg-sky-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed' }}">
+                    Jalankan Legacy Sync
+                </button>
+
+                @if(!empty($lastLegacy))
+                    @php
+                        $st = strtolower((string)($lastLegacy->status ?? ''));
+                        $b = $st === 'success'
+                            ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                            : ($st === 'failed'
+                                ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-200'
+                                : 'bg-amber-50 text-amber-800 ring-1 ring-amber-200');
+
+                        $legacyPosText = !empty($lastLegacy->position_date)
+                            ? \Carbon\Carbon::parse($lastLegacy->position_date)->format('d M Y')
+                            : '-';
+                        $legacyAtText = !empty($lastLegacy->created_at)
+                            ? \Carbon\Carbon::parse($lastLegacy->created_at)->format('d M Y H:i')
+                            : '-';
+                    @endphp
+
+                    <div class="mt-2 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-[12px]" id="legacyStatusBox">
+                        <div class="flex items-center justify-between">
+                            <div class="text-slate-700 font-semibold">Status Legacy Sync Terakhir</div>
+                            <span id="legacyBadge" class="text-[11px] px-2 py-1 rounded-full {{ $b }}">{{ strtoupper($st ?: 'N/A') }}</span>
+                        </div>
+
+                        <div class="mt-1 text-slate-600 text-[11px]" id="legacyMeta">
+                            Posisi: <b>{{ $legacyPosText }}</b> —
+                            Waktu: <b>{{ $legacyAtText }}</b>
+                        </div>
+
+                        <div class="mt-1 text-slate-600" id="legacyMsg">
+                            {{ $lastLegacy->message ?? '' }}
+                        </div>
+
+                        {{-- Progress --}}
+                        <div class="mt-3 hidden" id="legacyProgress">
+                            <div class="w-full bg-slate-200 rounded-full h-2">
+                                <div id="legacyProgressBar" class="bg-sky-600 h-2 rounded-full" style="width:0%"></div>
+                            </div>
+                            <div id="legacyProgressText" class="mt-1 text-[11px] text-slate-600"></div>
+                        </div>
+                    </div>
+                @endif
+            </form>
+        </div>
+
+        {{-- =========================
+            STEP 3 - UPDATE JADWAL (dengan progress)
+        ========================= --}}
+        <div class="mt-4 rounded-2xl border border-slate-100 bg-white px-5 py-4" id="step3Card">
+            <div class="flex items-start justify-between">
+                <div>
+                    <div class="text-sm font-semibold text-slate-800">Step 3 — Update Jadwal</div>
+                    <div class="text-xs text-slate-500">
+                        Bangun agenda WA/Telp/SP berdasarkan DPD + status SP legacy.
+                    </div>
+                    <div class="mt-1 text-[11px] text-slate-600">
+                        Posisi yang akan diproses: <b>{{ $posHuman }}</b>
+                    </div>
+                </div>
+
+                @php
+                    $ready3 = $importOkForPos && $legacyOkForPos;
+                    $badge3 = $ready3
+                        ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                        : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200';
+                @endphp
+                <span class="text-[11px] px-2 py-1 rounded-full {{ $badge3 }}">
+                    {{ $ready3 ? 'READY' : 'SYNC DULU' }}
+                </span>
+            </div>
+
+            <form method="POST" action="{{ route('loans.jadwal.update') }}" class="mt-4 grid grid-cols-1 gap-2">
+                @csrf
+                <input type="hidden" name="position_date" value="{{ $posForStepStr }}"/>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                    <input type="text" name="ao" placeholder="AO code (opsional)" class="rounded-lg border-slate-300 px-3 py-2 text-sm" />
+                    <input type="number" name="chunk" placeholder="Chunk (default 200)" class="rounded-lg border-slate-300 px-3 py-2 text-sm" />
+                    <div class="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-600 flex items-center">
+                        Dibangun per batch.
+                    </div>
+                </div>
+
+                <button type="submit"
+                    {{ ($ready3 && $posForStepStr) ? '' : 'disabled' }}
+                    class="inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold
+                    {{ ($ready3 && $posForStepStr) ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed' }}">
+                    Update Jadwal
+                </button>
+
+                @if(!empty($lastSchedule))
+                    @php
+                        $st = strtolower((string)($lastSchedule->status ?? ''));
+                        $b = $st === 'success'
+                            ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+                            : ($st === 'failed'
+                                ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-200'
+                                : 'bg-amber-50 text-amber-800 ring-1 ring-amber-200');
+
+                        $schedPosText = !empty($lastSchedule->position_date)
+                            ? \Carbon\Carbon::parse($lastSchedule->position_date)->format('d M Y')
+                            : '-';
+                        $schedAtText = !empty($lastSchedule->created_at)
+                            ? \Carbon\Carbon::parse($lastSchedule->created_at)->format('d M Y H:i')
+                            : '-';
+                    @endphp
+
+                    <div class="mt-2 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-[12px]" id="jadwalStatusBox">
+                        <div class="flex items-center justify-between">
+                            <div class="text-slate-700 font-semibold">Status Update Jadwal Terakhir</div>
+                            <span id="jadwalBadge" class="text-[11px] px-2 py-1 rounded-full {{ $b }}">{{ strtoupper($st ?: 'N/A') }}</span>
+                        </div>
+
+                        <div class="mt-1 text-slate-600 text-[11px]" id="jadwalMeta">
+                            Posisi: <b>{{ $schedPosText }}</b> —
+                            Waktu: <b>{{ $schedAtText }}</b>
+                        </div>
+
+                        <div class="mt-1 text-slate-600" id="jadwalMsg">
+                            {{ $lastSchedule->message ?? '' }}
+                        </div>
+
+                        {{-- Progress --}}
+                        <div class="mt-3 hidden" id="jadwalProgress">
+                            <div class="w-full bg-slate-200 rounded-full h-2">
+                                <div id="jadwalProgressBar" class="bg-emerald-600 h-2 rounded-full" style="width:0%"></div>
+                            </div>
+                            <div id="jadwalProgressText" class="mt-1 text-[11px] text-slate-600"></div>
+                        </div>
+                    </div>
+                @endif
+            </form>
+        </div>
+
+    </div>
+</div>
+
+{{-- =========================================================
+    POLLING STATUS STEP 2 & 3 (AUTO UPDATE)
+    - Poll hanya saat status RUNNING
+    - Update badge, message, dan progress bar
+========================================================= --}}
+<script>
+(function () {
+  const pos = @json($posForStepStr);
+
+  function setBadge(el, status) {
+    if (!el) return;
+    const st = (status || '').toLowerCase();
+
+    el.textContent = (st || 'N/A').toUpperCase();
+    el.className = 'text-[11px] px-2 py-1 rounded-full';
+
+    if (st === 'success') el.classList.add('bg-emerald-50','text-emerald-700','ring-1','ring-emerald-200');
+    else if (st === 'failed') el.classList.add('bg-rose-50','text-rose-700','ring-1','ring-rose-200');
+    else el.classList.add('bg-amber-50','text-amber-800','ring-1','ring-amber-200');
+  }
+
+  function applyProgress(wrap, bar, text, progress) {
+    if (!wrap || !bar || !text || !progress) return;
+
+    wrap.classList.remove('hidden');
+    const pct = progress.percent ?? 0;
+    const processed = progress.processed ?? 0;
+    const total = progress.total ?? 0;
+    const failed = progress.failed ?? 0;
+
+    bar.style.width = `${pct}%`;
+    text.textContent = `Progress: ${pct}% (${processed}/${total}) • Failed: ${failed}`;
+  }
+
+  async function poll(url, els) {
+    try {
+      const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      const data = await res.json();
+      if (!data || !data.found) return { done: false };
+
+      setBadge(els.badge, data.status);
+
+      if (els.msg && typeof data.message === 'string') {
+        els.msg.textContent = data.message;
+      }
+
+      if (data.progress) {
+        applyProgress(els.progressWrap, els.progressBar, els.progressText, data.progress);
+      }
+
+      const st = (data.status || '').toLowerCase();
+      return { done: (st === 'success' || st === 'failed') };
+    } catch (e) {
+      return { done: false };
+    }
+  }
+
+  function shouldPoll(badgeEl) {
+    if (!badgeEl) return false;
+    return (badgeEl.textContent || '').trim().toLowerCase() === 'running';
+  }
+
+  if (!pos) return;
+
+  // STEP 2
+  const legacyEls = {
+    badge: document.getElementById('legacyBadge'),
+    msg: document.getElementById('legacyMsg'),
+    progressWrap: document.getElementById('legacyProgress'),
+    progressBar: document.getElementById('legacyProgressBar'),
+    progressText: document.getElementById('legacyProgressText'),
+  };
+
+  // STEP 3
+  const jadwalEls = {
+    badge: document.getElementById('jadwalBadge'),
+    msg: document.getElementById('jadwalMsg'),
+    progressWrap: document.getElementById('jadwalProgress'),
+    progressBar: document.getElementById('jadwalProgressBar'),
+    progressText: document.getElementById('jadwalProgressText'),
+  };
+
+  // URL endpoints
+  const legacyUrl = `{{ route('loans.legacy.status') }}?position_date=${encodeURIComponent(pos)}`;
+  const jadwalUrl = `{{ route('loans.jadwal.status') }}?position_date=${encodeURIComponent(pos)}`;
+
+  // Polling interval
+  const intervalMs = 2000;
+
+  // Legacy polling
+  if (shouldPoll(legacyEls.badge)) {
+    let t2 = setInterval(async () => {
+      const r = await poll(legacyUrl, legacyEls);
+      if (r.done) clearInterval(t2);
+    }, intervalMs);
+    poll(legacyUrl, legacyEls);
+  }
+
+  // Jadwal polling
+  if (shouldPoll(jadwalEls.badge)) {
+    let t3 = setInterval(async () => {
+      const r = await poll(jadwalUrl, jadwalEls);
+      if (r.done) clearInterval(t3);
+    }, intervalMs);
+    poll(jadwalUrl, jadwalEls);
+  }
+})();
+</script>
+
+@endsection
