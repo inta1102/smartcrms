@@ -56,6 +56,9 @@ use App\Http\Controllers\Kti\KtiResolutionTargetController;
 
 use App\Models\LegalAction;
 
+use App\Http\Controllers\Lending\LendingPerformanceController;
+
+
 Route::model('action', LegalAction::class);
 
 
@@ -395,7 +398,13 @@ Route::middleware('auth')->group(function () {
             Route::post('/assignments/{assignment}/switch', [OrgAssignmentController::class, 'switchLeader'])->name('assignments.switch');
         });
 
-    });    
+    Route::get('/lending/performance', [LendingPerformanceController::class, 'index'])
+        ->name('lending.performance.index');
+
+    Route::get('/lending/performance/ao/{ao_code}', [LendingPerformanceController::class, 'showAo'])
+        ->name('lending.performance.ao');
+    
+});    
 
 // =========================
 // LEGAL PROPOSALS (USULAN)

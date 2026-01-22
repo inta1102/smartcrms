@@ -156,9 +156,10 @@
             </ul> -->
 
             <p class="mt-3">
-                <a href="{{ route('cases.index') }}"
+                <!-- <a href="{{ route('cases.index') }}" -->
+                <a href="{{ route('lending.performance.index') }}"
                    class="inline-flex items-center text-sm font-medium text-msa-blue hover:underline">
-                    ➜ Lihat daftar kredit bermasalah
+                    ➜ Lihat Dashboard Performing Lending
                 </a>
                 <!-- <span class="mx-2 text-slate-400">|</span>
                 <a href="{{ route('loans.import.form') }}"

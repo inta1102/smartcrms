@@ -16,7 +16,7 @@ use Illuminate\Support\Facades\Bus;
 use Illuminate\Support\Facades\Log;
 use Maatwebsite\Excel\Facades\Excel;
 use Maatwebsite\Excel\Validators\ValidationException as ExcelValidationException;
-// use Illuminate\Support\Str;
+use App\Jobs\RunMonthlyLoanSnapshot;
 
 
 class LoanImportController extends Controller
@@ -89,6 +89,9 @@ class LoanImportController extends Controller
                 'reason'        => $reimport ? $reason : null,
                 'imported_by'   => auth()->id(),
             ]);
+
+            // ✅ Auto snapshot bulanan saat closing (agar growth tidak bolong)
+            RunMonthlyLoanSnapshot::dispatch($posDate)->onQueue('default');
 
             return redirect()
                 ->route('loans.import.form')
