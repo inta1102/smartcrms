@@ -29,8 +29,31 @@
         Monitoring performa tim lending berbasis snapshot posisi (position_date).
       </p>
     </div>
+      {{-- TABS --}}
+    <div class="flex items-center gap-2">
+      <a href="{{ route('lending.performance.index', request()->query()) }}"
+        class="rounded-xl px-3 py-2 text-sm font-semibold border
+                {{ request()->routeIs('lending.performance.*') ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50' }}">
+        📊 Summary
+      </a>
+
+      <a href="{{ route('lending.trend.index', [
+              // bawa filter yang masih nyambung kalau ada
+              'branch' => $filter['branch_code'] ?? 'ALL',
+              'ao'     => $filter['ao_code'] ?? 'ALL',
+              // month default: bulan sekarang (biar tidak kosong)
+              'month'  => now()->format('Y-m-01'),
+              'months' => 12,
+          ]) }}"
+        class="rounded-xl px-3 py-2 text-sm font-semibold border
+                {{ request()->routeIs('lending.trend.*') ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50' }}">
+        📈 Trend
+      </a>
+    </div>
+  </div>
 
     {{-- FILTER --}}
+  <div class="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
     <form class="flex flex-wrap items-end gap-2" method="GET" action="{{ route('lending.performance.index') }}">
       <div>
         <label class="text-xs text-slate-500">Position Date</label>

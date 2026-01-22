@@ -16,3 +16,20 @@
 .sp-stepper::-webkit-scrollbar-track { background: rgba(241,245,249,1); border-radius: 9999px; }
 
 <style>[x-cloak]{ display:none !important; }</style>
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================
+   Button Helper
+========================= */
+@layer components {
+    .btn-primary {
+        @apply inline-flex items-center rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800;
+    }
+
+    .btn-secondary {
+        @apply inline-flex items-center rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50;
+    }
+}

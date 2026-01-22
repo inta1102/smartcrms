@@ -57,7 +57,9 @@ use App\Http\Controllers\Kti\KtiResolutionTargetController;
 use App\Models\LegalAction;
 
 use App\Http\Controllers\Lending\LendingPerformanceController;
+use App\Http\Controllers\Lending\LendingTrendController;
 
+use App\Http\Controllers\ShmCheckRequestController;
 
 Route::model('action', LegalAction::class);
 
@@ -404,6 +406,39 @@ Route::middleware('auth')->group(function () {
     Route::get('/lending/performance/ao/{ao_code}', [LendingPerformanceController::class, 'showAo'])
         ->name('lending.performance.ao');
     
+    Route::get('/lending/trend', [LendingTrendController::class, 'index'])
+        ->name('lending.trend.index');
+
+    Route::get('/shm-check', [ShmCheckRequestController::class, 'index'])->name('shm.index');
+    Route::get('/shm-check/create', [ShmCheckRequestController::class, 'create'])->name('shm.create');
+    Route::post('/shm-check', [ShmCheckRequestController::class, 'store'])->name('shm.store');
+
+    Route::get('/shm-check/{req}', [ShmCheckRequestController::class, 'show'])->name('shm.show');
+
+    // KSA/KBO/SAD actions (gate: sadAction)
+    Route::post('/shm-check/{req}/sent-to-notary', [ShmCheckRequestController::class, 'markSentToNotary'])
+        ->name('shm.sentToNotary');
+
+    Route::post('/shm-check/{req}/upload-sp-sk', [ShmCheckRequestController::class, 'uploadSpSk'])
+        ->name('shm.uploadSpSk');
+
+    Route::post('/shm-check/{req}/sent-to-bpn', [ShmCheckRequestController::class, 'markSentToBpn'])
+        ->name('shm.sentToBpn');
+
+    Route::post('/shm-check/{req}/upload-result', [ShmCheckRequestController::class, 'uploadResult'])
+        ->name('shm.uploadResult');
+
+    // AO actions
+    Route::post('/shm-check/{req}/upload-signed', [ShmCheckRequestController::class, 'uploadSigned'])
+        ->name('shm.uploadSigned');
+
+    Route::post('/shm-check/{req}/handed-to-sad', [ShmCheckRequestController::class, 'markHandedToSad'])
+        ->name('shm.handedToSad');
+
+    // download file
+    Route::get('/shm-check/file/{file}', [ShmCheckRequestController::class, 'downloadFile'])
+        ->name('shm.file.download');
+
 });    
 
 // =========================

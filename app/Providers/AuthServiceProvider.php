@@ -26,6 +26,7 @@ class AuthServiceProvider extends ServiceProvider
         \App\Models\OrgAssignment::class => \App\Policies\OrgAssignmentPolicy::class,
         \App\Models\NonLitigationAction::class => \App\Policies\NonLitigationActionPolicy::class,
         \App\Models\LegalActionProposal::class => \App\Policies\LegalActionProposalPolicy::class,
+        \App\Models\ShmCheckRequest::class => \App\Policies\ShmCheckRequestPolicy::class,
         
     ];
 

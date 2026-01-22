@@ -5,6 +5,7 @@
     use App\Enums\UserRole;
     use App\Models\OrgAssignment;
     use App\Models\LegalActionProposal;
+    use App\Models\ShmCheckRequest;
 
 
     // ========= helpers =========
@@ -29,7 +30,7 @@
     $isSupervisor = $roleEnum ? $roleEnum->isSupervisor() : false;
 
     // staff lapangan (yang punya agenda sendiri)
-    $isFieldStaff = $roleEnum && in_array($roleEnum, [UserRole::AO, UserRole::SO, UserRole::FE, UserRole::BE], true);
+    $isFieldStaff = $roleEnum && in_array($roleEnum, [UserRole::AO, UserRole::RO, UserRole::SO, UserRole::FE, UserRole::BE], true);
 
     // org admin
     $isOrgAdmin = $roleEnum && in_array($roleEnum, [UserRole::KTI, UserRole::KABAG], true);
@@ -37,6 +38,8 @@
     // ====== Active: overdue vs cases.* (anti bentrok) ======
     $isOverdueActive = $is('cases.overdue');
     $isNplActive     = $is('cases.*') && !$isOverdueActive;
+    $isShmActive = request()->routeIs('shm.*');
+
 
     // ====== Active states supervisi ======
     $isSupervisionActive =
@@ -101,6 +104,9 @@
             $agendaBadge = null;
         }
     }
+
+    $canViewShm = $u ? Gate::allows('viewAny', ShmCheckRequest::class) : false;
+
 
     // ====== Monitoring HT gate ======
     $canViewHtMonitoring = $u ? Gate::allows('viewHtMonitoring') : false;
@@ -257,7 +263,8 @@
     }
 
     // default dashboard route
-    $dashboardRouteName = 'dashboard';
+    $dashboardRouteName = 'lending.performance.index';
+    // $dashboardRouteName = 'dashboard';
 
     // KOM/DIR/DIREKSI → executive.targets.index
     if ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['KOM', 'DIR', 'DIREKSI'])) {
@@ -325,6 +332,14 @@
                 'show'   => $isFieldStaff && !$isPimpinan,
                 'badge'  => ($agendaBadge ?? 0) > 0 ? $agendaBadge : null,
             ],
+            [
+                'label'  => 'Cek SHM',
+                'icon'   => '📄',
+                'href'   => route('shm.index'),
+                'active' => $isShmActive,
+                'show'   => $canViewShm,
+            ],
+
         ],
 
         // ================= LEGAL (KHUSUS BE) =================
