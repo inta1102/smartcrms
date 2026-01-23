@@ -9,6 +9,7 @@ use App\Models\OrgAssignment;
 use App\Policies\OrgAssignmentPolicy;
 use App\Enums\UserRole;
 use App\Models\NplCase;
+use App\Models\ShmCheckRequest;
 
 // === OBSERVERS ===
 use App\Observers\HtAuctionObserver;
@@ -23,6 +24,8 @@ use App\Services\Ews\EwsMacetService;
 
 use Illuminate\Support\Facades\View;
 use App\Services\Crms\ApprovalBadgeService;
+
+
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -248,6 +251,31 @@ class AppServiceProvider extends ServiceProvider
                 return;
             }
         });    
+
+        View::composer('*', function ($view) {
+            $user = auth()->user();
+            if (!$user) {
+                $view->with('sidebarBadges', []);
+                return;
+            }
+
+            $rv = strtoupper(trim($user->roleValue() ?? ''));
+            $isSad = in_array($rv, ['KSA', 'KBO', 'SAD'], true);
+
+            $sidebarBadges = [];
+
+            if ($isSad) {
+                // ✅ hitung antrian SUBMITTED sesuai visibility policy/model scope
+                $countSubmitted = ShmCheckRequest::query()
+                    ->visibleFor($user)
+                    ->where('status', ShmCheckRequest::STATUS_SUBMITTED)
+                    ->count();
+
+                $sidebarBadges['shm'] = $countSubmitted;
+            }
+
+            $view->with('sidebarBadges', $sidebarBadges);
+        });
     }
 
     private function normalizeAoCodesForSidebar(array $codes): array

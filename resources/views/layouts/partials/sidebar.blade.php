@@ -74,6 +74,13 @@
             : 'ml-auto inline-flex min-w-[22px] justify-center rounded-full bg-rose-600 px-2 py-0.5 text-[11px] font-semibold text-white';
     };
 
+    $badgeWarnClass = function(bool $active) {
+        return $active
+            ? 'ml-auto inline-flex min-w-[22px] justify-center rounded-full bg-white/15 px-2 py-0.5 text-[11px] font-semibold text-white'
+            : 'ml-auto inline-flex min-w-[22px] justify-center rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-semibold text-white';
+    };
+
+
     // ====== Overdue badge count (fail-safe) ======
     $overdueCount = 0;
     if ($u) {
@@ -105,8 +112,37 @@
         }
     }
 
+    // ====== Cek SHM ======
     $canViewShm = $u ? Gate::allows('viewAny', ShmCheckRequest::class) : false;
 
+    // ====== SHM badge (fail-safe) ======
+    $shmBadge = null;
+
+    if ($u && $canViewShm) {
+        try {
+            $rv = strtoupper(trim($u->roleValue() ?? ''));
+
+            // ✅ minimal: antrian gabungan (submitted + handed_to_sad)
+            // nanti tinggal tambah status lain di array ini
+            $queueStatuses = [
+                ShmCheckRequest::STATUS_SUBMITTED,
+                ShmCheckRequest::STATUS_HANDED_TO_SAD,
+            ];
+
+            $q = ShmCheckRequest::query()
+                ->whereIn('status', $queueStatuses);
+
+            // ✅ kalau scope visibleFor ada, pakai (biar sesuai hak akses)
+            if (method_exists(ShmCheckRequest::class, 'scopeVisibleFor')) {
+                $q->visibleFor($u);
+            }
+
+            $shmBadge = $q->count();
+
+        } catch (\Throwable $e) {
+            $shmBadge = null;
+        }
+    }
 
     // ====== Monitoring HT gate ======
     $canViewHtMonitoring = $u ? Gate::allows('viewHtMonitoring') : false;
@@ -335,11 +371,12 @@
             [
                 'label'  => 'Cek SHM',
                 'icon'   => '📄',
-                'href'   => route('shm.index'),
+                'href' => route('shm.index'),
                 'active' => $isShmActive,
                 'show'   => $canViewShm,
+                'badge'  => ($shmBadge ?? 0) > 0 ? $shmBadge : null,
+                'badge_kind' => 'warn', // optional kalau kamu sudah bikin kind-based
             ],
-
         ],
 
         // ================= LEGAL (KHUSUS BE) =================
@@ -508,10 +545,6 @@
                 roleValue: {{ $u?->roleValue() }} |
                 <!-- isBE: {{ $isBE ? 'YES' : 'NO' }} -->
             </div>
-            <!-- <div class="mt-1 text-[11px] text-slate-400">
-                roleValue: {{ $u?->roleValue() }} | badgeTarget: {{ (int)($badgeApprovalTarget ?? 0) }}
-            </div> -->
-
 
         </div>
 
@@ -528,10 +561,11 @@
                                 <span class="font-semibold flex-1">{{ $m['label'] }}</span>
 
                                 @if(!empty($m['badge']))
-                                    <span class="{{ $badgeClass((bool)$m['active']) }}">
+                                    <span class="{{ ($m['label'] === 'Cek SHM') ? $badgeWarnClass((bool)$m['active']) : $badgeClass((bool)$m['active']) }}">
                                         {{ $m['badge'] }}
                                     </span>
                                 @endif
+
                             </a>
                         @else
                             <div class="px-3 py-2 text-xs text-slate-400">
@@ -744,11 +778,16 @@
                                     <span class="opacity-90">{{ $m['icon'] }}</span>
                                     <span class="font-semibold flex-1">{{ $m['label'] }}</span>
 
+                                    @php
+                                    $badgeCls = ($m['label'] === 'Cek SHM')
+                                        ? $badgeWarnClass((bool)$m['active'])
+                                        : $badgeClass((bool)$m['active']);
+                                    @endphp
+
                                     @if(!empty($m['badge']))
-                                        <span class="{{ $badgeClass((bool)$m['active']) }}">
-                                            {{ $m['badge'] }}
-                                        </span>
+                                    <span class="{{ $badgeCls }}">{{ $m['badge'] }}</span>
                                     @endif
+
                                 </a>
                             @else
                                 <div class="px-3 py-2 text-xs text-slate-400">

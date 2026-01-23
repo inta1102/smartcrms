@@ -17,26 +17,31 @@ class ShmCheckRequestController extends Controller
         $this->authorize('viewAny', ShmCheckRequest::class);
 
         $user = auth()->user();
+        $rv = strtoupper(trim($user->roleValue() ?? ''));
+        $isSad = in_array($rv, ['KSA', 'KBO', 'SAD'], true);
 
+        // ======================
+        // Base Query (list)
+        // ======================
         $q = ShmCheckRequest::query()
             ->with(['requester'])
             ->visibleFor($user);
 
-        // scope user non-SAD
-        $rv = strtoupper(trim($user->roleValue() ?? ''));
-
-        // AO/RO/SO/BE/FE hanya lihat milik sendiri
-        if (!in_array($rv, ['KSA', 'KBO', 'SAD'], true)) {
-            $q->where('requested_by', $user->id);
+        // ✅ Default status untuk SAD jika tidak ada query status
+        $status = $request->filled('status') ? $request->status : null;
+        if (!$status && $isSad) {
+            $status = ShmCheckRequest::STATUS_SUBMITTED;
         }
 
-        // optional filter status
-        if ($request->filled('status') && $request->status !== 'ALL') {
-            $q->where('status', $request->status);
+        if ($status && $status !== 'ALL') {
+            $q->where('status', $status);
         }
 
         $rows = $q->latest()->paginate(20)->withQueryString();
 
+        // ======================
+        // Status Options
+        // ======================
         $statusOptions = [
             'ALL',
             ShmCheckRequest::STATUS_SUBMITTED,
@@ -51,7 +56,33 @@ class ShmCheckRequestController extends Controller
             ShmCheckRequest::STATUS_REJECTED,
         ];
 
-        return view('shm.index', compact('rows', 'statusOptions'));
+        // ======================
+        // ✅ COUNTS for Quick Chips
+        // - hitung berdasarkan visibility user
+        // - tidak ikut filter status (biar chips menunjukkan antrian total)
+        // ======================
+        $counts = [];
+
+        if ($isSad) {
+            $baseCountQ = ShmCheckRequest::query()->visibleFor($user);
+
+            $totalAll = (clone $baseCountQ)->count();
+
+            $byStatus = (clone $baseCountQ)
+                ->selectRaw('status, COUNT(*) as c')
+                ->groupBy('status')
+                ->pluck('c', 'status')
+                ->toArray();
+
+            $counts = [
+                'ALL' => $totalAll,
+                ShmCheckRequest::STATUS_SUBMITTED => (int)($byStatus[ShmCheckRequest::STATUS_SUBMITTED] ?? 0),
+                ShmCheckRequest::STATUS_SENT_TO_NOTARY => (int)($byStatus[ShmCheckRequest::STATUS_SENT_TO_NOTARY] ?? 0),
+                ShmCheckRequest::STATUS_SENT_TO_BPN => (int)($byStatus[ShmCheckRequest::STATUS_SENT_TO_BPN] ?? 0),
+            ];
+        }
+
+        return view('shm.index', compact('rows', 'statusOptions', 'status', 'isSad', 'counts'));
     }
 
     public function create()
