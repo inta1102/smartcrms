@@ -295,29 +295,58 @@
                             : '-';
                     @endphp
 
-                    <div class="mt-2 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-[12px]" id="legacyStatusBox">
-                        <div class="flex items-center justify-between">
-                            <div class="text-slate-700 font-semibold">Status Legacy Sync Terakhir</div>
-                            <span id="legacyBadge" class="text-[11px] px-2 py-1 rounded-full {{ $b }}">{{ strtoupper($st ?: 'N/A') }}</span>
+                    <div class="mt-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-[12px]" id="legacyStatusBox">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <div class="text-slate-800 font-semibold">Status Legacy Sync Terakhir</div>
+                                <div class="mt-1 text-[11px] text-slate-600" id="legacyMeta">
+                                    Posisi: <b>{{ $legacyPosText }}</b> — Waktu: <b>{{ $legacyAtText }}</b>
+                                </div>
+                            </div>
+
+                            <div class="flex flex-col items-end gap-1">
+                                <span id="legacyBadge" class="text-[11px] px-2 py-1 rounded-full {{ $b }}">
+                                    {{ strtoupper($st ?: 'N/A') }}
+                                </span>
+                                <div class="text-[10px] text-slate-500" id="legacyLastCheck">Last check: -</div>
+                            </div>
                         </div>
 
-                        <div class="mt-1 text-slate-600 text-[11px]" id="legacyMeta">
-                            Posisi: <b>{{ $legacyPosText }}</b> —
-                            Waktu: <b>{{ $legacyAtText }}</b>
-                        </div>
-
-                        <div class="mt-1 text-slate-600" id="legacyMsg">
+                        <div class="mt-2 text-slate-600" id="legacyMsg">
                             {{ $lastLegacy->message ?? '' }}
                         </div>
 
-                        {{-- Progress --}}
+                        {{-- Progress (tampil saat ada data; auto di-show oleh JS) --}}
                         <div class="mt-3 hidden" id="legacyProgress">
-                            <div class="w-full bg-slate-200 rounded-full h-2">
-                                <div id="legacyProgressBar" class="bg-sky-600 h-2 rounded-full" style="width:0%"></div>
+                            <div class="flex items-center justify-between">
+                                <div class="text-[11px] font-semibold text-slate-700">Progress</div>
+                                <div class="text-[11px] text-slate-600">
+                                    <span id="legacyCount">0/0</span>
+                                    <span class="mx-1 text-slate-300">•</span>
+                                    Failed: <span id="legacyFailed">0</span>
+                                    <span class="mx-1 text-slate-300">•</span>
+                                    <span id="legacyPct">0%</span>
+                                </div>
                             </div>
-                            <div id="legacyProgressText" class="mt-1 text-[11px] text-slate-600"></div>
+
+                            <div class="mt-2 w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                                <div
+                                    id="legacyProgressBar"
+                                    class="h-2.5 rounded-full transition-all duration-500 bg-sky-600"
+                                    style="width:0%">
+                                </div>
+                            </div>
+
+                            <div class="mt-2 flex items-start justify-between gap-3">
+                                <div class="text-[11px] text-slate-600" id="legacyNote">-</div>
+                                <div class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 hidden" id="legacyHint">
+                                    -
+                                </div>
+                            </div>
                         </div>
+
                     </div>
+
                 @endif
             </form>
         </div>
@@ -343,9 +372,10 @@
                         ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
                         : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200';
                 @endphp
-                <span class="text-[11px] px-2 py-1 rounded-full {{ $badge3 }}">
+                <span id="step3ReadyBadge" class="text-[11px] px-2 py-1 rounded-full {{ $badge3 }}">
                     {{ $ready3 ? 'READY' : 'SYNC DULU' }}
                 </span>
+
             </div>
 
             <form method="POST" action="{{ route('loans.jadwal.update') }}" class="mt-4 grid grid-cols-1 gap-2">
@@ -360,7 +390,9 @@
                     </div>
                 </div>
 
-                <button type="submit"
+                <button
+                    id="btnUpdateJadwal"
+                    type="submit"
                     {{ ($ready3 && $posForStepStr) ? '' : 'disabled' }}
                     class="inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold
                     {{ ($ready3 && $posForStepStr) ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed' }}">
@@ -384,28 +416,55 @@
                             : '-';
                     @endphp
 
-                    <div class="mt-2 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-[12px]" id="jadwalStatusBox">
-                        <div class="flex items-center justify-between">
-                            <div class="text-slate-700 font-semibold">Status Update Jadwal Terakhir</div>
-                            <span id="jadwalBadge" class="text-[11px] px-2 py-1 rounded-full {{ $b }}">{{ strtoupper($st ?: 'N/A') }}</span>
+                    <div class="mt-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-[12px]" id="jadwalStatusBox">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <div class="text-slate-800 font-semibold">Status Update Jadwal Terakhir</div>
+                                <div class="mt-1 text-[11px] text-slate-600" id="jadwalMeta">
+                                    Posisi: <b>{{ $schedPosText }}</b> — Waktu: <b>{{ $schedAtText }}</b>
+                                </div>
+                            </div>
+
+                            <div class="flex flex-col items-end gap-1">
+                                <span id="jadwalBadge" class="text-[11px] px-2 py-1 rounded-full {{ $b }}">
+                                    {{ strtoupper($st ?: 'N/A') }}
+                                </span>
+                                <div class="text-[10px] text-slate-500" id="jadwalLastCheck">Last check: -</div>
+                            </div>
                         </div>
 
-                        <div class="mt-1 text-slate-600 text-[11px]" id="jadwalMeta">
-                            Posisi: <b>{{ $schedPosText }}</b> —
-                            Waktu: <b>{{ $schedAtText }}</b>
-                        </div>
-
-                        <div class="mt-1 text-slate-600" id="jadwalMsg">
+                        <div class="mt-2 text-slate-600" id="jadwalMsg">
                             {{ $lastSchedule->message ?? '' }}
                         </div>
 
-                        {{-- Progress --}}
                         <div class="mt-3 hidden" id="jadwalProgress">
-                            <div class="w-full bg-slate-200 rounded-full h-2">
-                                <div id="jadwalProgressBar" class="bg-emerald-600 h-2 rounded-full" style="width:0%"></div>
+                            <div class="flex items-center justify-between">
+                                <div class="text-[11px] font-semibold text-slate-700">Progress</div>
+                                <div class="text-[11px] text-slate-600">
+                                    <span id="jadwalCount">0/0</span>
+                                    <span class="mx-1 text-slate-300">•</span>
+                                    Failed: <span id="jadwalFailed">0</span>
+                                    <span class="mx-1 text-slate-300">•</span>
+                                    <span id="jadwalPct">0%</span>
+                                </div>
                             </div>
-                            <div id="jadwalProgressText" class="mt-1 text-[11px] text-slate-600"></div>
+
+                            <div class="mt-2 w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+                                <div
+                                    id="jadwalProgressBar"
+                                    class="h-2.5 rounded-full transition-all duration-500 bg-emerald-600"
+                                    style="width:0%">
+                                </div>
+                            </div>
+
+                            <div class="mt-2 flex items-start justify-between gap-3">
+                                <div class="text-[11px] text-slate-600" id="jadwalNote">-</div>
+                                <div class="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1 hidden" id="jadwalHint">
+                                    -
+                                </div>
+                            </div>
                         </div>
+
                     </div>
                 @endif
             </form>
@@ -422,36 +481,87 @@
 <script>
 (function () {
   const pos = @json($posForStepStr);
+  if (!pos) return;
+
+  function nowStr() {
+    return new Date().toLocaleString();
+  }
 
   function setBadge(el, status) {
     if (!el) return;
-    const st = (status || '').toLowerCase();
 
+    const st = (status || '').toLowerCase();
     el.textContent = (st || 'N/A').toUpperCase();
     el.className = 'text-[11px] px-2 py-1 rounded-full';
 
     if (st === 'success') el.classList.add('bg-emerald-50','text-emerald-700','ring-1','ring-emerald-200');
     else if (st === 'failed') el.classList.add('bg-rose-50','text-rose-700','ring-1','ring-rose-200');
-    else el.classList.add('bg-amber-50','text-amber-800','ring-1','ring-amber-200');
+    else if (st === 'running') el.classList.add('bg-amber-50','text-amber-800','ring-1','ring-amber-200');
+    else el.classList.add('bg-slate-100','text-slate-700','ring-1','ring-slate-200');
   }
 
-  function applyProgress(wrap, bar, text, progress) {
-    if (!wrap || !bar || !text || !progress) return;
+  function showHint(hintEl, show, text) {
+    if (!hintEl) return;
+    if (!show) {
+      hintEl.classList.add('hidden');
+      hintEl.textContent = '-';
+      return;
+    }
+    hintEl.classList.remove('hidden');
+    hintEl.textContent = text || '-';
+  }
 
+  function applyProgress(prefix, data) {
+    const wrap   = document.getElementById(prefix + 'Progress');
+    const pctEl  = document.getElementById(prefix + 'Pct');
+    const countEl= document.getElementById(prefix + 'Count');
+    const failedEl = document.getElementById(prefix + 'Failed');
+    const barEl  = document.getElementById(prefix + 'ProgressBar');
+    const noteEl = document.getElementById(prefix + 'Note');
+    const hintEl = document.getElementById(prefix + 'Hint');
+
+    const progress = data.progress || null;
+    if (!wrap || !progress) return;
+
+    // show wrapper kalau ada progress payload
     wrap.classList.remove('hidden');
-    const pct = progress.percent ?? 0;
-    const processed = progress.processed ?? 0;
-    const total = progress.total ?? 0;
-    const failed = progress.failed ?? 0;
 
-    bar.style.width = `${pct}%`;
-    text.textContent = `Progress: ${pct}% (${processed}/${total}) • Failed: ${failed}`;
+    const total     = Number(progress.total ?? 0);
+    const processed = Number(progress.processed ?? 0);
+    const failed    = Number(progress.failed ?? 0);
+    const pct       = Number(progress.percent ?? 0);
+    const note      = progress.note ?? null;
+
+    if (pctEl) pctEl.textContent = `${pct}%`;
+    if (countEl) countEl.textContent = `${processed}/${total}`;
+    if (failedEl) failedEl.textContent = `${failed}`;
+    if (barEl) barEl.style.width = `${pct}%`;
+    if (noteEl) noteEl.textContent = note ? note : '-';
+
+    const st = (data.status || '').toLowerCase();
+
+    // Hint khusus: RUNNING tapi processed 0
+    if (st === 'running' && total > 0 && processed === 0) {
+      showHint(hintEl, true, 'RUNNING tapi processed masih 0. Biasanya worker/queue belum pick job, atau batch stuck.');
+    } else {
+      showHint(hintEl, false);
+    }
+
+    // Warna bar mengikuti status
+    if (barEl) {
+      barEl.classList.remove('bg-sky-600','bg-emerald-600','bg-rose-600','bg-slate-500');
+      if (st === 'failed') barEl.classList.add('bg-rose-600');
+      else if (st === 'success') barEl.classList.add('bg-emerald-600');
+      else barEl.classList.add(prefix === 'legacy' ? 'bg-sky-600' : 'bg-emerald-600');
+    }
   }
 
-  async function poll(url, els) {
+  async function poll(url, els, prefix) {
     try {
       const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
       const data = await res.json();
+
+      if (els.lastCheck) els.lastCheck.textContent = 'Last check: ' + nowStr();
       if (!data || !data.found) return { done: false };
 
       setBadge(els.badge, data.status);
@@ -460,67 +570,93 @@
         els.msg.textContent = data.message;
       }
 
-      if (data.progress) {
-        applyProgress(els.progressWrap, els.progressBar, els.progressText, data.progress);
-      }
+      applyProgress(prefix, data);
+
+      const st = (data.status || '').toLowerCase();
+
+        // ✅ Kalau Step 2 (legacy) sudah success, langsung unlock Step 3
+        if (prefix === 'legacy' && st === 'success') {
+        enableUpdateJadwal();
+        }
 
       const st = (data.status || '').toLowerCase();
       return { done: (st === 'success' || st === 'failed') };
     } catch (e) {
+      if (els.lastCheck) els.lastCheck.textContent = 'Last check: ' + nowStr();
       return { done: false };
     }
   }
 
-  function shouldPoll(badgeEl) {
+    function isRunning(badgeEl) { 
     if (!badgeEl) return false;
     return (badgeEl.textContent || '').trim().toLowerCase() === 'running';
-  }
+    }
 
-  if (!pos) return;
+    const legacyUrl = `{{ route('loans.legacy.status') }}?position_date=${encodeURIComponent(pos)}`;
+    const jadwalUrl = `{{ route('loans.jadwal.status') }}?position_date=${encodeURIComponent(pos)}`;
 
-  // STEP 2
-  const legacyEls = {
+    const legacyEls = {
     badge: document.getElementById('legacyBadge'),
     msg: document.getElementById('legacyMsg'),
-    progressWrap: document.getElementById('legacyProgress'),
-    progressBar: document.getElementById('legacyProgressBar'),
-    progressText: document.getElementById('legacyProgressText'),
-  };
+    lastCheck: document.getElementById('legacyLastCheck'),
+    };
 
-  // STEP 3
-  const jadwalEls = {
+    const jadwalEls = {
     badge: document.getElementById('jadwalBadge'),
     msg: document.getElementById('jadwalMsg'),
-    progressWrap: document.getElementById('jadwalProgress'),
-    progressBar: document.getElementById('jadwalProgressBar'),
-    progressText: document.getElementById('jadwalProgressText'),
-  };
+    lastCheck: document.getElementById('jadwalLastCheck'),
+    };
 
-  // URL endpoints
-  const legacyUrl = `{{ route('loans.legacy.status') }}?position_date=${encodeURIComponent(pos)}`;
-  const jadwalUrl = `{{ route('loans.jadwal.status') }}?position_date=${encodeURIComponent(pos)}`;
+    /* =========================================================
+    ✅ NO. 4 DITARUH DI SINI
+    Kalau halaman dibuka dan Legacy SUDAH SUCCESS,
+    Step 3 langsung aktif TANPA refresh
+    ========================================================= */
+    if ((legacyEls.badge?.textContent || '').trim().toLowerCase() === 'success') {
+    enableUpdateJadwal();
+    }
 
-  // Polling interval
-  const intervalMs = 2000;
+    const intervalMs = 2000;
 
-  // Legacy polling
-  if (shouldPoll(legacyEls.badge)) {
+    // 🔥 Penting: polling awal (1x)
+    poll(legacyUrl, legacyEls, 'legacy');
+    poll(jadwalUrl, jadwalEls, 'jadwal');
+
+    // Polling berulang kalau masih RUNNING
+    if (isRunning(legacyEls.badge)) {
     let t2 = setInterval(async () => {
-      const r = await poll(legacyUrl, legacyEls);
-      if (r.done) clearInterval(t2);
+        const r = await poll(legacyUrl, legacyEls, 'legacy');
+        if (r.done) clearInterval(t2);
     }, intervalMs);
-    poll(legacyUrl, legacyEls);
-  }
+    }
 
-  // Jadwal polling
-  if (shouldPoll(jadwalEls.badge)) {
+    if (isRunning(jadwalEls.badge)) {
     let t3 = setInterval(async () => {
-      const r = await poll(jadwalUrl, jadwalEls);
-      if (r.done) clearInterval(t3);
+        const r = await poll(jadwalUrl, jadwalEls, 'jadwal');
+        if (r.done) clearInterval(t3);
     }, intervalMs);
-    poll(jadwalUrl, jadwalEls);
-  }
+    }
+
 })();
+
+function enableUpdateJadwal() {
+  const btn = document.getElementById('btnUpdateJadwal');
+  if (!btn) return;
+
+  btn.disabled = false;
+
+  // set class ke mode aktif (sesuaikan dengan class tombol aktif kamu)
+  btn.classList.remove('bg-slate-200','text-slate-500','cursor-not-allowed');
+  btn.classList.add('bg-emerald-600','text-white','hover:bg-emerald-700');
+
+  // optional: update badge Step 3
+  const badge = document.getElementById('step3ReadyBadge');
+  if (badge) {
+    badge.textContent = 'READY';
+    badge.className = 'text-[11px] px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200';
+  }
+}
+
 </script>
 
 @endsection

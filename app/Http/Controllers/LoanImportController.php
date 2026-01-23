@@ -17,6 +17,8 @@ use Illuminate\Support\Facades\Log;
 use Maatwebsite\Excel\Facades\Excel;
 use Maatwebsite\Excel\Validators\ValidationException as ExcelValidationException;
 use App\Jobs\RunMonthlyLoanSnapshot;
+use App\Models\LegacySyncRun;
+
 
 
 class LoanImportController extends Controller
@@ -168,11 +170,26 @@ class LoanImportController extends Controller
 
     public function legacySync(Request $request)
     {
+        $request->validate([
+            'position_date' => ['required', 'date'],
+        ]);
+
         $posDate = Carbon::parse($request->input('position_date'))->toDateString();
 
+        // Cegah double-run posisi sama
+        $running = LegacySyncLog::query()
+            ->whereDate('position_date', $posDate)
+            ->where('status', 'running')
+            ->latest('id')
+            ->first();
+
+        if ($running) {
+            return back()->with('error', "Legacy Sync posisi {$posDate} masih berjalan. Tunggu selesai.");
+        }
+
         $importOk = ImportLog::query()
-            ->where('module','loans')
-            ->where('status','success')
+            ->where('module', 'loans')
+            ->where('status', 'success')
             ->whereDate('position_date', $posDate)
             ->exists();
 
@@ -181,52 +198,86 @@ class LoanImportController extends Controller
         }
 
         $caseIds = NplCase::query()
-            ->where('status','open')
-            ->whereHas('loanAccount', fn($q) => $q->whereDate('position_date', $posDate))
+            ->where('status', 'open')
+            ->whereHas('loanAccount', fn ($q) => $q->whereDate('position_date', $posDate))
             ->pluck('id')
-            ->map(fn($v)=>(int)$v)
+            ->map(fn ($v) => (int) $v)
             ->all();
 
         if (empty($caseIds)) {
             return back()->with('error', "Tidak ada case OPEN pada posisi {$posDate}.");
         }
 
-        $log = LegacySyncLog::create([
-            'position_date' => $posDate,
-            'status'        => 'running',
-            'total_cases'   => count($caseIds),
-            'message'       => 'Legacy Sync sedang diproses (batch).',
-            'run_by'        => auth()->id(),
-            'failed_cases'  => 0,
-        ]);
+        try {
+            DB::beginTransaction();
 
-        $jobs = array_map(fn($id) => new SyncLegacySpForCaseJob($id), $caseIds);
+            $log = LegacySyncLog::create([
+                'position_date' => $posDate,
+                'status'        => 'running',
+                'total_cases'   => count($caseIds),
+                'message'       => 'Legacy Sync sedang diproses (batch).',
+                'run_by'        => auth()->id(),
+                'failed_cases'  => 0,
+            ]);
 
-        $batch = Bus::batch($jobs)
-            ->name("LegacySync:{$posDate}")
-            ->onQueue('crms')
-            ->then(function (Batch $batch) use ($log) {
-                $log->update([
-                    'status'  => 'success',
-                    'message' => 'Legacy Sync selesai.',
-                ]);
-            })
-            ->catch(function (Batch $batch, \Throwable $e) use ($log) {
-                $log->update([
-                    'status'  => 'failed',
-                    'message' => 'Legacy Sync gagal: '.$e->getMessage(),
-                ]);
-            })
-            ->finally(function (Batch $batch) use ($log) {
-                if ($batch->failedJobs > 0) {
-                    $log->update(['failed_cases' => (int)$batch->failedJobs]);
-                }
-            })
-            ->dispatch();
+            $run = LegacySyncRun::create([
+                'posisi_date' => $posDate,
+                'total'       => count($caseIds),
+                'processed'   => 0,
+                'failed'      => 0,
+                'status'      => LegacySyncRun::STATUS_RUNNING,
+                'started_at'  => now(),
+                'created_by'  => auth()->id(),
+            ]);
 
-        $log->update(['batch_id' => $batch->id]);
+            // OPTIONAL tapi sangat membantu: kalau tabel legacy_sync_logs punya kolom run_id
+            // $log->update(['run_id' => $run->id]);
 
-        return back()->with('status', "Legacy Sync posisi {$posDate} sedang diproses.");
+            $jobs = array_map(fn ($id) => new SyncLegacySpForCaseJob($id, $run->id), $caseIds);
+
+            $pending = Bus::batch($jobs)
+                ->name("LegacySync:{$posDate}")
+                ->onQueue('crms')
+                ->then(function (Batch $batch) use ($log, $run) {
+                    $log->update([
+                        'status'  => 'success',
+                        'message' => 'Legacy Sync selesai.',
+                    ]);
+
+                    $run->update([
+                        'status'      => LegacySyncRun::STATUS_DONE,
+                        'finished_at' => now(),
+                    ]);
+                })
+                ->catch(function (Batch $batch, \Throwable $e) use ($log, $run) {
+                    $log->update([
+                        'status'  => 'failed',
+                        'message' => 'Legacy Sync gagal: ' . $e->getMessage(),
+                    ]);
+
+                    $run->update([
+                        'status'      => LegacySyncRun::STATUS_FAILED,
+                        'finished_at' => now(),
+                    ]);
+                })
+                ->finally(function (Batch $batch) use ($log, $run) {
+                    if ($batch->failedJobs > 0) {
+                        $log->update(['failed_cases' => (int) $batch->failedJobs]);
+                        $run->incrementFailed((int) $batch->failedJobs);
+                    }
+                });
+
+            $batch = $pending->dispatch();
+
+            $log->update(['batch_id' => $batch->id]);
+
+            DB::commit();
+
+            return back()->with('status', "Legacy Sync posisi {$posDate} sedang diproses.");
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return back()->with('error', "Gagal menjalankan Legacy Sync: " . $e->getMessage());
+        }
     }
 
     public function updateJadwal(Request $request)
@@ -364,52 +415,48 @@ class LoanImportController extends Controller
 
         $progress = null;
 
+        // 🔹 INI DIA TEMPATNYA (yang kamu tanyakan)
+        $run = LegacySyncRun::query()
+            ->whereDate('posisi_date', (string)$log->position_date)
+            ->latest('id')
+            ->first();
+
+        // =========================
+        // UTAMA: ambil dari job batch
+        // =========================
         if ($batchId !== '') {
             $batch = Bus::findBatch($batchId);
 
             if ($batch) {
                 $progress = $this->buildBatchProgress($batch);
-
-                // ✅ AUTO-FINALIZE (anti "RUNNING selamanya")
-                if (strtolower($status) === 'running' && $batch->finished()) {
-                    $finalStatus = $batch->failedJobs > 0 ? 'failed' : 'success';
-                    $finalMsg    = $finalStatus === 'success'
-                        ? 'Selesai (batch finished).'
-                        : 'Selesai dengan error (ada job gagal).';
-
-                    try {
-                        $log->update([
-                            'status'       => $finalStatus,
-                            'message'      => $finalMsg,
-                            'failed_cases' => (int)$batch->failedJobs,
-                        ]);
-                        $status  = $finalStatus;
-                        $message = $finalMsg;
-                    } catch (\Throwable $e) {
-                        // kalau update gagal, minimal endpoint tetap kasih progress
-                    }
-                }
-            } else {
-                // batch_id ada tapi record batch hilang / belum ada tabel job_batches
-                $progress = [
-                    'total'     => (int)($log->total_cases ?? 0),
-                    'processed' => 0,
-                    'pending'   => (int)($log->total_cases ?? 0),
-                    'failed'    => (int)($log->failed_cases ?? 0),
-                    'percent'   => 0,
-                    'note'      => 'Batch tidak ditemukan (cek job_batches).',
-                ];
             }
         }
 
+        // =========================
+        // FALLBACK: kalau batch null / kosong
+        // =========================
+        if (!$progress && $run) {
+            $total     = (int) $run->total;
+            $processed = (int) $run->processed;
+            $failed    = (int) $run->failed;
+
+            $percent = $total > 0 ? (int) floor(($processed / $total) * 100) : 0;
+
+            $progress = [
+                'total'     => $total,
+                'processed' => $processed,
+                'pending'   => max(0, $total - $processed),
+                'failed'    => $failed,
+                'percent'   => $percent,
+                'note'      => 'Progress dari legacy_sync_runs',
+            ];
+        }
+
         return [
-            'found'         => true,
-            'position_date' => (string)$log->position_date,
-            'status'        => $status,
-            'message'       => $message,
-            'batch_id'      => $batchId ?: null,
-            'progress'      => $progress,
-            'updated_at'    => optional($log->updated_at)->toDateTimeString(),
+            'found'    => true,
+            'status'   => $status,
+            'message'  => $message,
+            'progress' => $progress,
         ];
     }
 
