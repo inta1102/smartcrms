@@ -2,31 +2,30 @@
 
 namespace App\Console\Commands;
 
-use App\Services\Kpi\MarketingKpiMonthlyService;
+use App\Services\Kpi\MarketingKpiCalculatorService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 
 class KpiMarketingCalculate extends Command
 {
-    protected $signature = 'kpi:marketing-calculate {--period=} {--user_id=}';
-    protected $description = 'Recalc KPI marketing monthly score per period (based on target & snapshot/live)';
+    protected $signature = 'kpi:marketing-calc {--period=} {--user_id=}';
+    protected $description = 'Calculate KPI marketing score (OS & NOA) per period from approved targets + snapshots';
 
-    public function handle(MarketingKpiMonthlyService $svc): int
+    public function handle(MarketingKpiCalculatorService $svc): int
     {
         $period = $this->option('period')
-            ? Carbon::parse($this->option('period'))->startOfMonth()
-            : now()->startOfMonth();
+            ? Carbon::parse($this->option('period'))->startOfMonth()->toDateString()
+            : now()->startOfMonth()->toDateString();
 
         $userId = $this->option('user_id') ? (int) $this->option('user_id') : null;
 
-        if ($userId) {
-            $svc->recalcForUserAndPeriod($userId, $period);
-            $this->info("OK calculate period={$period->toDateString()} user_id={$userId}");
-            return self::SUCCESS;
-        }
+        $user = auth()->user();
+        $calculatedBy = $user ? (int) $user->id : null;
 
-        // kalau mau all AO, kamu bisa loop user ao_code di sini (mirip recalcAll controller)
-        $this->warn("No user_id provided. Implement all-AO loop here if needed.");
+        $res = $svc->calculateForPeriod($period, $userId, $calculatedBy);
+
+        $this->info("OK calc period={$res['period']} targets={$res['targets']} upsert={$res['upsert']}");
+
         return self::SUCCESS;
     }
 }
