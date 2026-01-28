@@ -2,27 +2,31 @@
 
 namespace App\Console\Commands;
 
-use App\Services\Kpi\MarketingKpiSnapshotService;
+use App\Services\Kpi\MarketingKpiMonthlyService;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
 
-class KpiMarketingSnapshot extends Command
+class KpiMarketingCalculate extends Command
 {
-    protected $signature = 'kpi:marketing-snapshot {--period=} {--user_id=}';
-    protected $description = 'Build KPI marketing snapshot (OS opening/closing, OS growth, NOA new) per period';
+    protected $signature = 'kpi:marketing-calculate {--period=} {--user_id=}';
+    protected $description = 'Recalc KPI marketing monthly score per period (based on target & snapshot/live)';
 
-    public function handle(MarketingKpiSnapshotService $svc): int
+    public function handle(MarketingKpiMonthlyService $svc): int
     {
         $period = $this->option('period')
-            ? Carbon::parse($this->option('period'))->startOfMonth()->toDateString()
-            : now()->startOfMonth()->toDateString();
+            ? Carbon::parse($this->option('period'))->startOfMonth()
+            : now()->startOfMonth();
 
         $userId = $this->option('user_id') ? (int) $this->option('user_id') : null;
 
-        $res = $svc->buildForPeriod($period, $userId);
+        if ($userId) {
+            $svc->recalcForUserAndPeriod($userId, $period);
+            $this->info("OK calculate period={$period->toDateString()} user_id={$userId}");
+            return self::SUCCESS;
+        }
 
-        $this->info("OK snapshot period={$res['period']} users={$res['users']} upsert={$res['upsert']}");
-
+        // kalau mau all AO, kamu bisa loop user ao_code di sini (mirip recalcAll controller)
+        $this->warn("No user_id provided. Implement all-AO loop here if needed.");
         return self::SUCCESS;
     }
 }
