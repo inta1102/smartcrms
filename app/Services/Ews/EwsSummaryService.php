@@ -20,6 +20,14 @@ class EwsSummaryService
         // =========================
         // 1) Filter dasar
         // =========================
+
+        $dpdDist = [];
+        $kolekDist = [];
+        $scope = $this->visibleAoCodesFor($user); // atau default "Unknown"
+        $topRiskAccounts = [];
+        $topExposureRiskAccounts = [];
+        $top10RestrukRisk = [];
+
         $latestDate = LoanAccount::max('position_date');
         $positionDate = $request->string('position_date')->toString() ?: $latestDate;
 
@@ -41,11 +49,7 @@ class EwsSummaryService
         // Kalau user role yg boleh lihat semua, function bisa return null (artinya no filter)
         // Kalau return [] artinya tidak boleh lihat apa pun → kosongkan KPI
         if (is_array($visibleAoCodes) && empty($visibleAoCodes)) {
-            return [
-                'filters' => compact('positionDate', 'branchCode', 'aoCode'),
-                'latestDate' => $latestDate,
-                'cards' => $this->emptyCards(),
-            ];
+            return $this->emptySummaryPayload($positionDate,$branchCode,$aoCode,$latestDate,$user);
         }
 
         // =========================
@@ -202,7 +206,7 @@ class EwsSummaryService
 
         // TL/Kasi: ambil bawahan dari org_assignments (leader_id = user->id)
         // Pastikan model OrgAssignment ada di project kamu
-        if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['TL','TLL','TLR','KSL','KSR','KSO'])) {
+        if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['TL','TLL','TLR','KSL','KSR','KSO','KSA'])) {
             if (!class_exists(\App\Models\OrgAssignment::class)) {
                 return [];
             }
@@ -549,6 +553,21 @@ class EwsSummaryService
             $row->reason = 'R0-30 + DPD>0';
             return $row;
         });
+    }
+
+    protected function emptySummaryPayload($positionDate, $branchCode, $aoCode, $latestDate, $user): array
+    {
+        return [
+            'filters' => compact('positionDate', 'branchCode', 'aoCode'),
+            'latestDate' => $latestDate,
+            'cards' => $this->emptyCards(),
+            'dpdDist' => [],
+            'kolekDist' => [],
+            'scope' => $this->scopeLabelForEws($user),
+            'topRiskAccounts' => [],
+            'topExposureRiskAccounts' => [],
+            'top10RestrukRisk' => [],
+        ];
     }
 
 }
