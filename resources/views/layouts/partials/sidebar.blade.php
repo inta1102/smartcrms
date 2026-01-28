@@ -164,7 +164,7 @@
     $approvalNonLitUrl = null;
 
     if ($isTl) {
-        $approvalNonLitUrl = route('tl.approvals.nonlit.index');
+        $approvalNonLitUrl = route('supervision.tl.approvals.nonlit.index');
     } elseif ($isKasi) {
         $approvalNonLitUrl = route('supervision.kasi.approvals.nonlit.index');
     }
@@ -492,6 +492,41 @@
             ],
         ] : [],
 
+                // ================= KPI MARKETING =================
+        'kpi_marketing' => [
+            [
+                'label'  => 'Target KPI Marketing',
+                'icon'   => '🎯',
+                'href'   => \Illuminate\Support\Facades\Route::has('kpi.marketing.targets.index')
+                    ? route('kpi.marketing.targets.index')
+                    : null,
+                'active' => request()->routeIs('kpi.marketing.targets.*'),
+                'show'   => $u && $u->hasAnyRole(['AO','RO','SO','FE','BE']),
+            ],
+            [
+                'label'  => 'Approval KPI Marketing',
+                'icon'   => '✅',
+                'href'   => \Illuminate\Support\Facades\Route::has('kpi.marketing.approvals.index')
+                    ? route('kpi.marketing.approvals.index')
+                    : null,
+                'active' => request()->routeIs('kpi.marketing.approvals.*'),
+                // Approver pakai level seperti yg kamu pakai di approval controller
+                'show'   => $u && in_array(strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)), 
+                            ['TL','TLL','TLR','TLF','KSL','KSO','KSA','KSF','KSD','KSR'], true),
+            ],
+            [
+                'label'  => 'Ranking KPI',
+                'icon'   => '🏆',
+                'href'   => \Illuminate\Support\Facades\Route::has('kpi.marketing.ranking.index')
+                    ? route('kpi.marketing.ranking.index')
+                    : null,
+                'active' => request()->routeIs('kpi.marketing.ranking.*'),
+                // Approver pakai level seperti yg kamu pakai di approval controller
+                'show'   => $u && in_array(strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)), 
+                            ['TL','TLL','TLR','TLF','KSL','KSO','KSA','KSF','KSD','KSR'], true),
+            ],
+        ],
+
         // ================= MONITORING =================
         'monitoring' => [
             $canViewHtMonitoring
@@ -712,6 +747,41 @@
                     @endforeach
                 </div>
             @endif
+            {{-- KPI MARKETING --}}
+            @if(!empty($menus['kpi_marketing']))
+                @php
+                    $anyShow = collect($menus['kpi_marketing'])->contains(function ($m) {
+                        return (!array_key_exists('show', $m) || $m['show']);
+                    });
+                @endphp
+
+                @if($anyShow)
+                    <div class="{{ $sectionDivider }}"></div>
+                    <div class="{{ $sectionTitle }}">KPI Marketing</div>
+                    <div class="mt-2 space-y-1">
+                        @foreach($menus['kpi_marketing'] as $m)
+                            @if(!array_key_exists('show', $m) || $m['show'])
+                                @if(!empty($m['href']))
+                                    <a href="{{ $m['href'] }}" class="{{ $itemClass((bool)$m['active']) }}">
+                                        <span class="opacity-90">{{ $m['icon'] }}</span>
+                                        <span class="font-semibold flex-1">{{ $m['label'] }}</span>
+
+                                        @if(!empty($m['badge']))
+                                            <span class="{{ $badgeClass((bool)$m['active']) }}">
+                                                {{ $m['badge'] }}
+                                            </span>
+                                        @endif
+                                    </a>
+                                @else
+                                    <div class="px-3 py-2 text-xs text-slate-400">
+                                        {{ $m['disabledText'] ?? 'Menu belum siap / route belum ada.' }}
+                                    </div>
+                                @endif
+                            @endif
+                        @endforeach
+                    </div>
+                @endif
+            @endif
 
             {{-- MONITORING --}}
             <div class="{{ $sectionDivider }}"></div>
@@ -922,6 +992,41 @@
                             @endif
                         @endforeach
                     </div>
+                @endif
+                {{-- KPI MARKETING --}}
+                @if(!empty($menus['kpi_marketing']))
+                    @php
+                        $anyShow = collect($menus['kpi_marketing'])->contains(function ($m) {
+                            return (!array_key_exists('show', $m) || $m['show']);
+                        });
+                    @endphp
+
+                    @if($anyShow)
+                        <div class="{{ $sectionDivider }}"></div>
+                        <div class="{{ $sectionTitle }}">KPI Marketing</div>
+                        <div class="mt-2 space-y-1">
+                            @foreach($menus['kpi_marketing'] as $m)
+                                @if(!array_key_exists('show', $m) || $m['show'])
+                                    @if(!empty($m['href']))
+                                        <a href="{{ $m['href'] }}" class="{{ $itemClass((bool)$m['active']) }}">
+                                            <span class="opacity-90">{{ $m['icon'] }}</span>
+                                            <span class="font-semibold flex-1">{{ $m['label'] }}</span>
+
+                                            @if(!empty($m['badge']))
+                                                <span class="{{ $badgeClass((bool)$m['active']) }}">
+                                                    {{ $m['badge'] }}
+                                                </span>
+                                            @endif
+                                        </a>
+                                    @else
+                                        <div class="px-3 py-2 text-xs text-slate-400">
+                                            {{ $m['disabledText'] ?? 'Menu belum siap / route belum ada.' }}
+                                        </div>
+                                    @endif
+                                @endif
+                            @endforeach
+                        </div>
+                    @endif
                 @endif
 
                 {{-- MONITORING --}}

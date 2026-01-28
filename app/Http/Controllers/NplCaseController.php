@@ -36,9 +36,11 @@ class NplCaseController extends Controller
         $status = (string) $request->get('status', 'open'); // open|closed
         $search = trim((string) $request->get('q', ''));
         $branch = trim((string) $request->get('branch', ''));
+        $target = (string) $request->get('target', '');     // '' | 'missing' | 'has'
 
+        // ✅ SINGLE QUERY (jangan dobel query)
         $query = NplCase::query()
-            ->with('loanAccount');
+            ->with(['loanAccount', 'activeResolutionTarget']); // penting biar badge nggak N+1
 
         /**
          * ✅ VISIBILITY
@@ -54,6 +56,13 @@ class NplCaseController extends Controller
             $query->visibleFor($user); // ✅ PAGAR VISIBILITY DEFAULT
         }
 
+        // ✅ Filter target penyelesaian (pakai query yang sama)
+        if ($target === 'missing') {
+            $query->whereDoesntHave('activeResolutionTarget');
+        } elseif ($target === 'has') {
+            $query->whereHas('activeResolutionTarget');
+        }
+
         // status open/closed
         $query
             ->when($status === 'open', fn ($q) => $q->whereNull('closed_at'))
@@ -62,16 +71,20 @@ class NplCaseController extends Controller
         // search rekening/nama
         if ($search !== '') {
             $query->whereHas('loanAccount', function ($q) use ($search) {
-                $q->where('account_no', 'like', "%{$search}%")
-                ->orWhere('customer_name', 'like', "%{$search}%");
+                $q->where(function ($w) use ($search) {
+                    $w->where('account_no', 'like', "%{$search}%")
+                    ->orWhere('customer_name', 'like', "%{$search}%");
+                });
             });
         }
 
         // filter cabang
         if ($branch !== '') {
             $query->whereHas('loanAccount', function ($q) use ($branch) {
-                $q->where('branch_code', $branch)
-                ->orWhere('branch_name', 'like', "%{$branch}%");
+                $q->where(function ($w) use ($branch) {
+                    $w->where('branch_code', $branch)
+                    ->orWhere('branch_name', 'like', "%{$branch}%");
+                });
             });
         }
 
@@ -81,7 +94,7 @@ class NplCaseController extends Controller
             ->paginate(15)
             ->withQueryString();
 
-        return view('cases.index', compact('cases', 'status', 'search', 'branch'));
+        return view('cases.index', compact('cases', 'status', 'search', 'branch', 'target'));
     }
 
     public function syncLegacySp(NplCase $case)

@@ -111,5 +111,11 @@ class AuthServiceProvider extends ServiceProvider
                 UserRole::KOM,
             ], true);
         });
+
+        Gate::define('recalcMarketingKpi', function ($user) {
+            return $user->hasAnyRole([
+                'KSR', 'KTI', 'DIR', 'KSL', 'KOM'
+            ]);
+        });
     }
 }

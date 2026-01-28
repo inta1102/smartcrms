@@ -19,6 +19,9 @@ class Kernel extends ConsoleKernel
         \App\Console\Commands\SyncUsersApi::class,
         \App\Console\Commands\ProcessSomasiDeadlines::class,
         \App\Console\Commands\RefreshWarningChain::class,
+        \App\Console\Commands\KpiMarketingSnapshot::class,
+        \App\Console\Commands\KpiMarketingCalculate::class,
+        \App\Console\Commands\CalcMarketingKpiAchievements::class,
     ];
 
     protected function schedule(Schedule $schedule): void
@@ -61,6 +64,12 @@ class Kernel extends ConsoleKernel
             ->dailyAt('08:00')
             ->withoutOverlapping()
             ->runInBackground();
+
+        $schedule->command('kpi:calc-marketing-achievements --period='.now()->format('Y-m').' --force')
+            ->dailyAt('20:30')
+            ->withoutOverlapping()
+            ->runInBackground();
+
     }
 
     /**

@@ -17,6 +17,22 @@
             </div>
 
             <form method="GET" action="{{ route('cases.index') }}" class="flex flex-wrap gap-2 items-end">
+                <div class="space-y-1">
+                    <label class="text-sm font-semibold text-slate-700">Target Penyelesaian</label>
+                    <select name="target"
+                            class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-slate-400 focus:outline-none">
+                        <option value="" {{ request('target') === null || request('target') === '' ? 'selected' : '' }}>
+                            Semua
+                        </option>
+                        <option value="missing" {{ request('target') === 'missing' ? 'selected' : '' }}>
+                            Belum Ada Target
+                        </option>
+                        <option value="has" {{ request('target') === 'has' ? 'selected' : '' }}>
+                            Sudah Ada Target
+                        </option>
+                    </select>
+                </div>
+
                 <div>
                     <label class="block text-xs font-medium text-slate-600 mb-1">Status Case</label>
                     <select name="status"
@@ -60,7 +76,7 @@
                             <th class="px-3 py-2 text-center font-semibold text-slate-600">Kolek</th>
                             <th class="px-3 py-2 text-center font-semibold text-slate-600">DPD</th>
                             <th class="px-3 py-2 text-right font-semibold text-slate-600 hidden sm:table-cell">OS</th>
-                            <th class="px-3 py-2 text-center font-semibold text-slate-600 hidden md:table-cell">Prioritas</th>
+                            <!-- <th class="px-3 py-2 text-center font-semibold text-slate-600 hidden md:table-cell">Prioritas</th> -->
                             <th class="px-3 py-2 text-center font-semibold text-slate-600 hidden md:table-cell">Status</th>
                             <th class="px-3 py-2 text-center font-semibold text-slate-600">Aksi</th>
                         </tr>
@@ -109,7 +125,7 @@
                                     {{ $loan ? number_format($loan->outstanding, 0, ',', '.') : '-' }}
                                 </td>
 
-                                <td class="px-3 py-2 text-right text-xs hidden sm:table-cell">
+                                <!-- <td class="px-3 py-2 text-right text-xs hidden sm:table-cell">
                                     @php
                                         $prio = $case->priority ?? 'normal';
                                         $prioClass = match ($prio) {
@@ -120,18 +136,44 @@
                                     @endphp
                                     <span class="inline-flex px-2 py-0.5 rounded-full text-[10px] font-semibold {{ $prioClass }}">
                                         {{ strtoupper($prio) }}
-                                    </span>
-                                </td>
+                                    </span>                                    
+                                </td> -->
 
                                 <td class="px-3 py-2 text-right text-xs hidden sm:table-cell">
                                     @if ($case->closed_at)
                                         <span class="inline-flex px-2 py-0.5 rounded-full bg-slate-200 text-slate-700 text-[10px] font-semibold">
                                             Closed
                                         </span>
-                                    @else
-                                        <span class="inline-flex px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-semibold">
-                                            Open
-                                        </span>
+                                    @else                                       
+                                        <div class="flex gap-2 items-center">
+                                            <span class="inline-flex px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[10px] font-semibold">
+                                                Open
+                                            </span>
+                                            @if(!$case->activeResolutionTarget)
+                                                <div class="relative inline-flex group">
+                                                    <span class="inline-flex items-center gap-2 px-3 py-1 text-xs font-semibold text-amber-700">
+                                                        ⏳ Belum Ada Target
+                                                    </span>
+
+                                                    <div class="pointer-events-none absolute left-1/2 top-full z-20 mt-2 w-max -translate-x-1/2 opacity-0 transition
+                                                                group-hover:opacity-100">
+                                                        <div class="rounded-xl bg-slate-900 px-3 py-2 text-xs text-white shadow-lg">
+                                                            Belum ada target penyelesaian aktif (belum disetujui/diaktifkan).
+                                                        </div>
+                                                        <div class="mx-auto -mt-1 h-2 w-2 rotate-45 bg-slate-900"></div>
+                                                    </div>
+                                                </div>
+
+                                            @else
+                                                @php
+                                                    $daysLeft = now()->diffInDays($case->activeResolutionTarget->target_date, false);
+                                                @endphp
+
+                                                <span class="badge {{ $daysLeft <= 30 ? 'badge-amber' : 'badge-green' }}">
+                                                    🎯 {{ $case->activeResolutionTarget->target_date->format('d M Y') }}
+                                                </span>
+                                            @endif
+                                        </div>
                                     @endif
                                 </td>
                                 <td class="px-3 py-2 text-center">

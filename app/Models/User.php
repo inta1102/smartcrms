@@ -253,4 +253,19 @@ class User extends Authenticatable
         return $this->activeOrgAssignment()?->leader_id;
     }
 
+    public function marketingKpiTargets()
+    {
+        return $this->hasMany(\App\Models\MarketingKpiTarget::class, 'user_id');
+    }
+
+    public function marketingKpiSnapshots()
+    {
+        return $this->hasMany(\App\Models\MarketingKpiSnapshot::class, 'user_id');
+    }
+
+    public function marketingKpiResults()
+    {
+        return $this->hasMany(\App\Models\MarketingKpiResult::class, 'user_id');
+    }
+
 }

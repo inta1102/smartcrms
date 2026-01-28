@@ -60,6 +60,10 @@ use App\Http\Controllers\Lending\LendingPerformanceController;
 use App\Http\Controllers\Lending\LendingTrendController;
 
 use App\Http\Controllers\ShmCheckRequestController;
+use App\Http\Controllers\Kpi\MarketingTargetController;
+use App\Http\Controllers\Kpi\MarketingTargetApprovalController;
+use App\Http\Controllers\Kpi\MarketingKpiAchievementController;
+use App\Http\Controllers\Kpi\MarketingKpiRankingController;
 
 Route::model('action', LegalAction::class);
 
@@ -354,6 +358,15 @@ Route::middleware('auth')->group(function () {
                 Route::get('/targets', [TargetApprovalTlController::class, 'index'])->name('targets.index');
                 Route::post('/targets/{target}/approve', [TargetApprovalTlController::class, 'approve'])->name('targets.approve');
                 Route::post('/targets/{target}/reject', [TargetApprovalTlController::class, 'reject'])->name('targets.reject');
+                    // ✅ tambah: NON-LIT approvals
+                Route::get('/nonlit', [\App\Http\Controllers\Supervision\NonLitApprovalTlController::class, 'index'])
+                    ->name('nonlit.index');
+
+                Route::post('/nonlit/{nonLit}/approve', [\App\Http\Controllers\Supervision\NonLitApprovalTlController::class, 'approve'])
+                    ->name('nonlit.approve');
+
+                Route::post('/nonlit/{nonLit}/reject', [\App\Http\Controllers\Supervision\NonLitApprovalTlController::class, 'reject'])
+                    ->name('nonlit.reject');
             });
 
         Route::prefix('kasi/approvals')->name('kasi.approvals.')
@@ -362,25 +375,12 @@ Route::middleware('auth')->group(function () {
                 Route::get('/targets', [TargetApprovalKasiController::class, 'index'])->name('targets.index');
                 Route::post('/targets/{target}/approve', [TargetApprovalKasiController::class, 'approve'])->name('targets.approve');
                 Route::post('/targets/{target}/reject', [TargetApprovalKasiController::class, 'reject'])->name('targets.reject');
+        
+                Route::get('/nonlit', [\App\Http\Controllers\Supervision\NonLitApprovalKasiController::class, 'index'])->name('nonlit.index');
+                Route::post('/nonlit/{nonLit}/approve', [\App\Http\Controllers\Supervision\NonLitApprovalKasiController::class, 'approve'])->name('nonlit.approve');
+                Route::post('/nonlit/{nonLit}/reject', [\App\Http\Controllers\Supervision\NonLitApprovalKasiController::class, 'reject'])->name('nonlit.reject');
             });
 
-            // ===== APPROVAL NON-LIT (TL) =====
-        Route::prefix('tl/approvals')->name('tl.approvals.')->group(function () {
-            Route::get('/nonlit', [\App\Http\Controllers\Supervision\NonLitApprovalTlController::class, 'index'])
-                ->name('nonlit.index');
-
-            Route::post('/nonlit/{nonLit}/approve', [\App\Http\Controllers\Supervision\NonLitApprovalTlController::class, 'approve'])
-                ->name('nonlit.approve');
-
-            Route::post('/nonlit/{nonLit}/reject', [\App\Http\Controllers\Supervision\NonLitApprovalTlController::class, 'reject'])
-                ->name('nonlit.reject');
-        });
-    });
-
-    Route::prefix('supervision/kasi/approvals')->name('supervision.kasi.approvals.')->middleware('auth')->group(function () {
-        Route::get('/nonlit', [\App\Http\Controllers\Supervision\NonLitApprovalKasiController::class, 'index'])->name('nonlit.index');
-        Route::post('/nonlit/{nonLit}/approve', [\App\Http\Controllers\Supervision\NonLitApprovalKasiController::class, 'approve'])->name('nonlit.approve');
-        Route::post('/nonlit/{nonLit}/reject', [\App\Http\Controllers\Supervision\NonLitApprovalKasiController::class, 'reject'])->name('nonlit.reject');
     });
 
     // =======================================================
@@ -438,6 +438,65 @@ Route::middleware('auth')->group(function () {
     // download file
     Route::get('/shm-check/file/{file}', [ShmCheckRequestController::class, 'downloadFile'])
         ->name('shm.file.download');
+
+        // ===============================
+        // KPI
+        // ===============================
+    Route::get('/kpi/marketing/targets', [MarketingTargetController::class, 'index'])
+        ->name('kpi.marketing.targets.index');
+
+    Route::get('/kpi/marketing/targets/create', [MarketingTargetController::class, 'create'])
+        ->name('kpi.marketing.targets.create');
+
+    Route::post('/kpi/marketing/targets', [MarketingTargetController::class, 'store'])
+        ->name('kpi.marketing.targets.store');
+
+    Route::get('/kpi/marketing/targets/{target}/edit', [MarketingTargetController::class, 'edit'])
+        ->name('kpi.marketing.targets.edit');
+
+    Route::put('/kpi/marketing/targets/{target}', [MarketingTargetController::class, 'update'])
+        ->name('kpi.marketing.targets.update');
+
+    Route::post('/kpi/marketing/targets/{target}/submit', [MarketingTargetController::class, 'submit'])
+        ->name('kpi.marketing.targets.submit');
+
+    Route::get('/kpi/marketing/achievements', [\App\Http\Controllers\Kpi\MarketingAchievementController::class, 'index'])
+        ->name('kpi.marketing.achievements.index');
+
+    Route::get('/kpi/marketing/ranking', [MarketingKpiRankingController::class, 'index'])
+        ->name('kpi.marketing.ranking.index');
+
+        // routes/web.php
+    Route::post('/kpi/marketing/ranking/recalc', 
+        [\App\Http\Controllers\Kpi\MarketingKpiRankingController::class, 'recalcAll']
+    )->name('kpi.marketing.ranking.recalc');
+
+
+        // ===============================
+        // Approval KPI
+        // ===============================
+
+    // inbox TL/Kasi
+    Route::get('/kpi/marketing/approvals', [MarketingTargetApprovalController::class, 'index'])
+        ->name('kpi.marketing.approvals.index');
+
+    // form review (TL/Kasi boleh adjust)
+    Route::get('/kpi/marketing/approvals/{target}', [MarketingTargetApprovalController::class, 'show'])
+        ->name('kpi.marketing.approvals.show');
+
+    // simpan perubahan angka final (sebelum approve)
+    Route::put('/kpi/marketing/approvals/{target}', [MarketingTargetApprovalController::class, 'update'])
+        ->name('kpi.marketing.approvals.update');
+
+    // approve / reject
+    Route::post('/kpi/marketing/approvals/{target}/approve', [MarketingTargetApprovalController::class, 'approve'])
+        ->name('kpi.marketing.approvals.approve');
+
+    Route::post('/kpi/marketing/approvals/{target}/reject', [MarketingTargetApprovalController::class, 'reject'])
+        ->name('kpi.marketing.approvals.reject');
+
+    Route::get('/kpi/marketing/targets/{target}/achievement', [MarketingKpiAchievementController::class, 'show'])
+        ->name('kpi.marketing.targets.achievement');
 
 });    
 
