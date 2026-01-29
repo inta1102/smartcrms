@@ -1,24 +1,82 @@
-*.log
-.DS_Store
+# =========================================================
+# SmartCRMS (Laravel) - Final .gitignore
+# Vite build dilakukan di LOCAL => /public/build HARUS ikut repo
+# Niagahoster hPanel => docroot locked => root public_html files jangan ikut repo
+# =========================================================
+
+# -------------------------
+# Secrets / Environment
+# -------------------------
 .env
-.env.backup
-.env.production
-.phpactor.json
-.phpunit.result.cache
-/.fleet
-/.idea
-/.nova
-/.phpunit.cache
-/.vscode
-/.zed
-/auth.json
-/node_modules
-/public/build
-/public/hot
-/public/storage
+.env.*
+!.env.example
+
+# -------------------------
+# Laravel runtime files
+# -------------------------
 /storage/*.key
-/storage/pail
-/vendor
-Homestead.json
-Homestead.yaml
+/storage/logs/*
+/storage/framework/cache/*
+/storage/framework/sessions/*
+/storage/framework/views/*
+/storage/framework/testing/*
+!/storage/framework/.gitignore
+
+/bootstrap/cache/*
+!/bootstrap/cache/.gitignore
+
+# -------------------------
+# Composer (pilih salah satu strategi)
+# -------------------------
+/vendor/
+composer.phar
+
+# -------------------------
+# Node / Vite
+# -------------------------
+/node_modules/
+/public/hot
+# NOTE: JANGAN ignore /public/build karena build di local dan harus ikut deploy
+
+# -------------------------
+# Testing / Coverage
+# -------------------------
+/coverage/
+/phpunit.xml
+/.phpunit.result.cache
+
+# -------------------------
+# IDE / OS files
+# -------------------------
+.DS_Store
 Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.log
+
+# -------------------------
+# Local tooling / misc
+# -------------------------
+/npm-debug.log*
+/yarn-error.log*
+/pnpm-debug.log*
+/*.zip
+/*.tar
+/*.tar.gz
+
+# -------------------------
+# Hosting specific: Niagahoster hPanel
+# Root public_html "redirect" files jangan sampai ketimpa git pull
+# -------------------------
+/public_html/index.php
+/public_html/.htaccess
+/public_html/index.php.bak
+/public_html/.htaccess.bak
+
+# -------------------------
+# Optional: kalau ada file upload user di public/ dan kamu simpan lokal
+# (umumnya file upload disimpan di storage dan tidak masuk git)
+# -------------------------
+# /public/uploads/
