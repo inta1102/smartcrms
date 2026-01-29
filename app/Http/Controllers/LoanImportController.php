@@ -18,6 +18,7 @@ use Maatwebsite\Excel\Facades\Excel;
 use Maatwebsite\Excel\Validators\ValidationException as ExcelValidationException;
 use App\Jobs\RunMonthlyLoanSnapshot;
 use App\Models\LegacySyncRun;
+use Illuminate\Support\Facades\DB;
 
 
 
