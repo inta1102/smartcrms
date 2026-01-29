@@ -71,6 +71,18 @@ class Kernel extends ConsoleKernel
             ->withoutOverlapping()
             ->runInBackground();
 
+        $schedule->call(function () {
+                DB::table('queue_heartbeats')->updateOrInsert(
+                    ['name' => 'queue-worker'],
+                    ['last_seen_at' => now()]
+                );
+            })->everyMinute();
+
+            // Heartbeat tiap menit
+        $schedule->command('queue:heartbeat --name=crms-worker --queue=crms,sync,default')
+            ->everyMinute()
+            ->withoutOverlapping()
+            ->runInBackground();
     }
 
     /**

@@ -191,9 +191,9 @@
             <div>
                 <label class="text-xs text-slate-500">Status</label>
                 <select name="status" class="mt-1 w-full rounded-xl border px-3 py-2 text-sm">
-                    <option value="pending" @selected($status==='pending')>Pending</option>
-                    <option value="processing" @selected($status==='processing')>Processing</option>
-                    <option value="all" @selected($status==='all')>All</option>
+                    <option value="pending" @selected(($filterStatus ?? 'pending') === 'pending')>Pending</option>
+                    <option value="processing" @selected(($filterStatus ?? 'pending') === 'processing')>Processing</option>
+                    <option value="all" @selected(($filterStatus ?? 'pending') === 'all')>All</option>
                 </select>
             </div>
 

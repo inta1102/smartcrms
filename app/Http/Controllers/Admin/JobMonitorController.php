@@ -16,14 +16,14 @@ class JobMonitorController extends Controller
 {
     public function index(Request $request, JobHealthService $healthSvc)
     {
-        $status   = $request->get('status', 'pending'); // pending|processing|all
-        $queue    = $request->get('queue');
-        $q        = trim((string) $request->get('q'));
-        $olderMin = (int) $request->get('older', 0);
+        $filterStatus = $request->get('status', 'pending'); // pending|processing|all
+        $queue        = $request->get('queue');
+        $q            = trim((string) $request->get('q'));
+        $olderMin     = (int) $request->get('older', 0);
 
-        $pendingCount = DB::table('jobs')->whereNull('reserved_at')->count();
+        $pendingCount    = DB::table('jobs')->whereNull('reserved_at')->count();
         $processingCount = DB::table('jobs')->whereNotNull('reserved_at')->count();
-        $failedCount = DB::table('failed_jobs')->count();
+        $failedCount     = DB::table('failed_jobs')->count();
 
         $oldestPending = DB::table('jobs')->whereNull('reserved_at')->min('available_at');
         $oldestPendingAge = $oldestPending
@@ -34,9 +34,9 @@ class JobMonitorController extends Controller
             ->select(['id', 'queue', 'attempts', 'available_at', 'reserved_at', 'created_at', 'payload'])
             ->orderByDesc('id');
 
-        if ($status === 'pending') {
+        if ($filterStatus === 'pending') {
             $jobsQ->whereNull('reserved_at');
-        } elseif ($status === 'processing') {
+        } elseif ($filterStatus === 'processing') {
             $jobsQ->whereNotNull('reserved_at');
         }
 
@@ -82,22 +82,24 @@ class JobMonitorController extends Controller
 
         $health = $healthSvc->summary();
 
-        $hb = DB::table('queue_heartbeats')->where('name', 'queue_runner')->first();
+        // ✅ PASTIKAN name ini sama dengan yang command heartbeat tulis
+        $hbName = 'crms-worker'; // atau config('queue.heartbeat_name')
+        $hb = DB::table('queue_heartbeats')->where('name', $hbName)->first();
 
         $ageMin = null;
         if ($hb?->last_seen_at) {
             $ageMin = now()->diffInMinutes(\Carbon\Carbon::parse($hb->last_seen_at));
         }
 
-        $status = 'down';
+        $runnerStatus = 'down';
         if (!is_null($ageMin)) {
-            if ($ageMin <= 2) $status = 'ok';
-            elseif ($ageMin <= 5) $status = 'warn';
-            else $status = 'down';
+            if ($ageMin <= 2) $runnerStatus = 'ok';
+            elseif ($ageMin <= 5) $runnerStatus = 'warn';
+            else $runnerStatus = 'down';
         }
 
         $health['runner'] = [
-            'status' => $status,
+            'status' => $runnerStatus,
             'last_seen' => $hb?->last_seen_at ? \Carbon\Carbon::parse($hb->last_seen_at)->format('Y-m-d H:i:s') : '-',
             'age_minutes' => $ageMin,
             'last_run_processed' => $hb?->last_run_processed ?? 0,
@@ -105,11 +107,11 @@ class JobMonitorController extends Controller
             'last_run_ms' => $hb?->last_run_ms ?? 0,
         ];
 
+        // ✅ kirim status filter pakai nama yang benar
         return view('admin.jobs.index', compact(
-            'jobs','queues','status','queue','q','olderMin',
+            'jobs','queues','filterStatus','queue','q','olderMin',
             'pendingCount','processingCount','failedCount','oldestPendingAge','lastSyncSuccess',
-            'lastSyncFailed',
-            'health'
+            'lastSyncFailed','health'
         ));
     }
 
@@ -187,6 +189,34 @@ class JobMonitorController extends Controller
         SyncUsersFromSmartKpiApiJob::dispatch($full, 500, 10)->onQueue('sync');
 
         return back()->with('status', '✅ SyncUsers job didispatch ke queue=sync.');
+    }
+
+    protected function runnerHealth(string $name = 'crms-worker'): array
+    {
+        $hb = DB::table('queue_heartbeats')->where('name', $name)->first();
+
+        if (!$hb || empty($hb->last_seen_at)) {
+            return [
+                'status' => 'down',
+                'last_seen' => null,
+                'age_minutes' => null,
+                'meta' => null,
+            ];
+        }
+
+        $last = Carbon::parse($hb->last_seen_at);
+        $ageMin = now()->diffInMinutes($last);
+
+        $status = 'down';
+        if ($ageMin <= 2) $status = 'ok';
+        elseif ($ageMin <= 5) $status = 'warn';
+
+        return [
+            'status' => $status,
+            'last_seen' => $last->diffForHumans(),
+            'age_minutes' => $ageMin,
+            'meta' => $hb->meta ? json_decode($hb->meta, true) : null,
+        ];
     }
 
 }
