@@ -3,17 +3,19 @@
 @section('content')
 <div class="mx-auto max-w-7xl p-4 space-y-4">
 
-    <div class="flex items-center justify-between">
+    {{-- Header --}}
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
             <h1 class="text-xl font-bold text-slate-900">⚙️ Job Monitor</h1>
             <p class="text-sm text-slate-500">Pantau antrian job (database queue) & kesehatan proses update data.</p>
         </div>
 
-        <div class="flex gap-2">
+        <div class="flex flex-wrap items-center gap-2">
             <a href="{{ route('admin.jobs.failed') }}"
                class="rounded-xl border px-3 py-2 text-sm hover:bg-slate-50">
                Lihat Failed Jobs ({{ $failedCount }})
             </a>
+
             <form method="POST" action="{{ route('admin.jobs.run.sync_users') }}">
                 @csrf
                 <input type="hidden" name="full" value="1">
@@ -24,24 +26,137 @@
         </div>
     </div>
 
+    {{-- HEALTH PANEL --}}
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        {{-- Runner --}}
+        <div class="rounded-2xl border bg-white p-4 shadow-sm">
+            <div class="text-sm text-slate-500">Queue Runner</div>
+
+            <div class="mt-2 flex items-center gap-2">
+                @php
+                    $st = $health['runner']['status'] ?? 'down';
+                    $badge = $st === 'ok' ? 'bg-green-100 text-green-700'
+                        : ($st === 'warn' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700');
+                    $label = strtoupper($st);
+                @endphp
+
+                <span class="px-2 py-1 rounded-full text-xs font-semibold {{ $badge }}">{{ $label }}</span>
+
+                <div class="text-sm">
+                    <span class="text-slate-500">last seen:</span>
+                    <span class="font-medium">{{ $health['runner']['last_seen'] ?? '-' }}</span>
+                    @if(!is_null($health['runner']['age_minutes'] ?? null))
+                        <span class="text-slate-500">({{ $health['runner']['age_minutes'] }} min)</span>
+                    @endif
+                </div>
+            </div>
+
+            <div class="mt-2 text-xs text-slate-500">
+                oldest pending: {{ $health['counts']['oldest_pending_minutes'] ?? '-' }} min
+            </div>
+        </div>
+
+        {{-- Pending by Queue --}}
+        <div class="rounded-2xl border bg-white p-4 shadow-sm">
+            <div class="text-sm text-slate-500">Pending by Queue</div>
+            <div class="mt-3 space-y-2">
+                @php $pbq = $health['pending_by_queue'] ?? []; @endphp
+
+                @forelse($pbq as $r)
+                    <div class="flex items-center justify-between text-sm">
+                        <span class="font-medium">{{ $r->queue }}</span>
+                        <span class="tabular-nums">{{ $r->total }}</span>
+                    </div>
+                @empty
+                    <div class="text-sm text-slate-400">-</div>
+                @endforelse
+            </div>
+        </div>
+
+        {{-- Top Pending Jobs --}}
+        <div class="rounded-2xl border bg-white p-4 shadow-sm">
+            <div class="text-sm text-slate-500">Top Pending Jobs</div>
+            <div class="mt-3 space-y-2">
+                @php $tpj = $health['top_pending_jobs'] ?? []; @endphp
+
+                @forelse($tpj as $it)
+                    <div class="flex items-center justify-between text-sm gap-3">
+                        <span class="truncate" title="{{ $it['job'] }}">{{ $it['job'] }}</span>
+                        <span class="tabular-nums shrink-0">{{ $it['total'] }}</span>
+                    </div>
+                @empty
+                    <div class="text-sm text-slate-400">-</div>
+                @endforelse
+            </div>
+        </div>
+    </div>
+
+    {{-- OPTIONAL: Batch Summary --}}
+    @if(!empty($health['batches']))
+        <div class="rounded-2xl border bg-white p-4 shadow-sm">
+            <div class="flex items-center justify-between gap-3">
+                <div class="text-sm font-semibold text-slate-800">Recent Batches</div>
+                <div class="text-xs text-slate-500">
+                    sumber: <span class="font-mono">job_batches</span>
+                </div>
+            </div>
+
+            <div class="mt-3 overflow-x-auto">
+                <table class="min-w-full text-sm">
+                    <thead class="text-slate-500">
+                        <tr class="border-b">
+                            <th class="text-left py-2 pr-4">Name</th>
+                            <th class="text-right py-2 pr-4">Total</th>
+                            <th class="text-right py-2 pr-4">Pending</th>
+                            <th class="text-right py-2 pr-4">Failed</th>
+                            <th class="text-left py-2 pr-4">Created</th>
+                            <th class="text-left py-2">Finished</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach($health['batches'] as $b)
+                            <tr class="border-b last:border-b-0">
+                                <td class="py-2 pr-4">
+                                    <div class="font-medium text-slate-900">{{ $b['name'] }}</div>
+                                    <div class="text-xs text-slate-500 font-mono truncate max-w-[360px]" title="{{ $b['id'] }}">
+                                        {{ $b['id'] }}
+                                    </div>
+                                </td>
+                                <td class="py-2 pr-4 text-right tabular-nums">{{ $b['total'] }}</td>
+                                <td class="py-2 pr-4 text-right tabular-nums">{{ $b['pending'] }}</td>
+                                <td class="py-2 pr-4 text-right tabular-nums">{{ $b['failed'] }}</td>
+                                <td class="py-2 pr-4">{{ $b['created_at'] ?? '-' }}</td>
+                                <td class="py-2">{{ $b['finished_at'] ?? '-' }}</td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    @endif
+
     {{-- Summary cards --}}
     <div class="grid grid-cols-1 md:grid-cols-6 gap-3">
         <div class="rounded-2xl border bg-white p-4 shadow-sm">
             <div class="text-sm text-slate-500">Pending</div>
             <div class="text-2xl font-bold">{{ $pendingCount }}</div>
         </div>
+
         <div class="rounded-2xl border bg-white p-4 shadow-sm">
             <div class="text-sm text-slate-500">Processing</div>
             <div class="text-2xl font-bold">{{ $processingCount }}</div>
         </div>
+
         <div class="rounded-2xl border bg-white p-4 shadow-sm">
             <div class="text-sm text-slate-500">Failed</div>
             <div class="text-2xl font-bold">{{ $failedCount }}</div>
         </div>
+
         <div class="rounded-2xl border bg-white p-4 shadow-sm">
             <div class="text-sm text-slate-500">Oldest Pending</div>
             <div class="text-base font-semibold">{{ $oldestPendingAge ?? '-' }}</div>
         </div>
+
         <div class="rounded-2xl border bg-white p-4 shadow-sm">
             <div class="text-sm text-slate-500">Last SyncUsers (Success)</div>
             <div class="text-sm font-semibold text-slate-900">
@@ -62,7 +177,6 @@
                 {{ $lastSyncFailed?->message ?? '-' }}
             </div>
         </div>
-
     </div>
 
     @if (session('status'))
@@ -163,7 +277,7 @@
     </div>
 
     <div class="text-xs text-slate-500">
-        Catatan: Jika pending menumpuk, biasanya worker belum jalan / stuck. Pastikan <code>php artisan queue:work</code> aktif di server (Supervisor).
+        Catatan: Jika pending menumpuk, biasanya worker belum jalan / stuck. Pastikan cron runner queue aktif di server.
     </div>
 
 </div>

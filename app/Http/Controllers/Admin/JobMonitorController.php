@@ -9,10 +9,12 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use App\Models\JobLog;
 use App\Jobs\SyncUsersFromSmartKpiApiJob;
+use App\Services\Admin\JobHealthService;
+
 
 class JobMonitorController extends Controller
 {
-    public function index(Request $request)
+    public function index(Request $request, JobHealthService $healthSvc)
     {
         $status   = $request->get('status', 'pending'); // pending|processing|all
         $queue    = $request->get('queue');
@@ -78,10 +80,36 @@ class JobMonitorController extends Controller
             ->orderByDesc('ran_at')
             ->first();
 
+        $health = $healthSvc->summary();
+
+        $hb = DB::table('queue_heartbeats')->where('name', 'queue_runner')->first();
+
+        $ageMin = null;
+        if ($hb?->last_seen_at) {
+            $ageMin = now()->diffInMinutes(\Carbon\Carbon::parse($hb->last_seen_at));
+        }
+
+        $status = 'down';
+        if (!is_null($ageMin)) {
+            if ($ageMin <= 2) $status = 'ok';
+            elseif ($ageMin <= 5) $status = 'warn';
+            else $status = 'down';
+        }
+
+        $health['runner'] = [
+            'status' => $status,
+            'last_seen' => $hb?->last_seen_at ? \Carbon\Carbon::parse($hb->last_seen_at)->format('Y-m-d H:i:s') : '-',
+            'age_minutes' => $ageMin,
+            'last_run_processed' => $hb?->last_run_processed ?? 0,
+            'last_run_failed' => $hb?->last_run_failed ?? 0,
+            'last_run_ms' => $hb?->last_run_ms ?? 0,
+        ];
+
         return view('admin.jobs.index', compact(
             'jobs','queues','status','queue','q','olderMin',
             'pendingCount','processingCount','failedCount','oldestPendingAge','lastSyncSuccess',
-            'lastSyncFailed'
+            'lastSyncFailed',
+            'health'
         ));
     }
 
@@ -126,15 +154,21 @@ class JobMonitorController extends Controller
 
     public function deleteFailed(int $id)
     {
-        Artisan::call('queue:forget', ['id' => $id]);
+        $deleted = DB::table('failed_jobs')->where('id', $id)->delete();
 
         \Log::warning('JOB_MONITOR delete failed job', [
-            'user_id' => auth()->id(),
+            'user_id'   => auth()->id(),
             'failed_id' => $id,
+            'deleted'   => $deleted,
         ]);
 
-        return back()->with('status', "Failed job #$id dihapus dari failed_jobs.");
+        if ($deleted) {
+            return back()->with('status', "Failed job #$id dihapus dari failed_jobs.");
+        }
+
+        return back()->with('error', "Failed job #$id tidak ditemukan / gagal dihapus.");
     }
+
 
     protected function extractJobDisplayName(?array $payload): string
     {
