@@ -64,6 +64,8 @@ use App\Http\Controllers\Kpi\MarketingTargetController;
 use App\Http\Controllers\Kpi\MarketingTargetApprovalController;
 use App\Http\Controllers\Kpi\MarketingKpiAchievementController;
 use App\Http\Controllers\Kpi\MarketingKpiRankingController;
+use App\Http\Controllers\Ews\EwsCkpnController;
+
 
 Route::model('action', LegalAction::class);
 
@@ -127,6 +129,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/loans/update-jadwal/status', [LoanImportController::class, 'updateJadwalStatus'])
         ->name('loans.jadwal.status');
 
+    // EWS
     Route::get('/ews/summary', [EwsSummaryController::class, 'index'])
         ->name('ews.summary');
 
@@ -135,6 +138,11 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/ews/detail/export', [EwsMacetController::class, 'exportDetail'])
         ->name('ews.detail.export');
+
+    Route::get('/ews/ckpn', [EwsCkpnController::class, 'index'])->name('ews.ckpn.index');
+
+    Route::get('/ews/ckpn/export', [EwsCkpnController::class, 'export'])
+        ->name('ews.ckpn.export');
 
 
     Route::get('/rs/monitoring', [RestructureDashboardController::class, 'index'])
@@ -497,6 +505,11 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/kpi/marketing/targets/{target}/achievement', [MarketingKpiAchievementController::class, 'show'])
         ->name('kpi.marketing.targets.achievement');
+
+    
+    // Route::middleware(['auth', 'kti_or_ti'])->group(function () {
+        
+    // });
 
 });    
 

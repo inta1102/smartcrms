@@ -416,14 +416,18 @@
                     'supervision.tl.approvals.targets.*',
                 ),
 
-                // ✅ badge auto
-                'badge' => $badge > 0
-                    ? ($over > 0 ? ($badge > 99 ? '99+' : $badge) . " ⚠️" . ($over > 99 ? '99+' : $over) : (string)min($badge,99))
-                    : null,
+                // ✅ sembunyikan untuk PE
+                'show'   => ($roleValue !== 'PE'),
 
-                // optional: kalau kamu mau hide menu kalau bukan TL/KASI
-                'show'   => !empty($approvalTargetUrl),
+                // ✅ badge auto
+                'badge'  => $badge > 0
+                    ? ($over > 0
+                        ? (($badge > 99 ? '99+' : $badge) . " ⚠ " . ($over > 99 ? '99+' : $over))
+                        : ($badge > 99 ? '99+' : $badge)
+                    )
+                    : null,
             ],
+
             [
                 'label'  => 'Approval Non-Lit',
                 'icon'   => '📝',
@@ -489,6 +493,15 @@
                 'show'   => true,
                 'warn_kind' => 'macet',
                 'warn_meta' => $macetWarnMeta ?? null,
+            ],
+            [
+                'label'  => 'CKPN Individu',
+                'icon'   => '✅',
+                'href'   => route('ews.ckpn.index'),
+                'active' => $is('ews.ckpn.*'),
+                'show'   => true,
+                // 'warn_kind' => 'macet',
+                // 'warn_meta' => $macetWarnMeta ?? null,
             ],
         ] : [],
 

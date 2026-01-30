@@ -22,6 +22,9 @@ class EwsSummaryController extends Controller
         $user = auth()->user();
         abort_unless($user, 403);
 
+        abort_unless($user->hasAnyRole(['DIR','KOM','PE','KBO','KSA','SAD','KSL','KSR','KSO','TL','TLL','TLR','AO','RO','SO','BE','FE','SA']), 403);
+
+
         $data = $this->service->build($request, $user);
 
         $latestDate = LoanAccount::max('position_date');

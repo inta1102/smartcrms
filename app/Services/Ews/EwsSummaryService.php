@@ -570,4 +570,17 @@ class EwsSummaryService
         ];
     }
 
+    protected function scopeLabelForEws(\App\Models\User $user): string
+    {
+        // label untuk info di UI (bukan untuk security)
+        if (method_exists($user, 'hasAnyRole')) {
+            if ($user->hasAnyRole(['DIR','KOM','KDK','AUD','MR','KPI','KTI','TI'])) return 'ALL (Pimpinan)';
+            if ($user->hasAnyRole(['KBO','KSA','SAD','KSL','KSR','KSO'])) return 'UNIT / BAGIAN';
+            if ($user->hasAnyRole(['TL','TLL','TLR'])) return 'TIM (Bawahan)';
+            if ($user->hasAnyRole(['AO','RO','SO','BE','FE','SA'])) return 'PERSONAL (Milik sendiri)';
+        }
+
+        return 'UNKNOWN';
+    }
+
 }
