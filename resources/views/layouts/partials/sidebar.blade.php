@@ -19,7 +19,7 @@
 
     // ====== Groups (enum-safe) ======
     $isTl   = $roleEnum && in_array($roleEnum, [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR], true);
-    $isKasi = $roleEnum && in_array($roleEnum, [UserRole::KSL, UserRole::KSO, UserRole::KSA, UserRole::KSF, UserRole::KSD, UserRole::KSR], true);
+    $isKasi = $roleEnum && in_array($roleEnum, [UserRole::KSL, UserRole::KTI, UserRole::KSA, UserRole::KSF, UserRole::KSD, UserRole::KSR], true);
     $isKabagOrPe = $roleEnum && in_array($roleEnum, [UserRole::KABAG, UserRole::KBL, UserRole::KBO, UserRole::KTI, UserRole::KBF, UserRole::PE], true);
     $isPimpinan = $roleEnum && in_array($roleEnum, [
         UserRole::KABAG, UserRole::KBL, UserRole::KBO, UserRole::KTI, UserRole::KBF, UserRole::PE,
@@ -464,7 +464,7 @@
                 'icon'   => '⬆️',
                 'href'   => route('loans.import.form'),
                 'active' => $is('loans.import.*'),
-                'show'   => ($isTl || $isKasi) && !$isPimpinan,
+                'show' => (($isTl || $isKasi) && !$isPimpinan) || $isOrgAdmin,
             ],
         ] : [],
 

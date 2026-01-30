@@ -483,13 +483,10 @@
   const pos = @json($posForStepStr);
   if (!pos) return;
 
-  function nowStr() {
-    return new Date().toLocaleString();
-  }
+  function nowStr() { return new Date().toLocaleString('id-ID'); }
 
   function setBadge(el, status) {
     if (!el) return;
-
     const st = (status || '').toLowerCase();
     el.textContent = (st || 'N/A').toUpperCase();
     el.className = 'text-[11px] px-2 py-1 rounded-full';
@@ -502,28 +499,23 @@
 
   function showHint(hintEl, show, text) {
     if (!hintEl) return;
-    if (!show) {
-      hintEl.classList.add('hidden');
-      hintEl.textContent = '-';
-      return;
-    }
+    if (!show) { hintEl.classList.add('hidden'); hintEl.textContent = '-'; return; }
     hintEl.classList.remove('hidden');
     hintEl.textContent = text || '-';
   }
 
   function applyProgress(prefix, data) {
-    const wrap   = document.getElementById(prefix + 'Progress');
-    const pctEl  = document.getElementById(prefix + 'Pct');
-    const countEl= document.getElementById(prefix + 'Count');
+    const wrap     = document.getElementById(prefix + 'Progress');
+    const pctEl    = document.getElementById(prefix + 'Pct');
+    const countEl  = document.getElementById(prefix + 'Count');
     const failedEl = document.getElementById(prefix + 'Failed');
-    const barEl  = document.getElementById(prefix + 'ProgressBar');
-    const noteEl = document.getElementById(prefix + 'Note');
-    const hintEl = document.getElementById(prefix + 'Hint');
+    const barEl    = document.getElementById(prefix + 'ProgressBar');
+    const noteEl   = document.getElementById(prefix + 'Note');
+    const hintEl   = document.getElementById(prefix + 'Hint');
 
     const progress = data.progress || null;
     if (!wrap || !progress) return;
 
-    // show wrapper kalau ada progress payload
     wrap.classList.remove('hidden');
 
     const total     = Number(progress.total ?? 0);
@@ -540,14 +532,12 @@
 
     const st = (data.status || '').toLowerCase();
 
-    // Hint khusus: RUNNING tapi processed 0
     if (st === 'running' && total > 0 && processed === 0) {
-      showHint(hintEl, true, 'RUNNING tapi processed masih 0. Biasanya worker/queue belum pick job, atau batch stuck.');
+      showHint(hintEl, true, 'RUNNING tapi processed masih 0. Biasanya worker belum pick job / batch stuck.');
     } else {
       showHint(hintEl, false);
     }
 
-    // Warna bar mengikuti status
     if (barEl) {
       barEl.classList.remove('bg-sky-600','bg-emerald-600','bg-rose-600','bg-slate-500');
       if (st === 'failed') barEl.classList.add('bg-rose-600');
@@ -559,9 +549,16 @@
   async function poll(url, els, prefix) {
     try {
       const res = await fetch(url, { headers: { 'Accept': 'application/json' } });
+      if (els.lastCheck) els.lastCheck.textContent = 'Last check: ' + nowStr();
+
+      // kalau response bukan json / 500, jangan crash
+      if (!res.ok) {
+        if (els.msg) els.msg.textContent = `Gagal cek status (${res.status})`;
+        return { done: false };
+      }
+
       const data = await res.json();
 
-      if (els.lastCheck) els.lastCheck.textContent = 'Last check: ' + nowStr();
       if (!data || !data.found) return { done: false };
 
       setBadge(els.badge, data.status);
@@ -574,68 +571,43 @@
 
       const st = (data.status || '').toLowerCase();
 
-        // ✅ Kalau Step 2 (legacy) sudah success, langsung unlock Step 3
-        if (prefix === 'legacy' && st === 'success') {
-        enableUpdateJadwal();
-        }
+      // unlock step 3 kalau legacy success
+      if (prefix === 'legacy' && st === 'success') enableUpdateJadwal();
 
-      const st = (data.status || '').toLowerCase();
       return { done: (st === 'success' || st === 'failed') };
     } catch (e) {
       if (els.lastCheck) els.lastCheck.textContent = 'Last check: ' + nowStr();
+      if (els.msg) els.msg.textContent = 'Error polling: ' + (e?.message || e);
       return { done: false };
     }
   }
 
-    function isRunning(badgeEl) { 
-    if (!badgeEl) return false;
-    return (badgeEl.textContent || '').trim().toLowerCase() === 'running';
-    }
+  const legacyUrl = `{{ route('loans.legacy.status') }}?position_date=${encodeURIComponent(pos)}`;
+  const jadwalUrl = `{{ route('loans.jadwal.status') }}?position_date=${encodeURIComponent(pos)}`;
 
-    const legacyUrl = `{{ route('loans.legacy.status') }}?position_date=${encodeURIComponent(pos)}`;
-    const jadwalUrl = `{{ route('loans.jadwal.status') }}?position_date=${encodeURIComponent(pos)}`;
-
-    const legacyEls = {
+  const legacyEls = {
     badge: document.getElementById('legacyBadge'),
     msg: document.getElementById('legacyMsg'),
     lastCheck: document.getElementById('legacyLastCheck'),
-    };
+  };
 
-    const jadwalEls = {
+  const jadwalEls = {
     badge: document.getElementById('jadwalBadge'),
     msg: document.getElementById('jadwalMsg'),
     lastCheck: document.getElementById('jadwalLastCheck'),
-    };
+  };
 
-    /* =========================================================
-    ✅ NO. 4 DITARUH DI SINI
-    Kalau halaman dibuka dan Legacy SUDAH SUCCESS,
-    Step 3 langsung aktif TANPA refresh
-    ========================================================= */
-    if ((legacyEls.badge?.textContent || '').trim().toLowerCase() === 'success') {
-    enableUpdateJadwal();
-    }
+  // ✅ polling awal 1x
+  poll(legacyUrl, legacyEls, 'legacy');
+  poll(jadwalUrl, jadwalEls, 'jadwal');
 
-    const intervalMs = 2000;
-
-    // 🔥 Penting: polling awal (1x)
+  // ✅ polling interval: jangan tergantung badge awal “running”
+  // biar kalau status berubah (setelah klik) tetap ke-check
+  const intervalMs = 2000;
+  setInterval(() => {
     poll(legacyUrl, legacyEls, 'legacy');
     poll(jadwalUrl, jadwalEls, 'jadwal');
-
-    // Polling berulang kalau masih RUNNING
-    if (isRunning(legacyEls.badge)) {
-    let t2 = setInterval(async () => {
-        const r = await poll(legacyUrl, legacyEls, 'legacy');
-        if (r.done) clearInterval(t2);
-    }, intervalMs);
-    }
-
-    if (isRunning(jadwalEls.badge)) {
-    let t3 = setInterval(async () => {
-        const r = await poll(jadwalUrl, jadwalEls, 'jadwal');
-        if (r.done) clearInterval(t3);
-    }, intervalMs);
-    }
+  }, intervalMs);
 
 })();
 
@@ -644,19 +616,15 @@ function enableUpdateJadwal() {
   if (!btn) return;
 
   btn.disabled = false;
-
-  // set class ke mode aktif (sesuaikan dengan class tombol aktif kamu)
   btn.classList.remove('bg-slate-200','text-slate-500','cursor-not-allowed');
   btn.classList.add('bg-emerald-600','text-white','hover:bg-emerald-700');
 
-  // optional: update badge Step 3
   const badge = document.getElementById('step3ReadyBadge');
   if (badge) {
     badge.textContent = 'READY';
     badge.className = 'text-[11px] px-2 py-1 rounded-full bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200';
   }
 }
-
 </script>
 
 @endsection
