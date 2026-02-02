@@ -525,7 +525,7 @@
                 'active' => request()->routeIs('kpi.marketing.approvals.*'),
                 // Approver pakai level seperti yg kamu pakai di approval controller
                 'show'   => $u && in_array(strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)), 
-                            ['TL','TLL','TLR','TLF','KSL','KSO','KSA','KSF','KSD','KSR'], true),
+                            ['TL','TLL','TLR','TLF','KSL','KSO','KSA','KSF','KSD','KSR','KBL'], true),
             ],
             [
                 'label'  => 'Ranking KPI',
@@ -536,7 +536,7 @@
                 'active' => request()->routeIs('kpi.marketing.ranking.*'),
                 // Approver pakai level seperti yg kamu pakai di approval controller
                 'show'   => $u && in_array(strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)), 
-                            ['TL','TLL','TLR','TLF','KSL','KSO','KSA','KSF','KSD','KSR'], true),
+                            ['TL','TLL','TLR','TLF','KSL','KSO','KSA','KSF','KSD','KSR','KBL'], true),
             ],
         ],
 

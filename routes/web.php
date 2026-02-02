@@ -507,9 +507,11 @@ Route::middleware('auth')->group(function () {
         ->name('kpi.marketing.targets.achievement');
 
     
-    // Route::middleware(['auth', 'kti_or_ti'])->group(function () {
-        
-    // });
+    // routes/web.php
+    Route::get('/kpi/marketing/ao/{user}', 
+        [KpiMarketingAoController::class, 'show']
+    )->name('kpi.marketing.ao.show');
+
 
 });    
 

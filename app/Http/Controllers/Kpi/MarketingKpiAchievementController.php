@@ -20,10 +20,19 @@ class MarketingKpiAchievementController extends Controller
     public function show(Request $request, MarketingKpiTarget $target)
     {
         $me = auth()->user();
-        abort_unless($me, 403);
+        // AO/RO/SO/FE/BE hanya boleh lihat miliknya sendiri
+        if ($me->hasAnyRole(['AO','RO','SO','FE','BE'])) {
+            abort_unless((int)$target->user_id === (int)$me->id, 403);
+        } else {
+            // selain role AO dkk harus role supervisi
+            abort_unless($me->hasAnyRole([
+                'KBL', // ✅ KBL boleh lihat
+                'KSL','KSR',
+                'KBO','KBF',
+                // tambah jika perlu: 'DIR','KOM','KSO', dst
+            ]), 403);
+        }
 
-        // AO hanya boleh lihat miliknya
-        abort_unless((int)$target->user_id === (int)$me->id, 403);
 
         // Hitung on-demand (bulan berjalan estimasi, bulan closed snapshot = final)
         $ach = $this->svc->computeForTarget($target, $request->boolean('force'));

@@ -32,7 +32,7 @@ class MarketingKpiRankingController extends Controller
         $scoreRows = MarketingKpiMonthly::query()
             ->with(['user:id,name,ao_code'])
             ->whereDate('period', $period->toDateString())
-            ->whereNotNull('target_id') // ✅ adil: hanya yg punya target
+            ->whereNotNull('target_id')
             ->orderByDesc('score_total')
             ->orderByDesc('score_os')
             ->orderByDesc('score_noa')
@@ -41,6 +41,8 @@ class MarketingKpiRankingController extends Controller
             ->values()
             ->map(function ($r, $idx) {
                 $r->rank = $idx + 1;
+                $r->user_id = $r->user?->id;               // ✅ samakan
+                $r->ao_name = $r->user?->name ?? '-';      // ✅ samakan
                 return $r;
             });
 
@@ -64,6 +66,7 @@ class MarketingKpiRankingController extends Controller
             ->leftJoinSub($prevAgg, 'p', 'p.ao_code', '=', 'n.ao_code')
             ->leftJoin('users as u', 'u.ao_code', '=', 'n.ao_code')
             ->selectRaw("
+                u.id as user_id,
                 n.ao_code,
                 COALESCE(u.name, CONCAT('AO ', n.ao_code)) as ao_name,
                 COALESCE(p.os_prev, 0) as os_prev,
