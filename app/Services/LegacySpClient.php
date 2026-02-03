@@ -157,6 +157,14 @@ class LegacySpClient
     }
 
     /**
+     * Backward-compatible alias (controller lama masih pakai getProof)
+     */
+    public function getProof(int $legacyId): \Illuminate\Http\Client\Response
+    {
+        return $this->proofStream($legacyId);
+    }
+
+    /**
      * True kalau array adalah "list" (keys 0..n-1).
      */
     private function isListArray(array $arr): bool
