@@ -71,20 +71,30 @@ class OrgVisibilityService
         // =========================
         // 4) KASI: TL langsung + staff dari TL (2 level)
         // =========================
-        if (method_exists($me, 'hasAnyRole') && $me->hasAnyRole(['KSL', 'KSO', 'KSA', 'KSF', 'KSD', 'KSR'])) {
-            $tlIds = $this->activeAssignments()
-                ->where('leader_id', $selfId)
-                ->pluck('user_id')
-                ->map(fn($v) => (int) $v);
+        // if (method_exists($me, 'hasAnyRole') && $me->hasAnyRole(['KSL', 'KSO', 'KSA', 'KSF', 'KSD', 'KSR'])) {
+        //     $tlIds = $this->activeAssignments()
+        //         ->where('leader_id', $selfId)
+        //         ->pluck('user_id')
+        //         ->map(fn($v) => (int) $v);
 
-            $staffIds = $this->activeAssignments()
-                ->whereIn('leader_id', $tlIds->all())
-                ->pluck('user_id')
-                ->map(fn($v) => (int) $v);
+        //     $staffIds = $this->activeAssignments()
+        //         ->whereIn('leader_id', $tlIds->all())
+        //         ->pluck('user_id')
+        //         ->map(fn($v) => (int) $v);
+
+        //     return collect([$selfId])
+        //         ->merge($tlIds)
+        //         ->merge($staffIds)
+        //         ->unique()
+        //         ->values()
+        //         ->all();
+        // }
+
+        if (method_exists($me, 'hasAnyRole') && $me->hasAnyRole(['KSL', 'KSO', 'KSA', 'KSF', 'KSD', 'KSR'])) {
+            $ids = $this->subordinateUserIdsForKasi($selfId);
 
             return collect([$selfId])
-                ->merge($tlIds)
-                ->merge($staffIds)
+                ->merge($ids)
                 ->unique()
                 ->values()
                 ->all();
@@ -156,17 +166,45 @@ class OrgVisibilityService
      */
     public function isWithinKasiScope(int $kasiId, int $userId): bool
     {
-        $today = Carbon::today()->toDateString();
+        if ($kasiId <= 0 || $userId <= 0) return false;
+        if ($kasiId === $userId) return true; // opsional
 
-        return OrgAssignment::query()
-            ->where('leader_id', $kasiId)
-            ->where('user_id', $userId)
-            ->where('is_active', 1)
-            ->whereDate('effective_from', '<=', $today)
-            ->where(function ($q) use ($today) {
-                $q->whereNull('effective_to')
-                  ->orWhereDate('effective_to', '>=', $today);
-            })
-            ->exists();
+        $ids = $this->subordinateUserIdsForKasi($kasiId);
+        return in_array($userId, $ids, true);
     }
+
+    public function subordinateUserIdsForKasi(int $kasiId): array
+    {
+        // TL langsung di bawah KASI
+        $tlIds = $this->activeAssignments()
+            ->where('leader_id', $kasiId)
+            ->pluck('user_id')
+            ->map(fn($v) => (int) $v)
+            ->values();
+
+        if ($tlIds->isEmpty()) {
+            return [];
+        }
+
+        // Staff/AO di bawah TL-TL tsb
+        $staffIds = $this->activeAssignments()
+            ->whereIn('leader_id', $tlIds->all())
+            ->pluck('user_id')
+            ->map(fn($v) => (int) $v)
+            ->values();
+
+        // Gabung: TL + staff (opsional tambahkan diri sendiri kalau perlu)
+        return $tlIds->merge($staffIds)->unique()->values()->all();
+    }
+
+    public function directSubordinateUserIds(int $leaderId): array
+    {
+        return $this->activeAssignments()
+            ->where('leader_id', $leaderId)
+            ->pluck('user_id')
+            ->map(fn($v) => (int) $v)
+            ->values()
+            ->all();
+    }
+
 }

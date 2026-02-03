@@ -24,7 +24,7 @@ use App\Services\Ews\EwsMacetService;
 
 use Illuminate\Support\Facades\View;
 use App\Services\Crms\ApprovalBadgeService;
-
+// use App\Services\Supervision\ApprovalBadgeService;
 
 
 class AppServiceProvider extends ServiceProvider
@@ -276,6 +276,18 @@ class AppServiceProvider extends ServiceProvider
 
             $view->with('sidebarBadges', $sidebarBadges);
         });
+
+        // View::composer('layouts.partials.sidebar', function ($view) {
+        //     $u = auth()->user();
+        //     $badges = [];
+
+        //     if ($u && $u->isKasi()) {
+        //         $svc = app(ApprovalBadgeService::class);
+        //         $badges['kasi_target_inbox'] = $svc->kasiTargetInboxCount((int) $u->id);
+        //     }
+
+        //     $view->with('badges', $badges);
+        // });
     }
 
     private function normalizeAoCodesForSidebar(array $codes): array

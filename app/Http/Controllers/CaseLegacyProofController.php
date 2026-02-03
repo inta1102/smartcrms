@@ -6,23 +6,34 @@ use App\Models\CaseAction;
 use App\Models\NplCase;
 use App\Services\LegacySpClient;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class CaseLegacyProofController extends Controller
 {
     public function __construct(private LegacySpClient $client) {}
 
-    public function show(Request $request, NplCase $case, CaseAction $action)
+    public function show(Request $request, NplCase $case, CaseAction $caseAction)
     {
         // ✅ 1 pintu akses
         $this->authorize('view', $case);
 
         // Pastikan action milik case yang dibuka
-        abort_unless((int) $action->npl_case_id === (int) $case->id, 404);
+        abort_unless((int) $caseAction->npl_case_id === (int) $case->id, 404);
 
-        // Hanya untuk data legacy_sp + wajib ada ref id
-        abort_unless(($action->source_system ?? '') === 'legacy_sp', 404);
+        // ✅ longgar: semua legacy_ dianggap legacy
+        $src = (string) ($caseAction->source_system ?? '');
+        abort_unless(Str::startsWith($src, 'legacy_'), 404);
 
-        $legacyId = (int) ($action->source_ref_id ?? 0);
+        // meta bisa string / array
+        $meta = $caseAction->meta;
+        if (is_string($meta)) $meta = json_decode($meta, true);
+        if (!is_array($meta)) $meta = [];
+
+        // legacy id bisa dari source_ref_id atau meta
+        $legacyId = (int) ($caseAction->source_ref_id ?? 0);
+        if ($legacyId <= 0) {
+            $legacyId = (int) ($meta['legacy_id'] ?? $meta['source_ref_id'] ?? 0);
+        }
         abort_if($legacyId <= 0, 404);
 
         // Ambil proof dari legacy
@@ -32,7 +43,6 @@ class CaseLegacyProofController extends Controller
             abort(502, 'Gagal mengambil bukti dari sistem legacy. Silakan coba lagi.');
         }
 
-        // Mapping error yang aman
         if ($resp->status() === 404) {
             abort(404, 'Bukti tanda terima belum tersedia di legacy.');
         }
@@ -43,7 +53,6 @@ class CaseLegacyProofController extends Controller
         $contentType = $resp->header('Content-Type') ?: 'application/octet-stream';
         $normalized  = strtolower(trim(explode(';', $contentType)[0]));
 
-        // Whitelist ringan
         $allowed = [
             'image/jpeg', 'image/png', 'image/webp',
             'application/pdf',

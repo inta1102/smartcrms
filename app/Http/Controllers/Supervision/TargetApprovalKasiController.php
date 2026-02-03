@@ -9,16 +9,24 @@ use App\Services\Org\OrgVisibilityService;
 use App\Enums\UserRole;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Http\Controllers\Supervision\Concerns\EnsureKasiAccess;
 
 class TargetApprovalKasiController extends Controller
 {
+    use EnsureKasiAccess;
     /**
      * Fallback levels (kalau suatu saat role belum enum).
      * Boleh kamu hapus kalau semua sudah pakai enum.
      */
     protected function kasiLevels(): array
     {
-        return (array) config('roles.kasi_levels', ['ksl','ksf','kso','ksa','ksr','kbl']);
+        $levels = (array) config('roles.kasi_levels', ['ksl','ksf','kso','ksa','ksr','kbl']);
+
+        // normalize ke uppercase biar konsisten
+        return array_values(array_unique(array_map(
+            fn($x) => strtoupper(trim((string) $x)),
+            $levels
+        )));
     }
 
     protected function ensureKasiLevel(): void
@@ -26,32 +34,33 @@ class TargetApprovalKasiController extends Controller
         $u = auth()->user();
         abort_unless($u, 403);
 
-        // ✅ single-source-of-truth: enum role (kalau sudah ada)
-        $role = method_exists($u, 'role') ? $u->role() : null; // UserRole|null
-
-        // fallback string
-        $val  = method_exists($u, 'roleValue')
+        // fallback string role/level
+        $val = method_exists($u, 'roleValue')
             ? strtoupper((string) $u->roleValue())
             : strtoupper((string) ($u->level ?? ''));
 
-        $isKasi = false;
+        // kalau kamu punya enum role(), pakai juga, tapi tetap sinkron dengan list config
+        $allowed = $this->kasiLevels(); // sudah uppercase
 
-        if ($role instanceof UserRole) {
-            $isKasi = in_array($role, [
-                UserRole::KSL,
-                UserRole::KSO,
-                UserRole::KSA,
-                UserRole::KSF,
-                UserRole::KSR,
-                // kalau enum kamu punya KSD, silakan tambah:
-                // UserRole::KSD,
-            ], true);
-        } else {
-            $isKasi = in_array($val, ['KSL','KSO','KSA','KSF','KSR','KSD'], true);
-        }
+        $isKasi = in_array($val, $allowed, true);
+
+        // optional: kalau punya enum dan mau lebih strict
+        // $role = method_exists($u, 'role') ? $u->role() : null;
+        // if ($role instanceof UserRole) $isKasi = in_array($role->value, $allowed, true);
 
         abort_unless($isKasi, 403);
     }
+
+    public function approveForm(CaseResolutionTarget $target)
+    {
+        $this->ensureKasiLevel();
+
+        // kalau kamu punya scope check, taruh di sini juga
+        // abort_unless($org->isWithinKasiScope(...), 403);
+
+        return view('kasi.approvals.targets.approve', compact('target'));
+    }
+
 
     /**
      * Inbox logic untuk KASI:
@@ -84,21 +93,18 @@ class TargetApprovalKasiController extends Controller
         // subordinateUserIdsForKasi($kasiId): array<int>
         // Kalau sudah ada, pakai itu.
 
-        $org = app(OrgVisibilityService::class);
+           $org = app(\App\Services\Org\OrgVisibilityService::class);
 
-        if (method_exists($org, 'subordinateUserIdsForKasi')) {
-            $ids = (array) $org->subordinateUserIdsForKasi($kasiId);
+            $ids = method_exists($org, 'subordinateUserIdsForKasi')
+                ? (array) $org->subordinateUserIdsForKasi($kasiId)
+                : [];
 
-            // kalau kosong, dashboard kosong (aman)
             if (empty($ids)) {
                 $q->whereRaw('1=0');
                 return;
             }
 
             $q->whereIn('proposed_by', $ids);
-            return;
-        }
-
         /**
          * Fallback minimal (kalau belum ada subordinateUserIdsForKasi):
          * Kita tidak bisa whereIn tanpa daftar.
@@ -183,6 +189,15 @@ class TargetApprovalKasiController extends Controller
         CaseResolutionTarget $target,
         ResolutionTargetService $svc
     ) {
+        // dd([
+        //     'id' => auth()->id(),
+        //     'raw_level' => auth()->user()->getRawOriginal('level'),
+        //     'cast_level' => auth()->user()->level,
+        //     'role' => auth()->user()->role()?->value,
+        //     'roleValue' => auth()->user()->roleValue(),
+        //     'hasKSR' => auth()->user()->hasAnyRole(['KSR']),
+        //     ]);
+
         $this->ensureKasiLevel();
 
         $request->validate([

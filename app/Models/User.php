@@ -200,8 +200,10 @@ class User extends Authenticatable
 
     public function isBe(): bool
     {
-        return $this->hasAnyRole(['BE']) || ($this->level === 'BE');
+        return $this->hasRole(UserRole::BE);
+        // atau: return $this->role() === UserRole::BE;
     }
+
 
     public function isLegal(): bool
     {
@@ -210,8 +212,10 @@ class User extends Authenticatable
 
     public function canLegal(): bool
     {
-        return $this->isLegal() || $this->hasAnyRole(['KBL','KABAG','PE','DIR','DIREKSI']);
+        return $this->isLegal()
+            || $this->hasAnyRole([UserRole::KBL, UserRole::KABAG, UserRole::PE, UserRole::DIR, UserRole::DIREKSI]);
     }
+
 
     public function isLegalSupervisor(): bool
     {

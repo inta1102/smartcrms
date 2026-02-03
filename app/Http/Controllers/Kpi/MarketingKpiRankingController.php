@@ -65,13 +65,23 @@ class MarketingKpiRankingController extends Controller
             ->fromSub($nowAgg, 'n')
             ->leftJoinSub($prevAgg, 'p', 'p.ao_code', '=', 'n.ao_code')
             ->leftJoin('users as u', 'u.ao_code', '=', 'n.ao_code')
+
+            // ✅ JOIN ke target period ini untuk dapat target_id
+            ->leftJoin('marketing_kpi_targets as t', function ($join) use ($period) {
+                $join->on('t.user_id', '=', 'u.id')
+                    ->whereDate('t.period', '=', $period->toDateString());
+            })
+
             ->selectRaw("
-                u.id as user_id,
+                t.id as target_id,               -- ✅ INI KUNCINYA
+                u.id as user_id,                 -- (boleh tetep disimpan)
                 n.ao_code,
                 COALESCE(u.name, CONCAT('AO ', n.ao_code)) as ao_name,
+
                 COALESCE(p.os_prev, 0) as os_prev,
                 COALESCE(n.os_now, 0) as os_now,
                 (COALESCE(n.os_now,0) - COALESCE(p.os_prev,0)) as os_growth,
+
                 COALESCE(p.noa_prev, 0) as noa_prev,
                 COALESCE(n.noa_now, 0) as noa_now,
                 (COALESCE(n.noa_now,0) - COALESCE(p.noa_prev,0)) as noa_growth

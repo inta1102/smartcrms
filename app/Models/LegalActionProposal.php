@@ -51,6 +51,11 @@ class LegalActionProposal extends Model
         'approved_kasi_notes',
         'executed_by',
         'executed_at',
+        'executed_notes',
+        'executed_proof_path',
+        'executed_proof_name',
+        'executed_proof_mime',
+        'executed_proof_size',
         'legal_action_id',
     ];
 
@@ -60,6 +65,8 @@ class LegalActionProposal extends Model
         'approved_kasi_at'=> 'datetime',
         'executed_at'     => 'datetime',
         'needs_tl_approval' => 'boolean',
+        'planned_at'  => 'date',
+        'executed_at' => 'date',
     ];
 
 

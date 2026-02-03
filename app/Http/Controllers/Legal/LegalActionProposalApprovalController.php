@@ -8,6 +8,8 @@ use App\Models\OrgAssignment;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Models\LegalCase;
+use App\Models\CaseAction;
+
 
 class LegalActionProposalApprovalController extends Controller
 {
@@ -84,6 +86,7 @@ class LegalActionProposalApprovalController extends Controller
             'approval_notes' => ['required', 'string', 'max:2000'],
         ]);
 
+        // ✅ inbox Kasi hanya yang sudah approved TL
         if ($proposal->status !== LegalActionProposal::STATUS_APPROVED_TL) {
             return back()->with('status', 'Status proposal tidak valid untuk approval Kasi.');
         }
@@ -91,6 +94,8 @@ class LegalActionProposalApprovalController extends Controller
         abort_unless($this->isWithinKasiScope((int)$user->id, (int)$proposal->proposed_by), 403);
 
         DB::transaction(function () use ($proposal, $user, $data) {
+
+            /** @var \App\Models\LegalActionProposal $p */
             $p = LegalActionProposal::query()
                 ->whereKey($proposal->id)
                 ->lockForUpdate()
@@ -100,20 +105,29 @@ class LegalActionProposalApprovalController extends Controller
                 abort(422, 'Status proposal sudah berubah.');
             }
 
+            // =========================
+            // 1) Update status proposal
+            // =========================
             $p->status              = LegalActionProposal::STATUS_APPROVED_KASI;
-            $p->approved_kasi_by     = (int) $user->id;
-            $p->approved_kasi_at     = now();
-            $p->approved_kasi_notes  = $data['approval_notes'];
+            $p->approved_kasi_by    = (int) $user->id;
+            $p->approved_kasi_at    = now();
+            $p->approved_kasi_notes = $data['approval_notes'];
             $p->save();
 
-            // flag legal boleh
+            // =========================
+            // 2) Flag legal case boleh
+            // =========================
             $case = $p->nplCase;
             if ($case && (int)($case->is_legal ?? 0) !== 1) {
                 $case->is_legal = 1;
                 $case->save();
             }
 
-            // ensure legal_case (opsional) -> pastikan model LegalCase di-import di atas
+            // =========================
+            // 3) Ensure legal_case (opsional)
+            // =========================
+            $legalCase = null;
+
             if ($case) {
                 $legalCase = LegalCase::query()
                     ->where('npl_case_id', $case->id)
@@ -130,13 +144,13 @@ class LegalActionProposalApprovalController extends Controller
                         ->first();
 
                     $nextSeq = 1;
-                    if ($last && preg_match('/LC-\d{8}-(\d+)/', $last->legal_case_no, $m)) {
+                    if ($last && preg_match('/LC-\d{8}-(\d+)/', (string)$last->legal_case_no, $m)) {
                         $nextSeq = ((int) $m[1]) + 1;
                     }
 
-                    $legalCaseNo = "LC-{$datePrefix}-" . str_pad((string)$nextSeq, 4, '0', STR_PAD_LEFT);
+                    $legalCaseNo = "LC-{$datePrefix}-" . str_pad((string) $nextSeq, 4, '0', STR_PAD_LEFT);
 
-                    LegalCase::create([
+                    $legalCase = LegalCase::create([
                         'legal_case_no' => $legalCaseNo,
                         'npl_case_id'   => $case->id,
                         'status'        => 'open',
@@ -144,11 +158,47 @@ class LegalActionProposalApprovalController extends Controller
                     ]);
                 }
             }
+
+            // =========================
+            // 4) ✅ TIMELINE LOG (CaseAction)
+            //    supaya muncul di Timeline Penanganan
+            // =========================
+            if ($case) {
+                // normalize meta agar konsisten dan kebaca di UI (meta['legal_type'])
+                $meta = [
+                    'proposal_id' => (int) $p->id,
+                    'legal_type'  => (string) $p->action_type, // <-- UI kamu baca ini
+                    'status'      => (string) $p->status,
+                    'legal_case_id' => $legalCase?->id,
+                ];
+
+                // idempotent event key
+                $sourceSystem = 'legal_proposal_approve_kasi';
+                $sourceRefId  = (string) $p->id;
+
+                \App\Models\CaseAction::query()->firstOrCreate(
+                    [
+                        'npl_case_id'   => (int) $case->id,
+                        'source_system' => $sourceSystem,
+                        'source_ref_id' => $sourceRefId,
+                    ],
+                    [
+                        'action_type'  => 'LEGAL', // biar badge legal lebih tegas (optional, tapi enak)
+                        'action_at'    => now(),
+                        'result'       => 'APPROVED_KASI',
+                        'description'  => "KASI approve usulan legal: " . strtoupper((string) $p->action_type)
+                            . "\nCatatan: " . (string) $data['approval_notes'],
+                        'next_action'  => (strtolower((string) $p->action_type) === 'plakat')
+                            ? 'Lakukan pemasangan plakat sesuai rencana dan laporkan bukti pemasangan.'
+                            : 'BE mengeksekusi tindakan legal sesuai usulan.',
+                        'meta'         => json_encode($meta),
+                    ]
+                );
+            }
         });
 
         return back()->with('success', '✅ Approved Kasi. Proposal siap dieksekusi BE.');
     }
-
     /**
      * Kasi scope:
      * - true jika proposer direct subordinate Kasi (leader_id = kasi)

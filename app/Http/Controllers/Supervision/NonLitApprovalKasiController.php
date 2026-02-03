@@ -8,9 +8,14 @@ use App\Enums\UserRole;
 use App\Services\Crms\NonLitApprovalService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Http\Controllers\Supervision\Concerns\EnsureKasiAccess;
+
+use App\Services\Org\OrgVisibilityService;
+
 
 class NonLitApprovalKasiController extends Controller
 {
+    use EnsureKasiAccess;
     /** @var array<int, string> */
     private array $kasiRoles = ['KSL','KSO','KSA','KSF','KSD','KSR'];
 
@@ -44,21 +49,42 @@ class NonLitApprovalKasiController extends Controller
 
     public function index(Request $request)
     {
+        // Pastikan method ini EXIST di controller ini.
+        // Kalau yang ada namanya ensureKasiLevel(), ganti pemanggilannya.
         $this->ensureKasi();
 
+        $kasiId = (int) auth()->id();
+
+        /** @var OrgVisibilityService $org */
+        $org = app(OrgVisibilityService::class);
+
+        // under KASI: staff direct + TL + staff under TL
+        $underIds = method_exists($org, 'subordinateUserIdsForKasi')
+            ? (array) $org->subordinateUserIdsForKasi($kasiId)
+            : [];
+
         $q = NonLitigationAction::query()
+            // ✅ scope under KASI (ini yang bikin tidak bocor)
+            ->when(!empty($underIds), function ($qb) use ($underIds) {
+                // 🔥 GANTI kolom ini kalau nonlit bukan proposed_by:
+                $qb->whereIn('proposed_by', $underIds);
+            }, function ($qb) {
+                // kalau under kosong, jangan tampilkan apa-apa (aman)
+                $qb->whereRaw('1=0');
+            })
+
             // Inbox Kasi:
             // - status pending_kasi
             // - atau status pending_tl tapi needs_tl_approval = 0 (skip TL)
             ->where(function ($x) {
                 $x->where('status', NonLitigationAction::STATUS_PENDING_KASI)
-                  ->orWhere(function ($y) {
-                      $y->where('status', NonLitigationAction::STATUS_PENDING_TL)
+                ->orWhere(function ($y) {
+                    $y->where('status', NonLitigationAction::STATUS_PENDING_TL)
                         ->where('needs_tl_approval', 0);
-                  });
+                });
             })
+
             ->with(['nplCase.loanAccount', 'proposer'])
-            // biasanya approval: yang terbaru di atas
             ->latest('proposal_at');
 
         // Search (nama nasabah / no rekening)
@@ -69,19 +95,25 @@ class NonLitApprovalKasiController extends Controller
                 $q->whereHas('nplCase.loanAccount', function ($sub) use ($keyword) {
                     $sub->where(function ($w) use ($keyword) {
                         $w->where('customer_name', 'like', "%{$keyword}%")
-                          ->orWhere('account_no', 'like', "%{$keyword}%");
+                        ->orWhere('account_no', 'like', "%{$keyword}%");
                     });
                 });
             }
         }
 
         $items = $q->paginate(15)->withQueryString();
+
         return view('supervision.approvals.nonlit-kasi', compact('items'));
     }
 
     public function approve(Request $request, NonLitigationAction $nonLit, NonLitApprovalService $svc)
     {
         $this->ensureKasi();
+        $org = app(\App\Services\Org\OrgVisibilityService::class);
+        abort_unless(
+            $org->isWithinKasiScope((int)auth()->id(), (int)$nonLit->proposed_by), // atau created_by
+            403
+        );
 
         // Fail-fast: pastikan status memang valid untuk approve Kasi
         if (!in_array($nonLit->status, [
@@ -140,6 +172,11 @@ class NonLitApprovalKasiController extends Controller
     public function reject(Request $request, NonLitigationAction $nonLit, NonLitApprovalService $svc)
     {
         $this->ensureKasi();
+        $org = app(\App\Services\Org\OrgVisibilityService::class);
+        abort_unless(
+            $org->isWithinKasiScope((int)auth()->id(), (int)$nonLit->proposed_by), // atau created_by
+            403
+        );
 
         // Fail-fast: status valid untuk reject Kasi
         if (!in_array($nonLit->status, [
@@ -188,4 +225,22 @@ class NonLitApprovalKasiController extends Controller
 
         return back()->with('success', 'Non-Lit ditolak KASI.');
     }
+
+    protected function applyKasiScope($q, int $kasiId): void
+    {
+        $org = app(\App\Services\Org\OrgVisibilityService::class);
+
+        $ids = method_exists($org, 'subordinateUserIdsForKasi')
+            ? (array) $org->subordinateUserIdsForKasi($kasiId)
+            : [];
+
+        if (empty($ids)) {
+            $q->whereRaw('1=0');
+            return;
+        }
+
+        // GANTI kolom ini kalau nonlit bukan proposed_by:
+        $q->whereIn('proposed_by', $ids);
+    }
+
 }

@@ -27,28 +27,37 @@ class LegacySpClient
      */
     public function lettersByNoRekening(string $noRekening, ?int $afterId = null): array
     {
-        // penting: legacy validasi "string", jadi jangan pernah kirim array
         $noRekening = (string) $noRekening;
 
         $params = ['no_rekening' => $noRekening];
-        if (!is_null($afterId)) $params['after_id'] = $afterId;
+        if (!is_null($afterId)) {
+            $params['after_id'] = $afterId;
+        }
 
         $res = Http::timeout(20)
+            ->retry(2, 300) // 2x retry, delay 300ms
             ->acceptJson()
             ->withToken($this->token)
             ->get($this->baseUrl . '/api/crms/letters', $params);
 
         if (!$res->successful()) {
-            throw new \RuntimeException('Legacy SP letters error: HTTP '.$res->status().' '.$res->body());
+            throw new \RuntimeException(
+                'Legacy SP letters error: HTTP '.$res->status().' no_rekening='.$noRekening.' body='.$res->body()
+            );
         }
 
-        return (array) $res->json();
+        $json = $res->json();
+
+        // normalize output jadi array
+        if (!is_array($json)) {
+            throw new \RuntimeException('Legacy SP letters error: invalid JSON shape for no_rekening='.$noRekening);
+        }
+
+        return $json;
     }
 
     /**
-     * Ambil histori surat berdasarkan beberapa kandidat no_rekening (12/13 digit).
-     * Karena legacy kamu sekarang hanya support string, strategi yang benar adalah LOOP.
-     *
+     * Ambil histori surat berdasarkan beberapa kandidat no_rekening.
      * Return selalu bentuk: ['data' => [...]]
      */
     public function lettersByNoRekeningIn(array $noRekenings, ?int $afterId = null): array
@@ -67,13 +76,27 @@ class LegacySpClient
 
         foreach ($noRekenings as $rek) {
             try {
-                $one  = $this->lettersByNoRekening((string) $rek, $afterId);
-                $rows = $one['data'] ?? $one ?? [];
-                if (is_array($rows)) {
+                $one = $this->lettersByNoRekening((string) $rek, $afterId);
+
+                // bentuk legacy yang diharapkan: ['data' => [...]]
+                $rows = $one['data'] ?? null;
+
+                // fallback: kalau legacy langsung balikin list
+                if ($rows === null && $this->isListArray($one)) {
+                    $rows = $one;
+                }
+
+                // pastikan rows benar-benar list (numerik)
+                if (is_array($rows) && $this->isListArray($rows)) {
                     $merged = array_merge($merged, $rows);
+                } else {
+                    Log::warning('[LEGACY-HTTP] Unexpected letters payload shape', [
+                        'candidate' => $rek,
+                        'after_id'  => $afterId,
+                        'keys'      => is_array($one) ? array_keys($one) : null,
+                    ]);
                 }
             } catch (\Throwable $e) {
-                // jangan matiin sync 1 case gara-gara 1 kandidat gagal
                 Log::warning('[LEGACY-HTTP] lettersByNoRekeningIn candidate failed', [
                     'candidate' => $rek,
                     'after_id'  => $afterId,
@@ -86,14 +109,21 @@ class LegacySpClient
         $uniq = [];
         foreach ($merged as $r) {
             if (!is_array($r)) continue;
+
             $key = $r['legacy_id'] ?? $r['id'] ?? null;
-            if ($key === null) continue;
+            if ($key === null) {
+                Log::warning('[LEGACY-HTTP] Letter row missing legacy_id/id', [
+                    'row' => $r,
+                ]);
+                continue;
+            }
+
             $uniq[(string) $key] = $r;
         }
 
         $out = array_values($uniq);
 
-        // sort by legacy_id/id asc (biar incremental logic enak)
+        // sort asc by legacy_id/id
         usort($out, function ($a, $b) {
             $ka = (int)($a['legacy_id'] ?? $a['id'] ?? 0);
             $kb = (int)($b['legacy_id'] ?? $b['id'] ?? 0);
@@ -110,12 +140,13 @@ class LegacySpClient
     public function proofStream(int $legacyId): \Illuminate\Http\Client\Response
     {
         $res = Http::timeout(30)
+            ->retry(2, 300)
             ->withToken($this->token)
+            ->withOptions(['stream' => true]) // ✅ supaya nggak makan memory besar
             ->get($this->baseUrl . '/api/crms/letters/' . $legacyId . '/proof');
 
-        // 404 => bukti belum ada
         if ($res->status() === 404) {
-            return $res;
+            return $res; // bukti belum ada
         }
 
         if (!$res->successful()) {
@@ -123,5 +154,14 @@ class LegacySpClient
         }
 
         return $res;
+    }
+
+    /**
+     * True kalau array adalah "list" (keys 0..n-1).
+     */
+    private function isListArray(array $arr): bool
+    {
+        if ($arr === []) return true;
+        return array_keys($arr) === range(0, count($arr) - 1);
     }
 }

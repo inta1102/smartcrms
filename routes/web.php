@@ -15,7 +15,7 @@ use App\Http\Controllers\CaseActionProofController;
 use App\Http\Controllers\LegacySpProofController;
 use App\Http\Controllers\NonLitigationActionController;
 use App\Http\Controllers\CaseSpLegacyController;
-
+use App\Http\Controllers\CaseLegacyProofController;
 use App\Http\Controllers\HtMonitoringController;
 
 use App\Http\Controllers\Legal\NplLegalActionController;
@@ -165,7 +165,10 @@ Route::middleware('auth')->group(function () {
         Route::post('/{case}/sp/{type}', [NplCaseController::class, 'storeSp'])->name('sp.store');
 
         Route::get('/{case}/actions/{action}/proof',        [CaseActionProofController::class, 'show'])->name('actions.proof');
-        Route::get('/{case}/actions/{action}/legacy-proof', [LegacySpProofController::class, 'show'])->name('actions.legacy_proof');
+        // Route::get('/{case}/actions/{action}/legacy-proof', [CaseLegacyProofController::class, 'show'])->name('actions.legacy_proof');
+        // Route::get('/{case}/actions/{action}/legacy-proof', [LegacySpProofController::class, 'show'])->name('actions.legacy_proof');
+        Route::get('/{case}/actions/{caseAction}/legacy-proof', [CaseLegacyProofController::class, 'show'])
+            ->name('actions.legacy_proof');
 
         Route::prefix('{case}/non-litigasi')->name('nonlit.')->group(function () {
             Route::get('/',       [NonLitigationActionController::class, 'index'])->name('index');
@@ -333,6 +336,10 @@ Route::middleware('auth')->group(function () {
         Route::get('/ao/{aoCode}', [AoScheduleDashboardController::class, 'forAo'])->name('ao');
     });
 
+    Route::post('/cases/{case}/legal-proposals/{proposal}/plakat-report', 
+        [LegalActionProposalController::class, 'reportPlakat']
+    )->name('npl.legal-proposals.plakatReport');
+
     // =======================================================
     // Supervision (AUTH) — 1 pintu + requireRole
     // =======================================================
@@ -383,10 +390,13 @@ Route::middleware('auth')->group(function () {
                 Route::get('/targets', [TargetApprovalKasiController::class, 'index'])->name('targets.index');
                 Route::post('/targets/{target}/approve', [TargetApprovalKasiController::class, 'approve'])->name('targets.approve');
                 Route::post('/targets/{target}/reject', [TargetApprovalKasiController::class, 'reject'])->name('targets.reject');
-        
+                Route::get('/targets/{target}/approve', [TargetApprovalKasiController::class, 'approveForm'])
+                    ->name('targets.approveForm');
+
                 Route::get('/nonlit', [\App\Http\Controllers\Supervision\NonLitApprovalKasiController::class, 'index'])->name('nonlit.index');
                 Route::post('/nonlit/{nonLit}/approve', [\App\Http\Controllers\Supervision\NonLitApprovalKasiController::class, 'approve'])->name('nonlit.approve');
                 Route::post('/nonlit/{nonLit}/reject', [\App\Http\Controllers\Supervision\NonLitApprovalKasiController::class, 'reject'])->name('nonlit.reject');
+                
             });
 
     });

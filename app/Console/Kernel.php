@@ -23,6 +23,10 @@ class Kernel extends ConsoleKernel
         \App\Console\Commands\KpiMarketingCalculate::class,
         \App\Console\Commands\CalcMarketingKpiAchievements::class,
         \App\Console\Commands\HealthBeatQueueRunner::class,
+        \App\Console\Commands\ImportInstallmentsCsv::class,
+        \App\Console\Commands\ImportDisbursementsCsv::class,
+        \App\Console\Commands\KpiAoBuild::class,
+        \App\Console\Commands\KpiSoBuild::class,
     ];
 
     protected function schedule(Schedule $schedule): void

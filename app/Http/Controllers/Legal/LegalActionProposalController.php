@@ -11,6 +11,8 @@ use App\Models\OrgAssignment;
 
 use App\Models\LegalAction;
 use App\Models\LegalCase;
+use App\Models\CaseAction;
+
 
 
 class LegalActionProposalController extends Controller
@@ -135,34 +137,46 @@ class LegalActionProposalController extends Controller
     {
         $data = $request->validate([
             'action_type' => ['required', 'string', 'max:50'],
-            'reason'      => ['required', 'string', 'max:5000'],  // ✅ WAJIB biar ga null
+            'reason'      => ['required', 'string', 'max:5000'],
             'notes'       => ['nullable', 'string', 'max:5000'],
+
+            // ✅ khusus plakat: rencana pemasangan wajib
+            'planned_at'  => ['nullable', 'date'],
         ]);
 
-        $userId = (int) auth()->id();
-        $needsTl = $this->needsTlApprovalForUser($userId); // true kalau leader_role TL/TLL/TLR
+        $actionType = strtolower(trim((string) $data['action_type']));
+
+        if ($actionType === 'plakat') {
+            // wajib kalau plakat
+            $request->validate([
+                'planned_at' => ['required', 'date'],
+            ]);
+            $data['planned_at'] = $request->input('planned_at');
+        } else {
+            $data['planned_at'] = null;
+        }
+
+        $userId  = (int) auth()->id();
+        $needsTl = $this->needsTlApprovalForUser($userId);
 
         DB::transaction(function () use ($case, $data, $userId, $needsTl) {
 
             $case->legalProposals()->create([
                 'action_type'       => $data['action_type'],
-                'reason'            => $data['reason'],            // ✅ masuk
+                'reason'            => $data['reason'],
                 'notes'             => $data['notes'] ?? null,
+
+                // ✅ plakat fields
+                'planned_at'        => $data['planned_at'] ?? null,
 
                 'proposed_by'       => $userId,
                 'needs_tl_approval' => $needsTl ? 1 : 0,
 
-                // ✅ status awal:
-                // - butuh TL -> pending_tl
-                // - skip TL  -> approved_tl (langsung antri Kasi)
                 'status'            => $needsTl ? 'pending_tl' : 'approved_tl',
 
-                // ✅ audit time
                 'submitted_at'      => now(),
-
-                // ✅ kalau skip TL, kita anggap "lolos TL otomatis"
                 'approved_tl_at'    => $needsTl ? null : now(),
-                'approved_tl_by'    => $needsTl ? null : null, // sengaja null: bukan TL beneran
+                'approved_tl_by'    => $needsTl ? null : null,
             ]);
         });
 
@@ -200,6 +214,11 @@ class LegalActionProposalController extends Controller
             return back()->with('status', 'Status proposal tidak valid untuk dieksekusi BE.');
         }
 
+        // ✅ IMPORTANT: plakat tidak dieksekusi lewat BE execute()
+        if (strtolower((string)$proposal->action_type) === 'plakat') {
+            return back()->with('status', 'Untuk PLAKAT gunakan menu "Laporkan Pemasangan" (bukan Execute BE).');
+        }
+
         $action = null;
 
         DB::transaction(function () use ($proposal, $user, &$action) {
@@ -229,14 +248,14 @@ class LegalActionProposalController extends Controller
 
                 $action = LegalAction::create([
                     'legal_case_id' => $legalCase->id,
-                    'action_type'   => $p->action_type, // 'ht_execution'
+                    'action_type'   => $p->action_type,
                     'sequence_no'   => 1,
                     'status'        => 'draft',
                     'notes'         => $p->notes,
                     'meta'          => json_encode([
-                        'proposal_id' => $p->id,
-                        'reason'      => $p->reason,
-                        'created_from'=> 'proposal',
+                        'proposal_id'  => $p->id,
+                        'reason'       => $p->reason,
+                        'created_from' => 'proposal',
                     ]),
                     'start_at'      => now(),
                 ]);
@@ -244,14 +263,122 @@ class LegalActionProposalController extends Controller
                 $p->legal_action_id = $action->id;
             }
 
+            // ✅ status proposal executed oleh BE
             $p->status      = LegalActionProposal::STATUS_EXECUTED;
             $p->executed_by = (int) $user->id;
             $p->executed_at = now();
             $p->save();
+
+            // ✅ TIMELINE: log eksekusi BE (idempotent)
+            $case = $p->nplCase;
+            if ($case) {
+                \App\Models\CaseAction::query()->firstOrCreate(
+                    [
+                        'npl_case_id'   => (int) $case->id,
+                        'source_system' => 'legal_proposal_execute_be',   // diawali "legal_" biar kebaca isLegal
+                        'source_ref_id' => (string) $p->id,
+                    ],
+                    [
+                        'action_type' => 'LEGAL',
+                        'action_at'   => now(),
+                        'result'      => 'EXECUTED_BY_BE',
+                        'description' =>
+                            "BE mengeksekusi usulan legal: " . strtoupper((string)$p->action_type) . "\n" .
+                            "Legal Action dibuat (draft).",
+                        'next_action' => 'Lanjutkan proses di modul Legal Action (update status, upload dokumen, dsb).',
+                        'meta'        => json_encode([
+                            'proposal_id'    => (int) $p->id,
+                            'legal_type'     => (string) $p->action_type,
+                            'legal_action_id'=> (int) ($p->legal_action_id ?? 0),
+                            'status'         => (string) $p->status,
+                        ]),
+                    ]
+                );
+            }
         });
 
-        // ✅ ini yang nyambung ke show() kamu
+        // ✅ redirect sesuai action_type (yang kamu pakai sekarang ht_execution)
         return redirect()->route('legal-actions.ht.show', $action);
+    }
+
+    public function reportPlakat(Request $request, NplCase $case, LegalActionProposal $proposal)
+    {
+        abort_unless((int)$proposal->npl_case_id === (int)$case->id, 404);
+
+        return $this->reportExecution($request, $proposal);
+    }
+
+    public function reportExecution(Request $request, LegalActionProposal $proposal)
+    {
+        abort_unless($proposal->status === LegalActionProposal::STATUS_APPROVED_KASI, 403);
+
+        $data = $request->validate([
+            'executed_at'    => ['required', 'date'],
+            'executed_notes' => ['required', 'string', 'max:5000'],
+            'proof'          => ['required', 'file', 'mimes:jpg,jpeg,png,pdf', 'max:4096'],
+        ]);
+
+        DB::transaction(function () use ($proposal, $data, $request) {
+
+            $file = $request->file('proof');
+            abort_unless($file && $file->isValid(), 422);
+
+            // ✅ ambil metadata dulu (sebelum dipindah)
+            $origName = $file->getClientOriginalName();
+            $mime     = $file->getClientMimeType(); // ✅ aman (dari client header)
+            $size     = $file->getSize();
+
+            // (opsional) kalau mau “lebih yakin” untuk server-side mime:
+            // $mime = $file->getMimeType();  // tapi tetap panggil sebelum move
+
+            $dir  = public_path("uploads/legal/plakat/{$proposal->id}");
+            if (!is_dir($dir)) {
+                mkdir($dir, 0775, true);
+            }
+
+            $name = now()->format('Ymd_His') . '_' . uniqid() . '.' . $file->extension();
+
+            // ✅ baru pindahkan
+            $file->move($dir, $name);
+
+            $proposal->update([
+                'executed_at'         => \Carbon\Carbon::parse($data['executed_at']),
+                'executed_by'         => auth()->id(),
+                'executed_notes'      => $data['executed_notes'],
+
+                'executed_proof_path' => "uploads/legal/plakat/{$proposal->id}/{$name}",
+                'executed_proof_name' => $origName,
+                'executed_proof_mime' => $mime,
+                'executed_proof_size' => $size,
+
+                'status'              => LegalActionProposal::STATUS_EXECUTED,
+            ]);
+
+            $case = $proposal->nplCase;
+
+            CaseAction::query()->firstOrCreate(
+                [
+                    'npl_case_id'   => $case->id,
+                    'source_system' => 'legal_plakat_installed',
+                    'source_ref_id' => (string) $proposal->id,
+                ],
+                [
+                    'action_at'    => \Carbon\Carbon::parse($data['executed_at']),
+                    'action_type'  => 'LEGAL',
+                    'result'       => 'DONE',
+                    'description'  => "Pemasangan plakat dilaporkan.\n{$data['executed_notes']}",
+                    'next_action'  => null,
+                    'meta'         => [
+                        'legal_type'  => 'plakat',
+                        'proposal_id' => (int) $proposal->id,
+                        'proof_path'  => $proposal->executed_proof_path,
+                    ],
+                ]
+            );
+
+        });
+
+        return back()->with('status', 'Laporan pemasangan plakat berhasil disimpan.');
     }
 
 }

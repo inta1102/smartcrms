@@ -736,9 +736,9 @@
                                     <option value="">-- pilih --</option>
                                     <option value="whatsapp"  @selected($selected === 'whatsapp')>WhatsApp</option>
                                     <option value="telpon"    @selected($selected === 'telpon')>Telepon</option>
-                                    <option value="call"      @selected($selected === 'call')>Call</option>
+                                    <!-- <option value="call"      @selected($selected === 'call')>Call</option> -->
                                     <option value="visit"     @selected($selected === 'visit')>Kunjungan Lapangan</option>
-                                    <option value="negosiasi" @selected($selected === 'negosiasi')>Negosiasi</option>
+                                    <!-- <option value="negosiasi" @selected($selected === 'negosiasi')>Negosiasi</option> -->
                                     <option value="lainnya"   @selected($selected === 'lainnya')>Lainnya</option>
                                 </select>
 
@@ -884,76 +884,204 @@
                             </p>
                         </div>
 
-                        {{-- eskalasi legal (existing) --}}
-                        <div x-data="{ legalOpen:false, type:'' }"
+                        {{-- eskalasi legal (UPDATED) --}}
+                        <div x-data="{ legalOpen:false, type:'', reportOpen:false }"
                             class="rounded-2xl border border-amber-200 bg-amber-50/40 p-4">
+
                             @php
-                                $proposal = $case->latestLegalProposal; // hasil relasi latest
+                                $proposal = $case->latestLegalProposal;
+
+                                $proposalType   = strtolower((string)($proposal?->action_type ?? ''));
+                                $proposalStatus = (string)($proposal?->status ?? '');
+
+                                $isPlakat = $proposal && $proposalType === 'plakat';
+
+                                $isApprovedKasi  = $proposal && $proposalStatus === \App\Models\LegalActionProposal::STATUS_APPROVED_KASI;
+                                $isExecuted      = $proposal && $proposalStatus === \App\Models\LegalActionProposal::STATUS_EXECUTED;
+
+                                $canReportPlakat = $isPlakat && $isApprovedKasi && !$isExecuted;
                             @endphp
 
                             <div class="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                            <div class="flex items-start justify-between gap-4">
-                                <div>
-                                <div class="font-semibold text-amber-900">⚠️ Eskalasi Litigasi</div>
-                                <div class="text-sm text-amber-800 mt-1">
-                                    Pastikan bukti proses sudah ada (log persuasif / SP).
+                                <div class="flex items-start justify-between gap-4">
+                                    <div>
+                                        <div class="font-semibold text-amber-900">⚠️ Eskalasi Litigasi</div>
+                                        <div class="text-sm text-amber-800 mt-1">
+                                            Pastikan bukti proses sudah ada (log persuasif / SP).
+                                        </div>
+
+                                        @if($proposal)
+                                            <div class="mt-3 rounded-xl bg-white/70 p-3 border border-amber-200">
+                                                <div class="text-sm font-semibold text-slate-900">
+                                                    ✅ Usulan Legal sudah dibuat
+                                                </div>
+
+                                                <div class="mt-1 text-sm text-slate-700">
+                                                    <div>Jenis: <b class="uppercase">{{ $proposal->action_type }}</b></div>
+                                                    <div>Status: <b>{{ str_replace('_',' ', $proposal->status) }}</b></div>
+                                                    <div>
+                                                        Diusulkan oleh:
+                                                        <b>{{ optional($proposal->proposer)->name ?? ('User#'.$proposal->proposed_by) }}</b>
+                                                        <span class="text-slate-500">
+                                                            · {{ optional($proposal->created_at)->format('d-m-Y H:i') }}
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                {{-- reason/notes --}}
+                                                @if($proposal->reason || $proposal->notes)
+                                                    <div class="mt-2 text-xs text-slate-600">
+                                                        {{ $proposal->reason ?? '' }} {{ $proposal->notes ?? '' }}
+                                                    </div>
+                                                @endif
+
+                                                {{-- ✅ jika sudah EXECUTED: tampilkan ringkasan --}}
+                                                @if($isExecuted)
+                                                    <div class="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900/80">
+                                                        <div class="font-semibold">✅ Sudah Dilaporkan (Executed)</div>
+
+                                                        @if($proposal->executed_at)
+                                                            <div class="mt-1">Waktu: <b>{{ \Carbon\Carbon::parse($proposal->executed_at)->format('d-m-Y H:i') }}</b></div>
+                                                        @endif
+
+                                                        @if(!empty($proposal->executed_notes))
+                                                            <div class="mt-1 whitespace-pre-line">Catatan: {{ $proposal->executed_notes }}</div>
+                                                        @endif
+
+                                                        @if(!empty($proposal->executed_proof_path))
+                                                            <div class="mt-2">
+                                                                <a href="{{ asset($proposal->executed_proof_path) }}" target="_blank"
+                                                                    class="inline-flex items-center gap-2 rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">
+                                                                    👁 Lihat Bukti
+                                                                </a>
+                                                            </div>
+                                                        @endif
+                                                    </div>
+                                                @endif
+                                            </div>
+                                        @else
+                                            <div class="mt-3 text-xs text-amber-800">
+                                                Tip: minimal ada log penanganan yang jelas sebelum buat legal action.
+                                            </div>
+                                        @endif
+                                    </div>
+
+                                    <div class="shrink-0 flex flex-col gap-2">
+                                        @if($proposal)
+
+                                            {{-- ✅ Khusus PLAKAT + sudah APPROVED_KASI => boleh lapor pemasangan --}}
+                                            @if($canReportPlakat)
+                                                <button type="button"
+                                                    @click="reportOpen=true"
+                                                    class="inline-flex items-center justify-center rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700">
+                                                    🧾 Laporkan Pemasangan
+                                                </button>
+                                            @endif
+
+                                            {{-- tombol umum: lihat daftar usulan --}}
+                                            <a href="{{ route('legal.proposals.index') }}"
+                                                class="inline-flex items-center justify-center rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 border border-slate-200 hover:bg-slate-50">
+                                                Lihat Usulan
+                                            </a>
+
+                                        @else
+                                            <button type="button"
+                                                @click="legalOpen=true"
+                                                class="inline-flex items-center justify-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                                                + Usulkan Legal
+                                            </button>
+                                        @endif
+                                    </div>
                                 </div>
+                            </div>
 
-                                @if($proposal)
-                                    <div class="mt-3 rounded-xl bg-white/70 p-3 border border-amber-200">
-                                    <div class="text-sm font-semibold text-slate-900">
-                                        ✅ Usulan Legal sudah dibuat
-                                    </div>
-
-                                    <div class="mt-1 text-sm text-slate-700">
-                                        <div>Jenis: <b class="uppercase">{{ $proposal->action_type }}</b></div>
-                                        <div>Status: <b>{{ str_replace('_',' ', $proposal->status) }}</b></div>
-                                        <div>
-                                        Diusulkan oleh:
-                                        <b>{{ optional($proposal->proposer)->name ?? ('User#'.$proposal->proposed_by) }}</b>
-                                        <span class="text-slate-500">
-                                            · {{ optional($proposal->created_at)->format('d-m-Y H:i') }}
-                                        </span>
-                                        </div>
-                                    </div>
-
-                                    {{-- opsional: tampil reason/notes kalau ada --}}
-                                    @if($proposal->reason || $proposal->notes)
-                                        <div class="mt-2 text-xs text-slate-600">
-                                        {{ $proposal->reason ?? '' }} {{ $proposal->notes ?? '' }}
-                                        </div>
-                                    @endif
-                                    </div>
-                                @else
-                                    <div class="mt-3 text-xs text-amber-800">
+                            {{-- Tip hanya tampil kalau belum ada proposal --}}
+                            @if(!$proposal)
+                                <div class="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900/80">
                                     Tip: minimal ada log penanganan yang jelas sebelum buat legal action.
-                                    </div>
-                                @endif
                                 </div>
+                            @endif
 
-                                <div class="shrink-0">
-                                    @if($proposal)
-                                        {{-- kalau sudah ada proposal: jangan bikin lagi --}}
-                                        <a href="{{ route('legal.proposals.index') }}"
-                                        class="inline-flex items-center rounded-xl bg-white px-4 py-2 text-sm font-semibold text-slate-900 border border-slate-200 hover:bg-slate-50">
-                                        Lihat Usulan
-                                        </a>
-                                    @else
-                                        <button type="button"
-                                            @click="legalOpen=true"
-                                            class="inline-flex items-center rounded-xl bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
-                                            + Usulkan Legal
+                            {{-- MODAL LAPOR PEMASANGAN PLAKAT --}}
+                            <div x-show="reportOpen" x-cloak class="fixed inset-0 z-40 bg-black/40" @click="reportOpen=false"></div>
+
+                            <div x-show="reportOpen" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4">
+                                <div class="w-full max-w-lg rounded-2xl bg-white shadow-xl">
+                                    <div class="flex items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
+                                        <div>
+                                            <h3 class="text-lg font-bold text-slate-900">🧾 Laporan Pemasangan Plakat</h3>
+                                            <p class="mt-1 text-sm text-slate-500">
+                                                Isi tanggal pemasangan, catatan, dan upload bukti (foto/PDF).
+                                            </p>
+                                        </div>
+
+                                        <button type="button" @click="reportOpen=false"
+                                            class="rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                                            Tutup
                                         </button>
-                                    @endif
+                                    </div>
+
+                                    <form method="POST"
+                                        enctype="multipart/form-data"
+                                        action="{{ $proposal ? route('npl.legal-proposals.plakatReport', [$case, $proposal]) : '#' }}"
+                                        class="px-5 py-4">
+                                        @csrf
+
+                                        <label class="block text-sm font-semibold text-slate-700">
+                                            Tanggal Pemasangan <span class="text-rose-600">*</span>
+                                        </label>
+                                        <input type="date" name="executed_at"
+                                            value="{{ old('executed_at') }}"
+                                            class="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-emerald-500 focus:ring-emerald-500"
+                                            required>
+
+                                        @error('executed_at')
+                                            <p class="mt-2 text-sm font-semibold text-rose-600">{{ $message }}</p>
+                                        @enderror
+
+                                        <label class="mt-4 block text-sm font-semibold text-slate-700">
+                                            Catatan Pemasangan <span class="text-rose-600">*</span>
+                                        </label>
+                                        <textarea name="executed_notes" rows="4"
+                                            class="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-emerald-500 focus:ring-emerald-500"
+                                            placeholder="Contoh: Plakat dipasang di pagar depan, disaksikan RT, dokumentasi terlampir."
+                                            required>{{ old('executed_notes') }}</textarea>
+
+                                        @error('executed_notes')
+                                            <p class="mt-2 text-sm font-semibold text-rose-600">{{ $message }}</p>
+                                        @enderror
+
+                                        <label class="mt-4 block text-sm font-semibold text-slate-700">
+                                            Bukti (Foto/PDF) <span class="text-rose-600">*</span>
+                                        </label>
+                                        <input type="file" name="proof"
+                                            accept="image/jpeg,image/png,application/pdf"
+                                            class="mt-1 block w-full rounded-xl border border-slate-300 bg-white text-sm
+                                                file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white hover:file:bg-emerald-700"
+                                            required>
+
+                                        @error('proof')
+                                            <p class="mt-2 text-sm font-semibold text-rose-600">{{ $message }}</p>
+                                        @enderror
+
+                                        <div class="mt-6 flex items-center justify-end gap-3 border-t border-slate-200 pt-4">
+                                            <button type="button" @click="reportOpen=false"
+                                                class="rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                                                Batal
+                                            </button>
+
+                                            <button type="submit"
+                                                class="rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700">
+                                                Simpan Laporan
+                                            </button>
+                                        </div>
+                                    </form>
                                 </div>
                             </div>
-                            </div>
 
-                            <div class="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900/80">
-                                Tip: minimal ada log penanganan yang jelas sebelum buat legal action.
-                            </div>
-
-                            {{-- MODAL LEGAL (existing) --}}
+                            {{-- =========================
+                                MODAL LEGAL (existing) - tetap, hanya aku rapikan sedikit
+                                ========================= --}}
                             <div x-show="legalOpen" x-cloak
                                 @click="legalOpen=false; type='';"
                                 class="fixed inset-0 z-40 bg-black/40"></div>
@@ -964,7 +1092,7 @@
                                 <div class="w-full max-w-lg rounded-2xl bg-white shadow-xl">
                                     <div class="border-b border-slate-200 px-5 py-4">
                                         <h3 class="text-lg font-bold text-slate-900">Pilih Jenis Tindakan Legal</h3>
-                                        <p class="text-sm text-slate-500">Sistem akan membuat Legal Action baru (status: DRAFT).</p>
+                                        <p class="text-sm text-slate-500">Sistem akan membuat Legal Action Proposal (status: DRAFT/SUBMITTED sesuai alur kamu).</p>
                                     </div>
 
                                     <form method="POST" action="{{ route('npl.legal-proposals.store', $case) }}" class="px-5 py-4">
@@ -974,6 +1102,7 @@
                                         <select x-model="type" name="action_type"
                                             class="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-indigo-500 focus:ring-indigo-500">
                                             <option value="">-- Pilih --</option>
+                                            <option value="plakat">Pasang Plakat</option>
                                             <option value="somasi">Somasi</option>
                                             <option value="ht_execution">Eksekusi HT</option>
                                             <option value="fidusia_execution">Eksekusi Fidusia</option>
@@ -981,6 +1110,26 @@
                                             <option value="pkpu_bankruptcy">PKPU / Kepailitan</option>
                                             <option value="criminal_report">Laporan Pidana</option>
                                         </select>
+
+                                        <div class="mt-4" x-show="type==='plakat'" x-cloak>
+                                            <label class="block text-sm font-semibold text-slate-700">
+                                                Rencana Pemasangan Plakat (wajib)
+                                            </label>
+
+                                            <input type="date"
+                                                name="planned_at"
+                                                value="{{ old('planned_at') }}"
+                                                class="mt-1 w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm focus:border-indigo-500 focus:ring-indigo-500"
+                                                :required="type==='plakat'">
+
+                                            @error('planned_at')
+                                                <p class="mt-2 text-sm font-semibold text-rose-600">{{ $message }}</p>
+                                            @enderror
+
+                                            <p class="mt-1 text-xs text-slate-500">
+                                                Isi tanggal rencana pemasangan di rumah/tanah debitur.
+                                            </p>
+                                        </div>
 
                                         @error('action_type')
                                             <p class="mt-2 text-sm font-semibold text-rose-600">{{ $message }}</p>
@@ -1016,7 +1165,9 @@
                                     </form>
                                 </div>
                             </div>
+
                         </div>
+
                     </div>
 
                 </div>
@@ -1261,36 +1412,187 @@
                                         @endif
                                     </div>
 
-                                    <div class="shrink-0">
-                                        @if($isLegal && $legalUrl)
-                                            <a href="{{ $legalUrl }}"
-                                                class="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-rose-700 hover:bg-rose-50"
-                                                title="Buka detail tindakan legal">
-                                                <span>⚖️</span>
-                                                <span class="text-[11px] font-semibold">Detail</span>
-                                            </a>
-                                        @elseif($isNonLit && $nonLitUrl)
-                                            <a href="{{ $nonLitUrl }}"
-                                                class="inline-flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-indigo-700 hover:bg-indigo-50"
-                                                title="Buka detail usulan Non-Litigasi">
-                                                <span>📄</span>
-                                                <span class="text-[11px] font-semibold">Detail</span>
-                                            </a>
-                                        @elseif($isLegacy && $hasProof)
-                                            <a href="{{ route('cases.actions.legacy_proof', [$case->id, $action->id]) }}"
-                                                target="_blank"
-                                                class="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-slate-700 hover:bg-slate-50"
-                                                title="Lihat bukti tanda terima (Legacy)">
-                                                <span>👁</span>
-                                                <span class="text-[11px] font-semibold">Bukti</span>
-                                            </a>
-                                        @elseif($isLegacy)
-                                            <span class="inline-flex items-center rounded-lg border border-slate-100 bg-slate-50 px-2 py-1 text-slate-400"
-                                                title="Belum ada bukti di Legacy">
-                                                <span class="text-[11px] font-semibold">Bukti: Belum</span>
-                                            </span>
+                                    {{-- =========================
+                                        AKSI (MOBILE)
+                                    ========================= --}}
+                                    @php
+                                        // ===== meta normalize =====
+                                        $meta = $action->meta;
+                                        if (is_string($meta)) $meta = json_decode($meta, true);
+                                        if (!is_array($meta)) $meta = [];
+
+                                        $metaStatus   = (string)($meta['status'] ?? '');
+                                        $metaLegal    = strtolower((string)($meta['legal_type'] ?? ''));
+                                        $proposalId   = isset($meta['proposal_id']) ? (int)$meta['proposal_id'] : null;
+                                        $legalActionId= isset($meta['legal_action_id']) ? (int)$meta['legal_action_id'] : null;
+
+                                        // deteksi legal row (samakan dengan desktop logic kamu)
+                                        $isLegalRow = \Illuminate\Support\Str::startsWith((string)($action->source_system ?? ''), 'legal_')
+                                            || strtoupper((string)($action->action_type ?? '')) === 'LEGAL';
+
+                                        $isPlakatProposal = $isLegalRow && ($metaLegal === 'plakat') && !empty($proposalId);
+
+                                        // route plakat report
+                                        $needReportPlakat = $isPlakatProposal && ($metaStatus === \App\Models\LegalActionProposal::STATUS_APPROVED_KASI);
+                                        $reportUrl = $needReportPlakat
+                                            ? route('npl.legal-proposals.plakatReport', ['case' => $case->id, 'proposal' => $proposalId])
+                                            : null;
+
+                                        // ambil proposal plakat dari preload (anti N+1) kalau ada
+                                        $plakatProposal = null;
+                                        if ($isPlakatProposal && isset($plakatProposals) && $proposalId) {
+                                            $plakatProposal = $plakatProposals[$proposalId] ?? null;
+                                        }
+
+                                        $canReportPlakat = $plakatProposal && $plakatProposal->status === \App\Models\LegalActionProposal::STATUS_APPROVED_KASI;
+                                        $hasPlakatProof  = $plakatProposal && !empty($plakatProposal->executed_proof_path);
+                                        $plakatProofUrl  = $hasPlakatProof ? asset($plakatProposal->executed_proof_path) : null;
+
+                                        // ✅ detail legal url (fix param action)
+                                        $legalUrl = ($legalActionId)
+                                            ? route('legal-actions.ht.show', ['action' => $legalActionId])
+                                            : null;
+                                    @endphp
+
+                                    <div class="flex flex-wrap items-center gap-2 justify-end">
+                                        {{-- ✅ PLAKAT PRIORITAS --}}
+                                        @if($isPlakatProposal)
+                                            @if($canReportPlakat && $reportUrl)
+                                                <button type="button"
+                                                    onclick="document.getElementById('plakat-report-modal-m-{{ $action->id }}').classList.remove('hidden')"
+                                                    class="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-2.5 py-1.5 text-emerald-700 hover:bg-emerald-50">
+                                                    <span>🧾</span>
+                                                    <span class="text-[11px] font-semibold">Laporkan</span>
+                                                </button>
+                                            @elseif($hasPlakatProof && $plakatProofUrl)
+                                                <a href="{{ $plakatProofUrl }}" target="_blank"
+                                                    class="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-slate-700 hover:bg-slate-50">
+                                                    <span>👁</span>
+                                                    <span class="text-[11px] font-semibold">Bukti</span>
+                                                </a>
+                                            @endif
+
+                                            {{-- ✅ tetap tampilkan detail legal kalau ada --}}
+                                            @if($isLegalRow && $legalUrl)
+                                                <a href="{{ $legalUrl }}"
+                                                    class="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2.5 py-1.5 text-rose-700 hover:bg-rose-50">
+                                                    <span>⚖️</span>
+                                                    <span class="text-[11px] font-semibold">Detail Legal</span>
+                                                </a>
+                                            @endif
+
+                                        @else
+                                            {{-- =========================
+                                                FALLBACK MOBILE (SAMA DENGAN LAMA)
+                                            ========================== --}}
+                                            @if($isLegalRow && $legalUrl)
+                                                <a href="{{ $legalUrl }}"
+                                                    class="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2.5 py-1.5 text-rose-700 hover:bg-rose-50">
+                                                    <span>⚖️</span>
+                                                    <span class="text-[11px] font-semibold">Detail Legal</span>
+                                                </a>
+
+                                            @elseif($isNonLit && $nonLitUrl)
+                                                <a href="{{ $nonLitUrl }}"
+                                                    class="inline-flex items-center gap-1 rounded-lg border border-indigo-200 px-2.5 py-1.5 text-indigo-700 hover:bg-indigo-50">
+                                                    <span>📄</span>
+                                                    <span class="text-[11px] font-semibold">Detail Usulan</span>
+                                                </a>
+
+                                            @elseif($isLegacy && $hasProof)
+                                                <a href="{{ route('cases.actions.legacy_proof', [$case->id, $action->id]) }}" target="_blank">
+                                                    target="_blank"
+                                                    class="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-slate-700 hover:bg-slate-50">
+                                                    <span>👁</span>
+                                                    <span class="text-[11px] font-semibold">Bukti</span>
+                                                </a>
+
+                                            @elseif($isLegacy)
+                                                <span class="inline-flex items-center rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-1.5 text-slate-400"
+                                                    title="Belum ada bukti di Legacy">
+                                                    <span class="text-[11px] font-semibold">Bukti: Belum</span>
+                                                </span>
+
+                                            @elseif(($proofCount ?? 0) > 0)
+                                                <button type="button"
+                                                    onclick="document.getElementById('proof-modal-{{ $action->id }}').classList.remove('hidden')"
+                                                    class="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-slate-700 hover:bg-slate-50">
+                                                    <span>📎</span>
+                                                    <span class="text-[11px] font-semibold">Bukti</span>
+                                                </button>
+
+                                            @else
+                                                @if($isFollowUp)
+                                                    <span class="inline-flex items-center rounded-lg border border-slate-100 bg-slate-50 px-2.5 py-1.5 text-slate-400"
+                                                        title="Follow-up WA/Call tanpa bukti">
+                                                        <span class="text-[11px] font-semibold">📎 0</span>
+                                                    </span>
+                                                @else
+                                                    <span class="text-[11px] text-slate-300">-</span>
+                                                @endif
+                                            @endif
                                         @endif
                                     </div>
+
+                                    {{-- ✅ MODAL LAPOR PLAKAT (MOBILE) --}}
+                                    @if($isPlakatProposal && $canReportPlakat && $reportUrl)
+                                        <div id="plakat-report-modal-m-{{ $action->id }}" class="hidden fixed inset-0 z-50">
+                                            <div class="absolute inset-0 bg-black/40"
+                                                onclick="document.getElementById('plakat-report-modal-m-{{ $action->id }}').classList.add('hidden')"></div>
+
+                                            <div class="relative mx-auto mt-10 w-[95%] max-w-xl rounded-2xl bg-white shadow-xl">
+                                                <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+                                                    <div>
+                                                        <div class="text-sm font-bold text-slate-900">🧾 Laporan Pemasangan Plakat</div>
+                                                        <div class="text-xs text-slate-500">Case #{{ $case->id }} • Proposal #{{ $proposalId }}</div>
+                                                    </div>
+                                                    <button type="button"
+                                                        onclick="document.getElementById('plakat-report-modal-m-{{ $action->id }}').classList.add('hidden')"
+                                                        class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50">
+                                                        Tutup
+                                                    </button>
+                                                </div>
+
+                                                <form method="POST" action="{{ $reportUrl }}" enctype="multipart/form-data" class="px-5 py-4 space-y-3">
+                                                    @csrf
+
+                                                    <div>
+                                                        <label class="block text-xs font-semibold text-slate-700 mb-1">Tanggal Pemasangan</label>
+                                                        <input type="date" name="executed_at" required
+                                                            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200">
+                                                    </div>
+
+                                                    <div>
+                                                        <label class="block text-xs font-semibold text-slate-700 mb-1">Catatan</label>
+                                                        <textarea name="executed_notes" rows="3" required
+                                                            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                                                            placeholder="Misal: plakat dipasang di pagar depan, disaksikan RT, dll."></textarea>
+                                                    </div>
+
+                                                    <div>
+                                                        <label class="block text-xs font-semibold text-slate-700 mb-1">Bukti (JPG/PNG/PDF)</label>
+                                                        <input type="file" name="proof" required accept=".jpg,.jpeg,.png,.pdf"
+                                                            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                                                        <div class="mt-1 text-[11px] text-slate-500">Max 4MB.</div>
+                                                    </div>
+
+                                                    <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                                                        <button type="button"
+                                                            onclick="document.getElementById('plakat-report-modal-m-{{ $action->id }}').classList.add('hidden')"
+                                                            class="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50">
+                                                            Batal
+                                                        </button>
+                                                        <button type="submit"
+                                                            class="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700">
+                                                            Simpan Laporan
+                                                        </button>
+                                                    </div>
+                                                </form>
+                                            </div>
+                                        </div>
+                                    @endif
+
+
                                 </div>
 
                                 <div class="mt-3 text-sm text-slate-700">
@@ -1542,58 +1844,181 @@
                                             </td>
 
                                             <td class="px-3 py-2 text-slate-700">
+                                                @php
+                                                    // ===== meta normalize =====
+                                                    $meta = $action->meta;
+                                                    if (is_string($meta)) $meta = json_decode($meta, true);
+                                                    if (!is_array($meta)) $meta = [];
+
+                                                    $metaStatus = (string)($meta['status'] ?? '');
+                                                    $metaLegal  = strtolower((string)($meta['legal_type'] ?? ''));
+                                                    $proposalId = isset($meta['proposal_id']) ? (int)$meta['proposal_id'] : null;
+
+                                                    // detect type row (asumsi variabel ini sudah kamu punya dari atas)
+                                                    // $isLegal, $isNonLit, $isLegacy, $isFollowUp, $proofCount, $hasProof, $nonLitUrl, dll.
+
+                                                    // ===== legal detail id (FIX 404) =====
+                                                    $legalActionId = isset($meta['legal_action_id']) ? (int)$meta['legal_action_id'] : null;
+
+                                                    $legalUrl = $legalActionId
+                                                        ? route('legal-actions.ht.show', ['action' => $legalActionId])
+                                                        : null;
+
+                                                    // ===== PLAKAT decision (pakai preload) =====
+                                                    $isPlakatProposal = $isLegal && ($metaLegal === 'plakat') && !empty($proposalId);
+                                                    $plakatProposal   = $isPlakatProposal ? ($plakatProposals[$proposalId] ?? null) : null;
+
+                                                    $canReportPlakat  = (bool)($plakatProposal && $plakatProposal->status === \App\Models\LegalActionProposal::STATUS_APPROVED_KASI);
+                                                    $hasPlakatProof   = (bool)($plakatProposal && !empty($plakatProposal->executed_proof_path));
+                                                    $plakatProofUrl   = $hasPlakatProof ? asset($plakatProposal->executed_proof_path) : null;
+
+                                                    $reportUrl = $canReportPlakat
+                                                        ? route('npl.legal-proposals.plakatReport', ['case' => $case->id, 'proposal' => $proposalId])
+                                                        : null;
+                                                @endphp
+
                                                 <div class="flex flex-wrap items-center gap-2">
-                                                    @if($isLegal && $legalUrl)
-                                                        <a href="{{ $legalUrl }}"
-                                                            class="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-rose-700 hover:bg-rose-50"
-                                                            title="Buka detail tindakan legal">
-                                                            <span>⚖️</span>
-                                                            <span class="text-[11px] font-semibold">Detail Legal</span>
-                                                        </a>
 
-                                                    @elseif($isNonLit && $nonLitUrl)
-                                                        <a href="{{ $nonLitUrl }}"
-                                                            class="inline-flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-indigo-700 hover:bg-indigo-50"
-                                                            title="Buka detail usulan Non-Litigasi">
-                                                            <span>📄</span>
-                                                            <span class="text-[11px] font-semibold">Detail Usulan</span>
-                                                        </a>
+                                                    {{-- ✅ PLAKAT: PRIORITAS --}}
+                                                    @if($canReportPlakat && $reportUrl)
+                                                        <button type="button"
+                                                            onclick="document.getElementById('plakat-report-modal-{{ $action->id }}').classList.remove('hidden')"
+                                                            class="inline-flex items-center gap-1 rounded-lg border border-emerald-200 px-2 py-1 text-emerald-700 hover:bg-emerald-50"
+                                                            title="Laporkan pemasangan plakat">
+                                                            <span>🧾</span>
+                                                            <span class="text-[11px] font-semibold">Laporkan</span>
+                                                        </button>
 
-                                                    @elseif($isLegacy && $hasProof)
-                                                        <a href="{{ route('cases.actions.legacy_proof', [$case->id, $action->id]) }}"
-                                                            target="_blank"
+                                                    @elseif($hasPlakatProof && $plakatProofUrl)
+                                                        <a href="{{ $plakatProofUrl }}" target="_blank"
                                                             class="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-slate-700 hover:bg-slate-50"
-                                                            title="Lihat bukti tanda terima (Legacy)">
+                                                            title="Lihat bukti pemasangan plakat">
                                                             <span>👁</span>
                                                             <span class="text-[11px] font-semibold">Bukti</span>
                                                         </a>
+                                                    @endif
 
-                                                    @elseif($isLegacy)
-                                                        <span class="inline-flex items-center rounded-lg border border-slate-100 bg-slate-50 px-2 py-1 text-slate-400"
-                                                            title="Belum ada bukti di Legacy">
-                                                            <span class="text-[11px] font-semibold">Bukti: Belum</span>
-                                                        </span>
+                                                    {{-- ✅ FALLBACK: tetap tampil sesuai script lama (jangan hilang) --}}
+                                                    @if(!$isPlakatProposal)
+                                                        @if($isLegal && $legalUrl)
+                                                            <a href="{{ $legalUrl }}"
+                                                                class="inline-flex items-center gap-1 rounded-lg border border-rose-200 px-2 py-1 text-rose-700 hover:bg-rose-50"
+                                                                title="Buka detail tindakan legal">
+                                                                <span>⚖️</span>
+                                                                <span class="text-[11px] font-semibold">Detail Legal</span>
+                                                            </a>
 
-                                                    @elseif($proofCount > 0)
-                                                        <button type="button"
-                                                            onclick="document.getElementById('proof-modal-{{ $action->id }}').classList.remove('hidden')"
-                                                            class="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-slate-700 hover:bg-slate-50"
-                                                            title="Lihat bukti follow-up">
-                                                            <span>📎</span>
-                                                            <span class="text-[11px] font-semibold">Bukti</span>
-                                                        </button>
-                                                    @else
-                                                        @if($isFollowUp)
+                                                        @elseif($isNonLit && $nonLitUrl)
+                                                            <a href="{{ $nonLitUrl }}"
+                                                                class="inline-flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-indigo-700 hover:bg-indigo-50"
+                                                                title="Buka detail usulan Non-Litigasi">
+                                                                <span>📄</span>
+                                                                <span class="text-[11px] font-semibold">Detail Usulan</span>
+                                                            </a>
+                                                            @if($isLegal && !$legalUrl)
+                                                                <span class="inline-flex items-center rounded-lg border border-slate-100 bg-slate-50 px-2 py-1 text-slate-400"
+                                                                    title="Belum ada legal_action_id di timeline meta">
+                                                                    <span class="text-[11px] font-semibold">Detail: -</span>
+                                                                </span>
+                                                            @endif
+
+
+                                                        @elseif($isLegacy && $hasProof)
+                                                            <a href="{{ route('cases.actions.legacy_proof', [$case->id, $action->id]) }}"
+                                                                target="_blank"
+                                                                class="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-slate-700 hover:bg-slate-50"
+                                                                title="Lihat bukti tanda terima (Legacy)">
+                                                                <span>👁</span>
+                                                                <span class="text-[11px] font-semibold">Bukti</span>
+                                                            </a>
+
+                                                        @elseif($isLegacy)
+                                                            {{-- ✅ INI yang kemarin hilang: harus tetap ada --}}
                                                             <span class="inline-flex items-center rounded-lg border border-slate-100 bg-slate-50 px-2 py-1 text-slate-400"
-                                                                title="Follow-up WA/Call tanpa bukti">
-                                                                <span class="text-[11px] font-semibold">📎 0</span>
+                                                                title="Belum ada bukti di Legacy">
+                                                                <span class="text-[11px] font-semibold">Bukti: Belum</span>
                                                             </span>
+
+                                                        @elseif($proofCount > 0)
+                                                            <button type="button"
+                                                                onclick="document.getElementById('proof-modal-{{ $action->id }}').classList.remove('hidden')"
+                                                                class="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-slate-700 hover:bg-slate-50"
+                                                                title="Lihat bukti follow-up">
+                                                                <span>📎</span>
+                                                                <span class="text-[11px] font-semibold">Bukti</span>
+                                                            </button>
                                                         @else
-                                                            <span class="text-[11px] text-slate-300">-</span>
+                                                            @if($isFollowUp)
+                                                                <span class="inline-flex items-center rounded-lg border border-slate-100 bg-slate-50 px-2 py-1 text-slate-400"
+                                                                    title="Follow-up WA/Call tanpa bukti">
+                                                                    <span class="text-[11px] font-semibold">📎 0</span>
+                                                                </span>
+                                                            @else
+                                                                <span class="text-[11px] text-slate-300">-</span>
+                                                            @endif
                                                         @endif
                                                     @endif
+
                                                 </div>
-                                            </td>
+
+                                                {{-- ✅ MODAL LAPOR PLAKAT (desktop) --}}
+                                                @if($canReportPlakat && $reportUrl)
+                                                    <div id="plakat-report-modal-{{ $action->id }}" class="hidden fixed inset-0 z-50">
+                                                        <div class="absolute inset-0 bg-black/40"
+                                                            onclick="document.getElementById('plakat-report-modal-{{ $action->id }}').classList.add('hidden')"></div>
+
+                                                        <div class="relative mx-auto mt-10 w-[95%] max-w-xl rounded-2xl bg-white shadow-xl">
+                                                            <div class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+                                                                <div>
+                                                                    <div class="text-sm font-bold text-slate-900">🧾 Laporan Pemasangan Plakat</div>
+                                                                    <div class="text-xs text-slate-500">Case #{{ $case->id }} • Proposal #{{ $proposalId }}</div>
+                                                                </div>
+                                                                <button type="button"
+                                                                    onclick="document.getElementById('plakat-report-modal-{{ $action->id }}').classList.add('hidden')"
+                                                                    class="rounded-lg border border-slate-200 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50">
+                                                                    Tutup
+                                                                </button>
+                                                            </div>
+
+                                                            <form method="POST" action="{{ $reportUrl }}" enctype="multipart/form-data" class="px-5 py-4 space-y-3">
+                                                                @csrf
+                                                                <div>
+                                                                    <label class="block text-xs font-semibold text-slate-700 mb-1">Tanggal Pemasangan</label>
+                                                                    <input type="date" name="executed_at" required
+                                                                        class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200">
+                                                                </div>
+
+                                                                <div>
+                                                                    <label class="block text-xs font-semibold text-slate-700 mb-1">Catatan</label>
+                                                                    <textarea name="executed_notes" rows="3" required
+                                                                        class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                                                                        placeholder="Misal: plakat dipasang di pagar depan, disaksikan RT, dll."></textarea>
+                                                                </div>
+
+                                                                <div>
+                                                                    <label class="block text-xs font-semibold text-slate-700 mb-1">Bukti (JPG/PNG/PDF)</label>
+                                                                    <input type="file" name="proof" required accept=".jpg,.jpeg,.png,.pdf"
+                                                                        class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                                                                    <div class="mt-1 text-[11px] text-slate-500">Max 4MB.</div>
+                                                                </div>
+
+                                                                <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+                                                                    <button type="button"
+                                                                        onclick="document.getElementById('plakat-report-modal-{{ $action->id }}').classList.add('hidden')"
+                                                                        class="rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700 hover:bg-slate-50">
+                                                                        Batal
+                                                                    </button>
+                                                                    <button type="submit"
+                                                                        class="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-700">
+                                                                        Simpan Laporan
+                                                                    </button>
+                                                                </div>
+                                                            </form>
+                                                        </div>
+                                                    </div>
+                                                @endif
+                                                </td>
+
                                         </tr>
                                     @endforeach
                                 </tbody>

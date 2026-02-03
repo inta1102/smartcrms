@@ -318,15 +318,16 @@
     $over  = (int)($badgeApprovalTargetOverSla ?? 0);
 
     // ===== Approval Non-Lit badge =====
+
     $badgeApprovalNonLit = 0;
 
     if ($u && ($isTl || $isKasi)) {
         try {
-            $svcNonLit = app(\App\Services\Crms\NonLitApprovalBadgeService::class);
+            $svc = app(\App\Services\Crms\ApprovalBadgeService::class);
 
             $badgeApprovalNonLit = $isTl
-                ? $svcNonLit->tlInboxCount((int) $u->id)
-                : $svcNonLit->kasiInboxCount();
+                ? $svc->tlNonLitInboxCount((int) $u->id)
+                : $svc->kasiNonLitInboxCount((int) $u->id);
 
         } catch (\Throwable $e) {
             $badgeApprovalNonLit = 0;

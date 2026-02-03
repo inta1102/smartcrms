@@ -13,6 +13,9 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Jobs\SyncLegacySpJob;
 
+use App\Models\LegalActionProposal;
+use Illuminate\Support\Arr;
+
 
 class NplCaseController extends Controller
 {
@@ -107,23 +110,58 @@ class NplCaseController extends Controller
         return back()->with('status', 'Sync Legacy SP diproses (queue).');
     }
 
-    /**
-     * DETAIL CASE
-     */
     public function show(NplCase $case)
     {
         $case->loadMissing([
             'loanAccount',
             'legalCase',
-            'latestLegalProposal.proposer', 
+            'latestLegalProposal.proposer',
         ]);
 
         $case->load([
             'actions' => fn ($q) => $q
-                ->with('proofs') // ✅ tambahin ini
-                ->orderBy('action_at','desc')
+                ->with('proofs')
+                ->orderBy('action_at', 'desc')
                 ->orderByDesc('id'),
         ]);
+
+        /**
+         * =========================================
+         * ✅ PRELOAD PLAKAT PROPOSALS (anti N+1)
+         * - baca dari actions->meta['proposal_id']
+         * - hanya yang legal_type = plakat
+         * =========================================
+         */
+        $plakatProposalIds = $case->actions
+            ->map(function ($a) {
+                $meta = $a->meta;
+
+                // meta bisa string JSON atau array
+                if (is_string($meta)) {
+                    $meta = json_decode($meta, true);
+                }
+                if (!is_array($meta)) {
+                    $meta = [];
+                }
+
+                $legalType = strtolower((string)($meta['legal_type'] ?? ''));
+                $proposalId = $meta['proposal_id'] ?? null;
+
+                return ($legalType === 'plakat' && !empty($proposalId)) ? (int)$proposalId : null;
+            })
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        // Map: [proposal_id => LegalActionProposal]
+        $plakatProposals = collect();
+        if (!empty($plakatProposalIds)) {
+            $plakatProposals = LegalActionProposal::query()
+                ->whereIn('id', $plakatProposalIds)
+                ->get()
+                ->keyBy('id');
+        }
 
         // ===== last legal action + checklist =====
         $action = null;
@@ -143,7 +181,7 @@ class NplCaseController extends Controller
             }
         }
 
-        return view('cases.show', compact('case', 'action', 'checklist'));
+        return view('cases.show', compact('case', 'action', 'checklist', 'plakatProposals'));
     }
 
     /**

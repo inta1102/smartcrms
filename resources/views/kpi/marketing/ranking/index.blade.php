@@ -155,10 +155,22 @@
                             <div class="font-bold text-slate-900 truncate">
                                 #{{ $r->rank }} -
                                 @if($uid)
-                                    <a href="{{ route('kpi.marketing.targets.achievement', ['target'=>$r->target_id, 'period'=>$period->toDateString()]) }}"
-                                      class="text-xs px-2 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700">                                        
-                                      {{ $name }}
-                                    </a>
+                                    @if(!empty($r->target_id))
+                                      <a href="{{ route('kpi.marketing.targets.achievement', [
+                                            'target' => $r->target_id,
+                                            'period' => $period->toDateString(),
+                                        ]) }}"
+                                        class="text-blue-600 hover:underline font-semibold">
+                                        {{ $name }}
+                                      </a>
+                                    @else
+                                      <span class="font-semibold text-slate-900">
+                                        {{ $name }}
+                                      </span>
+                                      <div class="text-xs text-red-500">
+                                        Target belum tersedia (belum dibuat/di-approve)
+                                      </div>
+                                    @endif
                                 @else
                                     {{ $name }}
                                 @endif
@@ -327,10 +339,23 @@
 
                                 <td class="px-4 py-3">
                                     @if($uid)
-                                        <a href="{{ route('kpi.marketing.targets.achievement', ['target'=>$r->target_id, 'period'=>$period->toDateString()]) }}"
-                                            class="text-xs px-2 py-1 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-700">
+                                        @if(!empty($r->target_id))
+                                          <a href="{{ route('kpi.marketing.targets.achievement', [
+                                                'target' => $r->target_id,
+                                                'period' => $period->toDateString(),
+                                            ]) }}"
+                                            class="text-blue-600 hover:underline font-semibold">
                                             {{ $name }}
-                                        </a>
+                                          </a>
+                                        @else
+                                          <span class="font-semibold text-slate-900">
+                                            {{ $name }}
+                                          </span>
+                                          <div class="text-xs text-red-500">
+                                            Target belum tersedia (belum dibuat/di-approve)
+                                          </div>
+                                        @endif
+
                                     @else
                                         <span class="font-semibold text-slate-900">{{ $name }}</span>
                                         <div class="text-xs text-red-500">User belum match</div>
