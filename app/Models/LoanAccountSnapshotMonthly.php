@@ -19,6 +19,8 @@ class LoanAccountSnapshotMonthly extends Model
         'dpd',
         'kolek',
         'source_position_date',
+        'ft_pokok',
+        'ft_bunga',
     ];
 
     protected $casts = [
@@ -27,5 +29,7 @@ class LoanAccountSnapshotMonthly extends Model
         'outstanding' => 'decimal:2',
         'dpd' => 'integer',
         'kolek' => 'integer',
+        'ft_pokok' => 'integer',
+        'ft_bunga' => 'integer',
     ];
 }

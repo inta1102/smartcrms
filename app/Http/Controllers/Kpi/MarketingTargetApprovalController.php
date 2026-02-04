@@ -91,8 +91,19 @@ class MarketingTargetApprovalController extends Controller
         $data = $request->validate([
             'target_os_growth' => ['required','numeric','min:0'],
             'target_noa'       => ['required','integer','min:0'],
+
+            // ✅ tambahan
+            'target_rr'        => ['required','numeric','min:0','max:100'],
+            'target_activity'  => ['required','integer','min:0','max:1000'],
+
             'notes'            => ['nullable','string','max:500'],
         ]);
+
+        // ✅ cast aman
+        $data['target_os_growth'] = (float) $data['target_os_growth'];
+        $data['target_noa']       = (int) $data['target_noa'];
+        $data['target_rr']        = (float) $data['target_rr'];
+        $data['target_activity']  = (int) $data['target_activity'];
 
         $target->update($data);
 

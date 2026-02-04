@@ -11,19 +11,16 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Models\OrgAssignment;
-use App\Models\MarketingKpiMonthly;
-
 
 class MarketingTargetController extends Controller
 {
-
     public function index(Request $request)
     {
         $user = auth()->user();
         abort_unless($user, 403);
 
         $targets = MarketingKpiTarget::query()
-            ->with(['achievement']) // ✅ supaya list bisa tampil score/summary tanpa query N+1
+            ->with(['achievement'])
             ->where('user_id', $user->id)
             ->orderByDesc('period')
             ->paginate(10)
@@ -36,22 +33,28 @@ class MarketingTargetController extends Controller
     {
         $user = auth()->user();
         abort_unless($user, 403);
-        abort_unless($user->hasAnyRole(['AO','RO','SO','FE','BE']), 403); // sesuaikan role marketing
+        abort_unless($user->hasAnyRole(['AO','RO','SO','FE','BE']), 403);
 
-        // Default period = bulan berjalan
         $period = $request->get('period')
             ? Carbon::parse($request->get('period'))->startOfMonth()
             : now()->startOfMonth();
 
-        // helper info (opsional): OS saat ini berdasarkan position_date terakhir yang ada
         $helper = $this->buildHelper($user);
 
         return view('kpi.marketing.targets.form', [
             'mode'   => 'create',
             'target' => new MarketingKpiTarget([
-                'period' => $period->toDateString(),
-                'weight_os' => 60,
-                'weight_noa'=> 40,
+                'period'          => $period->toDateString(),
+
+                // ✅ default saran bobot sesuai KPI SO Sheet
+                'weight_os'       => 55,
+                'weight_noa'      => 15,
+                'weight_rr'       => 20,
+                'weight_activity' => 10,
+
+                // ✅ default target
+                'target_rr'       => 100,
+                'target_activity' => 0,
             ]),
             'helper' => $helper,
         ]);
@@ -64,7 +67,15 @@ class MarketingTargetController extends Controller
 
         $period = Carbon::parse($request->period)->startOfMonth()->toDateString();
 
-        // 1 orang hanya 1 target per period (unique), jadi pakai updateOrCreate
+        // ✅ guardrail bobot = 100
+        // $wOs  = (int)($request->weight_os ?? 55);
+        // $wNoa = (int)($request->weight_noa ?? 15);
+        // $wRr  = (int)($request->weight_rr ?? 20);
+        // $wAct = (int)($request->weight_activity ?? 10);
+
+        $wOs=55; $wNoa=15; $wRr=20; $wAct=10;
+        abort_unless(($wOs + $wNoa + $wRr + $wAct) === 100, 422);
+
         $target = MarketingKpiTarget::query()->updateOrCreate(
             [
                 'period'  => $period,
@@ -72,10 +83,20 @@ class MarketingTargetController extends Controller
             ],
             [
                 'branch_code'      => $request->branch_code ?: null,
-                'target_os_growth' => $request->target_os_growth,
-                'target_noa'       => $request->target_noa,
-                'weight_os'        => $request->weight_os ?? 60,
-                'weight_noa'       => $request->weight_noa ?? 40,
+
+                'target_os_growth' => (int)$request->target_os_growth,
+                'target_noa'       => (int)$request->target_noa,
+
+                // ✅ NEW
+                'target_rr'        => (float)($request->target_rr ?? 100),
+                'target_activity' => (int)($request->input('target_activity', 0)),
+
+                // ✅ weights 4 komponen
+                'weight_os'        => $wOs,
+                'weight_noa'       => $wNoa,
+                'weight_rr'        => $wRr,
+                'weight_activity'  => $wAct,
+
                 'notes'            => $request->notes,
                 'status'           => MarketingKpiTarget::STATUS_DRAFT,
                 'proposed_by'      => $user->id,
@@ -93,10 +114,8 @@ class MarketingTargetController extends Controller
         $user = auth()->user();
         abort_unless($user, 403);
 
-        // AO hanya boleh edit target miliknya
         abort_unless((int)$target->user_id === (int)$user->id, 403);
 
-        // kalau sudah submit/approved/locked -> tidak boleh edit
         if ($target->is_locked || $target->status !== MarketingKpiTarget::STATUS_DRAFT) {
             return redirect()
                 ->route('kpi.marketing.targets.index')
@@ -121,22 +140,40 @@ class MarketingTargetController extends Controller
         abort_unless(!$target->is_locked, 422);
         abort_unless($target->status === MarketingKpiTarget::STATUS_DRAFT, 422);
 
+        // ✅ guardrail bobot = 100
+        // $wOs  = (int)($request->weight_os ?? $target->weight_os ?? 55);
+        // $wNoa = (int)($request->weight_noa ?? $target->weight_noa ?? 15);
+        // $wRr  = (int)($request->weight_rr ?? $target->weight_rr ?? 20);
+        // $wAct = (int)($request->weight_activity ?? $target->weight_activity ?? 10);
+
+        $wOs=55; $wNoa=15; $wRr=20; $wAct=10;
+        abort_unless(($wOs + $wNoa + $wRr + $wAct) === 100, 422);
+
         $target->update([
             'branch_code'      => $request->branch_code ?: null,
-            'target_os_growth' => $request->target_os_growth,
-            'target_noa'       => $request->target_noa,
-            'weight_os'        => $request->weight_os ?? $target->weight_os,
-            'weight_noa'       => $request->weight_noa ?? $target->weight_noa,
+
+            'target_os_growth' => (int)$request->target_os_growth,
+            'target_noa'       => (int)$request->target_noa,
+
+            'target_rr' => (float)($request->input('target_rr', $target->target_rr ?? 100)),
+
+            // ✅ aman: tidak reset kalau field tidak terkirim
+            'target_activity' => (int)($request->input('target_activity', $target->target_activity ?? 0)),
+
+            'weight_os'        => 55,
+            'weight_noa'       => 15,
+            'weight_rr'        => 20,
+            'weight_activity'  => 10,
+
             'notes'            => $request->notes,
         ]);
+
 
         return back()->with('status', 'Draft target KPI diperbarui.');
     }
 
     public function submit(MarketingKpiTarget $target)
     {
-        
-
         $me = auth()->user();
         abort_unless($me, 403);
 
@@ -144,7 +181,8 @@ class MarketingTargetController extends Controller
             'target_id' => $target->id,
             'user_id' => $me->id,
             'status_before' => $target->status,
-            ]);
+        ]);
+
         // cuma target milik sendiri
         abort_unless((int)$target->user_id === (int)$me->id, 403);
 
@@ -160,35 +198,28 @@ class MarketingTargetController extends Controller
 
             abort_unless($t->status === MarketingKpiTarget::STATUS_DRAFT, 422);
 
-            // cek leader langsung dari OrgAssignment (aktif)
-            $oa = OrgAssignment::query()
-                ->active()
-                ->where('user_id', $me->id)
-                ->first();
+            // ✅ satu sumber kebenaran
+            $needsTl = $this->needsTlApprovalForUser((int)$me->id);
 
-            // default: butuh TL (lebih aman)
-            $next = MarketingKpiTarget::STATUS_PENDING_TL;
-
-            // kalau tidak punya TL / langsung ke KASI => skip TL
-            // indikatornya: leader_role bukan TL/TLL/TLR/TLF
-            if ($oa) {
-                $leaderRole = strtoupper((string)$oa->leader_role);
-                if (!in_array($leaderRole, ['TL','TLL','TLR','TLF'], true)) {
-                    $next = MarketingKpiTarget::STATUS_PENDING_KASI;
-                }
-            }
+            $next = $needsTl
+                ? MarketingKpiTarget::STATUS_PENDING_TL
+                : MarketingKpiTarget::STATUS_PENDING_KASI;
 
             $t->status = $next;
             $t->proposed_by = $me->id;
             $t->save();
+
+            \Log::info('MARKETING KPI SUBMIT ROUTE', [
+                'target_id' => $t->id,
+                'user_id' => $me->id,
+                'needs_tl' => $needsTl,
+                'status_after' => $next,
+            ]);
         });
 
         return back()->with('status', 'Target berhasil disubmit & masuk inbox approval.');
     }
 
-    /**
-     * Helper info untuk AO supaya input target lebih masuk akal.
-     */
     protected function buildHelper($user): array
     {
         $aoCode = (string)($user->ao_code ?? '');
@@ -235,14 +266,18 @@ class MarketingTargetController extends Controller
 
     protected function needsTlApprovalForUser(int $userId): bool
     {
-        $oa = \App\Models\OrgAssignment::query()
+        $oa = OrgAssignment::query()
             ->active()
             ->where('user_id', $userId)
             ->first();
 
-        if (!$oa) return true;
+        // ✅ kalau tidak ada TL/struktur tidak lengkap, SKIP TL (langsung ke KASI)
+        if (!$oa) return false;
 
-        return in_array(strtoupper((string)$oa->leader_role), ['TL','TLL','TLR','TLF'], true);
+        $leaderRole = strtoupper(trim((string) $oa->leader_role));
+
+        // ✅ butuh TL hanya jika leader_role memang TL*
+        return in_array($leaderRole, ['TL','TLL','TLR','TLF'], true);
     }
 
 }

@@ -39,6 +39,8 @@ class LoanAccount extends Model
         'keterangan_sandi',
         'cadangan_ppap',
         'nilai_agunan_yg_diperhitungkan',
+        'ft_pokok',
+        'ft_bunga',
 
     ];
 
@@ -51,6 +53,8 @@ class LoanAccount extends Model
         'last_restruktur_wa_sent_at' => 'datetime',
         'tgl_kolek' => 'date',
         'nilai_agunan_yg_diperhitungkan' => 'decimal:2',
+        'ft_pokok' => 'integer',
+        'ft_bunga' => 'integer',
 
     ];
 

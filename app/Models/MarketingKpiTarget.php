@@ -32,6 +32,9 @@ class MarketingKpiTarget extends Model
         'approved_at',
         'notes',
         'is_locked',
+        'target_rr',
+        'target_activity',
+        'weight_os','weight_noa','weight_rr','weight_activity',
     ];
 
     protected $casts = [

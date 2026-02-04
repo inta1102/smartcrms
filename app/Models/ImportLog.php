@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use App\Models\User;
 
 class ImportLog extends Model
 {
@@ -11,6 +12,9 @@ class ImportLog extends Model
     protected $fillable = [
         'module',
         'position_date',
+        'run_type',        // ✅ add
+        'reason',          // ✅ add
+
         'file_name',
         'rows_total',
         'rows_inserted',

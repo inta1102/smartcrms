@@ -10,7 +10,7 @@
 
     <div class="flex items-center gap-2">
       <a href="{{ route('kpi.marketing.targets.create') }}"
-         class="rounded-xl bg-slate-900 px-4 py-2 text-white text-sm font-semibold hover:bg-slate-800">
+        class="rounded-xl bg-slate-900 px-4 py-2 text-white text-sm font-semibold hover:bg-slate-800">
         + Buat Target
       </a>
 

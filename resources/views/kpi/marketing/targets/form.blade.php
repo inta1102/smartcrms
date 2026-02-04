@@ -6,7 +6,7 @@
     <h1 class="text-2xl font-bold text-slate-900">
       {{ $mode === 'create' ? 'Buat Draft Target KPI' : 'Edit Draft Target KPI' }}
     </h1>
-    <p class="text-sm text-slate-500">Isi target OS growth & NOA, lalu submit untuk approval.</p>
+    <p class="text-sm text-slate-500">Isi target OS/NOA/RR/Handling, lalu submit untuk approval.</p>
   </div>
 
   @if($errors->any())
@@ -67,12 +67,15 @@
             value="{{ old('period_month', \Carbon\Carbon::parse($target->period ?? now())->format('Y-m')) }}"
             class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
             {{ $mode === 'edit' ? 'disabled' : '' }}>
+
           @if($mode === 'create')
             <input type="hidden" name="period"
               value="{{ old('period', \Carbon\Carbon::parse($target->period ?? now())->startOfMonth()->toDateString()) }}">
           @else
-            <input type="hidden" name="period" value="{{ \Carbon\Carbon::parse($target->period)->startOfMonth()->toDateString() }}">
+            <input type="hidden" name="period"
+              value="{{ \Carbon\Carbon::parse($target->period)->startOfMonth()->toDateString() }}">
           @endif
+
           <p class="mt-1 text-xs text-slate-500">Periode otomatis disimpan sebagai tanggal 1 bulan tersebut.</p>
         </div>
 
@@ -84,9 +87,10 @@
             placeholder="misal: 001">
         </div>
 
+        {{-- TARGETS --}}
         <div>
-          <label class="text-sm font-semibold text-slate-700">Target OS Growth (Rp)</label>
-          <input type="number" step="0.01" name="target_os_growth"
+          <label class="text-sm font-semibold text-slate-700">Target Pencairan (Rp)</label>
+          <input type="number" step="1" min="0" name="target_os_growth"
             value="{{ old('target_os_growth', $target->target_os_growth) }}"
             class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
             placeholder="misal: 2000000000">
@@ -95,26 +99,67 @@
 
         <div>
           <label class="text-sm font-semibold text-slate-700">Target NOA (Debitur baru)</label>
-          <input type="number" name="target_noa"
+          <input type="number" min="0" name="target_noa"
             value="{{ old('target_noa', $target->target_noa) }}"
             class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
             placeholder="misal: 20">
         </div>
 
         <div>
+          <label class="text-sm font-semibold text-slate-700">Target RR (%)</label>
+          <input type="number" step="0.01" min="0" max="100" name="target_rr"
+            value="{{ old('target_rr', $target->target_rr ?? 100) }}"
+            class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            placeholder="misal: 100">
+          <p class="mt-1 text-xs text-slate-500">Default 100%. Bisa dibuat 95–100 sesuai kebijakan.</p>
+        </div>
+
+        <div>
+          <label class="text-sm font-semibold text-slate-700">Target Handling Komunitas (kegiatan)</label>
+          <input type="number" min="0" name="target_activity"
+            value="{{ old('target_activity', $target->target_activity ?? 0) }}"
+            class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+            placeholder="misal: 8">
+          <p class="mt-1 text-xs text-slate-500">Jumlah kegiatan/kunjungan komunitas dalam 1 bulan.</p>
+        </div>
+
+        {{-- WEIGHTS --}}
+        <!-- <div>
           <label class="text-sm font-semibold text-slate-700">Bobot OS (%)</label>
-          <input type="number" name="weight_os"
-            value="{{ old('weight_os', $target->weight_os ?? 60) }}"
+          <input type="number" min="0" max="100" name="weight_os"
+            value="{{ old('weight_os', $target->weight_os ?? 55) }}"
             class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
         </div>
 
         <div>
           <label class="text-sm font-semibold text-slate-700">Bobot NOA (%)</label>
-          <input type="number" name="weight_noa"
-            value="{{ old('weight_noa', $target->weight_noa ?? 40) }}"
+          <input type="number" min="0" max="100" name="weight_noa"
+            value="{{ old('weight_noa', $target->weight_noa ?? 15) }}"
             class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
-          <p class="mt-1 text-xs text-slate-500">Saran: OS 60% + NOA 40% = 100%</p>
         </div>
+
+        <div>
+          <label class="text-sm font-semibold text-slate-700">Bobot RR (%)</label>
+          <input type="number" min="0" max="100" name="weight_rr"
+            value="{{ old('weight_rr', $target->weight_rr ?? 20) }}"
+            class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+        </div>
+
+        <div>
+          <label class="text-sm font-semibold text-slate-700">Bobot Handling (%)</label>
+          <input type="number" min="0" max="100" name="weight_activity"
+            value="{{ old('weight_activity', $target->weight_activity ?? 10) }}"
+            class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+          <p class="mt-1 text-xs text-slate-500">Saran: OS 55 + NOA 15 + RR 20 + Handling 10 = 100%</p>
+        </div> -->
+
+        <div class="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <div class="text-sm font-semibold text-slate-700">Bobot KPI (ditetapkan manajemen)</div>
+          <div class="text-sm text-slate-600 mt-1">
+            OS <b>55%</b> + NOA <b>15%</b> + RR <b>20%</b> + Handling <b>10%</b> = <b>100%</b>
+          </div>
+        </div>
+
 
         <div class="md:col-span-2">
           <label class="text-sm font-semibold text-slate-700">Catatan / Asumsi AO (opsional)</label>
@@ -124,55 +169,39 @@
         </div>
       </div>
 
-        <div class="mt-5 flex flex-wrap items-center justify-between gap-3">
-            <a href="{{ route('kpi.marketing.targets.index') }}"
-                class="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                Kembali
-            </a>
+      <div class="mt-5 flex flex-wrap items-center justify-between gap-3">
+        <a href="{{ route('kpi.marketing.targets.index') }}"
+          class="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+          Kembali
+        </a>
 
-            <div class="flex items-center gap-2">
-
-                {{-- =========================
-                    FORM UPDATE (PUT) - SIMPAN DRAFT
-                    ========================= --}}
-                <form method="POST"
-                    action="{{ $mode === 'create'
-                        ? route('kpi.marketing.targets.store')
-                        : route('kpi.marketing.targets.update', $target) }}">
-                    @csrf
-                    @if($mode === 'edit')
-                        @method('PUT')
-                    @endif
-
-                    <button type="submit"
-                        class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
-                        Simpan Draft
-                    </button>
-                </form>
-
-                {{-- =========================
-                    FORM SUBMIT (POST) - KHUSUS SUBMIT
-                    ========================= --}}
-                @if($mode === 'edit')
-                    <form method="POST"
-                        action="{{ route('kpi.marketing.targets.submit', $target) }}">
-                        @csrf
-
-                        <button type="submit"
-                            class="rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700"
-                            onclick="return confirm('Submit target ini untuk approval? Setelah submit tidak bisa diedit.');">
-                            Submit
-                        </button>
-                    </form>
-                @endif
-
-            </div>
-
+        <div class="flex items-center gap-2">
+          <button type="submit"
+            class="rounded-xl bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800">
+            Simpan Draft
+          </button>
         </div>
+      </div>
     </form>
+
+    {{-- FORM SUBMIT (POST) - KHUSUS SUBMIT --}}
+    @if($mode === 'edit')
+      <div class="mt-3 flex justify-end">
+        <form method="POST" action="{{ route('kpi.marketing.targets.submit', $target) }}">
+          @csrf
+          <button type="submit"
+            class="rounded-xl bg-amber-600 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-700"
+            onclick="return confirm('Submit target ini untuk approval? Setelah submit tidak bisa diedit.');">
+            Submit
+          </button>
+        </form>
+      </div>
+    @endif
+
   </div>
 </div>
 @endsection
+
 @if($mode === 'create')
 <script>
   document.addEventListener('DOMContentLoaded', () => {

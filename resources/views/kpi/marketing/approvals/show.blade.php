@@ -35,6 +35,22 @@
             class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
         </div>
 
+        <div>
+          <label class="text-sm font-semibold text-slate-700">Target RR (Final)</label>
+          <input type="number" step="0.01" name="target_rr"
+            value="{{ old('target_rr', $target->target_rr ?? 100) }}"
+            class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+          <p class="mt-1 text-xs text-slate-500">Range 0–100%</p>
+        </div>
+
+        <div>
+          <label class="text-sm font-semibold text-slate-700">Target Handling Komunitas (Final)</label>
+          <input type="number" name="target_activity"
+            value="{{ old('target_activity', $target->target_activity ?? 0) }}"
+            class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm">
+          <p class="mt-1 text-xs text-slate-500">Jumlah kegiatan dalam 1 bulan</p>
+        </div>
+
         <div class="md:col-span-2">
           <label class="text-sm font-semibold text-slate-700">Catatan</label>
           <textarea name="notes" rows="3"

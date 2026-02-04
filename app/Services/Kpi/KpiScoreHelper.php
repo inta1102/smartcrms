@@ -23,9 +23,9 @@ class KpiScoreHelper
      */
     public static function scoreFromRepaymentRate(float $rr): int
     {
-        if ($rr < 90) return 1;
-        if ($rr < 95) return 2;
-        if ($rr < 98) return 3;
+        if ($rr < 70) return 1;
+        if ($rr < 80) return 2;
+        if ($rr < 90) return 3;
         if ($rr < 100) return 4;
         return 5;
     }
@@ -36,10 +36,10 @@ class KpiScoreHelper
      */
     public static function scoreFromNplMigration(float $pct): int
     {
-        if ($pct <= 0) return 5;
-        if ($pct <= 1) return 4;
-        if ($pct <= 2) return 3;
-        if ($pct <= 3) return 2;
+        if ($pct < 1) return 5;
+        if ($pct <= 2) return 4;
+        if ($pct <= 3) return 3;
+        if ($pct <= 4) return 2;
         return 1;
     }
 

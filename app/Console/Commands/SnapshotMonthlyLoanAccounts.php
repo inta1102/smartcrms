@@ -6,7 +6,6 @@ use App\Models\LoanAccount;
 use App\Models\LoanAccountSnapshotMonthly;
 use Carbon\Carbon;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 
 class SnapshotMonthlyLoanAccounts extends Command
 {
@@ -18,7 +17,7 @@ class SnapshotMonthlyLoanAccounts extends Command
 
     public function handle(): int
     {
-        $monthOpt = $this->option('month');
+        $monthOpt        = $this->option('month');
         $positionDateOpt = $this->option('position_date');
 
         $snapshotMonth = $monthOpt
@@ -49,20 +48,24 @@ class SnapshotMonthlyLoanAccounts extends Command
 
         // chunk supaya aman
         LoanAccount::query()
-    ->whereDate('position_date', $sourcePositionDate)
-    ->orderBy('id')
-    ->select([
-        'id', // ✅ WAJIB untuk chunkById
-        'account_no',
-        'cif',
-        'customer_name',
-        'branch_code',
-        'ao_code',
-        'outstanding',
-        'dpd',
-        'kolek',
-    ])
-    ->chunkById(500, function ($rows) use ($snapshotMonth, $sourcePositionDate, $bar) {
+            ->whereDate('position_date', $sourcePositionDate)
+            ->orderBy('id')
+            ->select([
+                'id', // ✅ WAJIB untuk chunkById
+                'account_no',
+                'cif',
+                'customer_name',
+                'branch_code',
+                'ao_code',
+                'outstanding',
+                'dpd',
+                'kolek',
+
+                // ✅ baru: RR (tanpa tunggakan)
+                'ft_pokok',
+                'ft_bunga',
+            ])
+            ->chunkById(500, function ($rows) use ($snapshotMonth, $sourcePositionDate, $bar) {
                 $payload = [];
                 $now = now();
 
@@ -77,19 +80,36 @@ class SnapshotMonthlyLoanAccounts extends Command
                         'outstanding'          => $r->outstanding ?? 0,
                         'dpd'                  => $r->dpd ?? 0,
                         'kolek'                => $r->kolek ?? null,
+
+                        // ✅ baru
+                        'ft_pokok'             => (int)($r->ft_pokok ?? 0),
+                        'ft_bunga'             => (int)($r->ft_bunga ?? 0),
+
                         'source_position_date' => $sourcePositionDate,
                         'created_at'           => $now,
                         'updated_at'           => $now,
                     ];
                 }
 
-                // upsert per bulan+account_no
+                // upsert per bulan + account_no
                 LoanAccountSnapshotMonthly::query()->upsert(
                     $payload,
                     ['snapshot_month', 'account_no'],
                     [
-                        'cif','customer_name','branch_code','ao_code',
-                        'outstanding','dpd','kolek','source_position_date','updated_at'
+                        'cif',
+                        'customer_name',
+                        'branch_code',
+                        'ao_code',
+                        'outstanding',
+                        'dpd',
+                        'kolek',
+
+                        // ✅ baru
+                        'ft_pokok',
+                        'ft_bunga',
+
+                        'source_position_date',
+                        'updated_at',
                     ]
                 );
 

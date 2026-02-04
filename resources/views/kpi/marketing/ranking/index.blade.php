@@ -23,6 +23,16 @@
             </button>
         </form>
 
+        <a href="{{ route('kpi.marketing.sheet', ['role'=>'AO', 'period'=>$period->format('Y-m')]) }}"
+            class="rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-50">
+            📄 KPI Sheet AO
+        </a>
+
+        <a href="{{ route('kpi.marketing.sheet', ['role'=>'SO', 'period'=>$period->format('Y-m')]) }}"
+            class="rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-50">
+            📄 KPI Sheet SO
+        </a>
+
         @can('recalcMarketingKpi')
             <form method="POST"
                   action="{{ route('kpi.marketing.ranking.recalc') }}"

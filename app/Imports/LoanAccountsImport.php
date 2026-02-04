@@ -3,6 +3,7 @@
 namespace App\Imports;
 
 use App\Models\LoanAccount;
+use App\Models\LoanDisbursement; // ✅ NEW
 use App\Models\NplCase;
 use App\Models\ActionSchedule;
 use App\Models\User;
@@ -42,7 +43,7 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
         $this->positionDate = Carbon::parse($positionDate)->format('Y-m-d');
     }
 
-    public function collection(Collection $rows) 
+    public function collection(Collection $rows)
     {
         if ($rows->isEmpty()) return;
         $this->total += $rows->count();
@@ -61,6 +62,9 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
         $caseMap        = []; // [account_no => meta rule]
         $recoverAccNos  = []; // account_no yang tidak memenuhi rule (untuk recovered)
 
+        // ✅ NEW: siapkan payload disbursement (bulk upsert kita lakukan via updateOrCreate loop - karena unique 3 kolom)
+        $disbRows = []; // list rows: ['account_no','ao_code','disb_date','period','amount','cif','customer_name']
+
         // ✅ debug sample RS row (safe)
         static $dbgRs = 0;
         $dbgSampleRow = null;
@@ -76,6 +80,21 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
             $kolek          = (int)($r['kolekskr'] ?? 0);
             $dpd            = (int)($r['hari_tunggak'] ?? 0);
 
+            $ftPokokRaw =
+                $r['ft_pokok']
+                ?? $r['ftpokok']
+                ?? $r['frek_tunggak_pokok']
+                ?? null;
+
+            $ftBungaRaw =
+                $r['ft_bunga']
+                ?? $r['ftbunga']
+                ?? $r['frek_tunggak_bunga']
+                ?? null;
+
+            $ftPokok = $this->parseNonNegativeIntOrZero($ftPokokRaw);
+            $ftBunga = $this->parseNonNegativeIntOrZero($ftBungaRaw);
+
             $plafond        = (float)($r['fasilitas'] ?? 0);
             $outstanding    = (float)($r['sldakhir'] ?? 0);
 
@@ -87,18 +106,13 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
 
             $alamat         = $r['alamat'] ?? null;
 
+            // ✅ NEW: disbursement date (kolom excel: tgl_valuta)
+            $tglValutaRaw = $r['tgl_valuta'] ?? $r['tglvaluta'] ?? $r['valuta'] ?? null;
+            $tglValuta = $this->parseDateOrNull($tglValutaRaw);
+
             // =========================
             // ✅ FIELD BARU - NILAI AGUNAN DIPERHITUNGKAN (CP)
             // =========================
-            // Kolom excel: nilai_agunan_yg_diperhitungkan (sesuai screenshot)
-            // Aman untuk "552000000" atau "552.000.000" atau "552,000,000"
-            // $nilaiAgunanHitungRaw =
-            //     $r['nilai_agunan_yg_diperhitungkan']
-            //     ?? $r['nilai_agunan_diperhitungkan']
-            //     ?? $r['agunan_diperhitungkan']
-            //     ?? $r['cp']
-            //     ?? null;
-
             $nilaiAgunanHitungRaw =
                 $r['nilai_jaminan']
                 ?? $r['nilai_jaminan_diperhitungkan']
@@ -108,7 +122,6 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
 
             $nilaiAgunanDiperhitungkan = null;
             if ($nilaiAgunanHitungRaw !== null && $nilaiAgunanHitungRaw !== '') {
-                // keep digits only -> jadi integer string, lalu cast ke float/decimal
                 $digits = preg_replace('/[^\d]/', '', (string)$nilaiAgunanHitungRaw);
                 $nilaiAgunanDiperhitungkan = ($digits === '') ? null : (float)$digits;
             }
@@ -116,30 +129,25 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
             // =========================
             // ✅ FIELD BARU (EWS) - RESTRUK
             // =========================
-            // flag restruktur (EA) -> bool
             $flagRsRaw = $r['flag_rs'] ?? $r['flag_restru'] ?? $r['flag_restruktur'] ?? $r['ea'] ?? null;
             $isRestructured = $this->parseBoolFlag($flagRsRaw);
 
-            // tanggal terakhir restruktur (DZ)
             $lastRestrucRaw =
-                $r['tglakhir_restruktur']           // ✅ sesuai excel kamu
+                $r['tglakhir_restruktur']
                 ?? $r['tglakhir_restrukturisasi']
-                ?? $r['tgl_akhir_restruktur']       // jaga-jaga variasi
+                ?? $r['tgl_akhir_restruktur']
                 ?? $r['last_restructure_date']
                 ?? $r['dz']
                 ?? null;
 
             $lastRestructureDate = $this->parseDateOrNull($lastRestrucRaw);
 
-            // tgl angsuran (EU) biasanya angka 1-31
             $instDayRaw = $r['tgl_angsuran'] ?? $r['installment_day'] ?? $r['eu'] ?? null;
             $installmentDay = $this->parseIntDayOrNull($instDayRaw);
 
-            // tanggal terakhir bayar (FQ)
             $lastPayRaw = $r['tgl_akhir_byr'] ?? $r['tgl_akhir_bayar'] ?? $r['last_payment_date'] ?? $r['fq'] ?? null;
             $lastPaymentDate = $this->parseDateOrNull($lastPayRaw);
 
-            // frekuensi restruktur (kalau belum ada di file, default minimal)
             $freqRaw =
                 $r['frek_restruktur']
                 ?? $r['restructure_freq']
@@ -150,9 +158,8 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
             // =========================
             // ✅ FIELD BARU (EWS) - KOLEK 5 / USIA MACET
             // =========================
-            // jenis agunan (AL)
             $jenisAgunanRaw =
-                $r['jenis_agunan']     // ✅ sesuai screenshot kamu
+                $r['jenis_agunan']
                 ?? $r['jenisagunan']
                 ?? $r['al']
                 ?? null;
@@ -161,30 +168,26 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
                 $jenisAgunan = null;
             }
 
-            // tgl kolek (CY) -> date
             $tglKolekRaw =
-                $r['tgl_kolek']        // ✅ sesuai screenshot kamu
+                $r['tgl_kolek']
                 ?? $r['tanggal_kolek']
                 ?? $r['cy']
                 ?? null;
             $tglKolek = $this->parseDateOrNull($tglKolekRaw);
 
-            // keterangan sandi (DD)
             $keteranganSandi =
-                $r['keterangan_sandi'] // ✅ sesuai screenshot kamu
+                $r['keterangan_sandi']
                 ?? $r['ket_sandi']
                 ?? $r['dd']
                 ?? null;
             $keteranganSandi = $keteranganSandi ? trim((string)$keteranganSandi) : null;
 
-            // cadangan ppap (AG)
             $cadanganPpapRaw =
-                $r['cadangan_ppap']    // ✅ sesuai screenshot kamu
+                $r['cadangan_ppap']
                 ?? $r['ppap']
                 ?? $r['ag']
                 ?? null;
 
-            // aman: kalau formatnya string "1.250.000" / "1250000"
             $cadanganPpap = null;
             if ($cadanganPpapRaw !== null && $cadanganPpapRaw !== '') {
                 $cadanganPpap = (int) preg_replace('/[^\d]/', '', (string)$cadanganPpapRaw);
@@ -215,6 +218,8 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
                 'customer_name'   => $customerName,
                 'kolek'           => $kolek,
                 'dpd'             => $dpd,
+                'ft_pokok'        => $ftPokok,
+                'ft_bunga'        => $ftBunga,
                 'plafond'         => $plafond,
                 'outstanding'     => $outstanding,
                 'ao_code'         => $ownerAoCode,
@@ -223,17 +228,14 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
                 'collector_name'  => $collectorName,
                 'alamat'          => $alamat,
 
-                // ✅ kolom baru agunan diperhitungkan
                 'nilai_agunan_yg_diperhitungkan' => $nilaiAgunanDiperhitungkan,
 
-                // ✅ fields baru restruk
                 'is_restructured'       => $isRestructured ? 1 : 0,
                 'restructure_freq'      => $restructureFreq,
                 'last_restructure_date' => $lastRestructureDate,
                 'installment_day'       => $installmentDay,
                 'last_payment_date'     => $lastPaymentDate,
 
-                // ✅ fields baru kolek 5 / usia macet
                 'jenis_agunan'      => $jenisAgunan,
                 'tgl_kolek'         => $tglKolek,
                 'keterangan_sandi'  => $keteranganSandi,
@@ -243,6 +245,26 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
                 'updated_at'      => $now,
                 'created_at'      => $now,
             ];
+
+            // =========================
+            // ✅ NEW: RECORD DISBURSEMENT (tgl_valuta + fasilitas)
+            // =========================
+            // Note: kita catat jika:
+            // - tgl_valuta ada
+            // - fasilitas > 0
+            // Dedup ditangani oleh unique key & updateOrCreate saat simpan
+            if ($tglValuta && $plafond > 0) {
+                $aoForDisb = $ownerAoCode ?: $collectorCode; // prioritas owner
+                $disbRows[] = [
+                    'account_no'    => $accountNo,
+                    'ao_code'       => $aoForDisb ?: null,
+                    'disb_date'     => $tglValuta,
+                    'period'        => Carbon::parse($tglValuta)->startOfMonth()->toDateString(),
+                    'amount'        => (int) round($plafond),
+                    'cif'           => $cif,
+                    'customer_name' => $customerName,
+                ];
+            }
 
             /**
              * ✅ RULE MASUK CASE:
@@ -303,25 +325,92 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
             [
                 'position_date','cif','customer_name','kolek','dpd','plafond','outstanding',
                 'ao_code','ao_name','collector_code','collector_name','alamat',
-
-                // ✅ update kolom baru agunan diperhitungkan
-                'nilai_agunan_yg_diperhitungkan',
-
-                // ✅ update fields restruk
+                'nilai_agunan_yg_diperhitungkan','ft_pokok','ft_bunga',
                 'is_restructured','restructure_freq','last_restructure_date','installment_day','last_payment_date',
-
-                // ✅ update fields kolek 5 / usia macet
                 'jenis_agunan','tgl_kolek','keterangan_sandi','cadangan_ppap',
-
                 'is_active','updated_at',
             ]
         );
+
+        // =========================
+        // A2) UPSERT DISBURSEMENTS (from the same file)
+        // =========================
+        if (!empty($disbRows)) {
+            // Dedup ringan dalam chunk (hindari updateOrCreate berulang utk key sama)
+            $seen = [];
+            foreach ($disbRows as $d) {
+                $k = ($d['account_no'] ?? '').'|'.($d['disb_date'] ?? '').'|'.($d['amount'] ?? 0);
+                if ($k === '||0') continue;
+                if (isset($seen[$k])) continue;
+                $seen[$k] = true;
+
+                LoanDisbursement::query()->updateOrCreate(
+                    [
+                        'account_no' => $d['account_no'],
+                        'disb_date'  => $d['disb_date'],
+                        'amount'     => $d['amount'],
+                    ],
+                    [
+                        'ao_code'       => $d['ao_code'] ?: null,
+                        'user_id'       => null, // nanti bisa dimap dari ao_code
+                        'period'        => $d['period'],
+                        'cif'           => $d['cif'] ?: null,
+                        'customer_name' => $d['customer_name'] ?: null,
+                        'source_file'   => 'loan_accounts_import',
+                        'import_batch_id' => null,
+                        'updated_at'    => $now,
+                        'created_at'    => $now,
+                    ]
+                );
+            }
+        }
 
         // Map account_no -> loan_account_id
         $accNosAll = array_keys($loanUpsert);
         $loanIdMap = LoanAccount::query()
             ->whereIn('account_no', $accNosAll)
             ->pluck('id', 'account_no');
+        // =========================
+        // A3) MAP loan_disbursements.user_id by ao_code
+        // =========================
+        $aoCodes = collect($disbRows)
+            ->pluck('ao_code')
+            ->filter(fn($v) => $v !== null && trim((string)$v) !== '')
+            ->map(fn($v) => trim((string)$v))
+            ->unique()
+            ->values();
+
+        if ($aoCodes->isNotEmpty()) {
+            $userIdByEmp = User::query()
+                ->whereIn('employee_code', $aoCodes->all())
+                ->pluck('id', 'employee_code');
+
+            // update hanya yang user_id masih null
+            foreach ($userIdByEmp as $empCode => $uid) {
+                LoanDisbursement::query()
+                    ->whereNull('user_id')
+                    ->where('ao_code', (string)$empCode)
+                    ->update([
+                        'user_id'    => (int)$uid,
+                        'updated_at' => $now,
+                    ]);
+            }
+
+            // fallback kalau ternyata ao_code kamu pakai users.ao_code
+            $userIdByAo = User::query()
+                ->whereIn('ao_code', $aoCodes->all())
+                ->pluck('id', 'ao_code');
+
+            foreach ($userIdByAo as $aoCode => $uid) {
+                LoanDisbursement::query()
+                    ->whereNull('user_id')
+                    ->where('ao_code', (string)$aoCode)
+                    ->update([
+                        'user_id'    => (int)$uid,
+                        'updated_at' => $now,
+                    ]);
+            }
+        }
 
         // =========================
         // B0) MAP loan_account_id -> pic_user_id
@@ -620,7 +709,6 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
         }
     }
 
-
     private function parseFreqOrDefault($v, bool $isRestruc): int
     {
         if ($v === null || trim((string)$v) === '') {
@@ -645,8 +733,9 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
         return 1000;
     }
 
-    protected function getPriority(int $kolek, int $dpd, float $os): string
+    protected function getPriority(int $kolek, int $dpd, float $os, bool $isRestruk): string
     {
+        if ($isRestruk && $os >= 2500000000) return 'critical';
         if ($kolek >= 4 || $dpd >= 180 || $os >= 100000000) return 'critical';
         if ($kolek == 3 || $dpd >= 90) return 'high';
         return 'normal';
@@ -673,4 +762,18 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
 
         return str_pad($digits, $length, '0', STR_PAD_LEFT);
     }
+
+    private function parseNonNegativeIntOrZero($v): int
+    {
+        if ($v === null || $v === '') return 0;
+
+        $s = trim((string)$v);
+        // kalau ada koma/titik dll
+        $digits = preg_replace('/[^\d\-]/', '', $s);
+        if ($digits === '' || $digits === '-') return 0;
+
+        $i = (int)$digits;
+        return $i < 0 ? 0 : $i;
+    }
+
 }

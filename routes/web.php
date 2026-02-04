@@ -65,7 +65,12 @@ use App\Http\Controllers\Kpi\MarketingTargetApprovalController;
 use App\Http\Controllers\Kpi\MarketingKpiAchievementController;
 use App\Http\Controllers\Kpi\MarketingKpiRankingController;
 use App\Http\Controllers\Ews\EwsCkpnController;
+use App\Http\Controllers\Kpi\MarketingKpiSheetController;
+use App\Http\Controllers\Kpi\KpiRecalcController;
 
+
+use App\Http\Controllers\Kpi\SoHandlingController;
+use App\Http\Controllers\Kpi\SoTargetController;
 
 Route::model('action', LegalAction::class);
 
@@ -128,6 +133,10 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/loans/update-jadwal/status', [LoanImportController::class, 'updateJadwalStatus'])
         ->name('loans.jadwal.status');
+
+    Route::post('/loans/import/installments', [LoanImportController::class, 'importInstallments'])
+        ->name('loans.installments.import');
+
 
     // EWS
     Route::get('/ews/summary', [EwsSummaryController::class, 'index'])
@@ -522,8 +531,26 @@ Route::middleware('auth')->group(function () {
         [KpiMarketingAoController::class, 'show']
     )->name('kpi.marketing.ao.show');
 
+    Route::get('/kpi/marketing/sheet', [MarketingKpiSheetController::class, 'index'])
+        ->name('kpi.marketing.sheet');
+
+    Route::post('/kpi/recalc/ao', [KpiRecalcController::class, 'recalcAo'])->name('kpi.recalc.ao');
+    Route::post('/kpi/recalc/so', [KpiRecalcController::class, 'recalcSo'])->name('kpi.recalc.so');
+
 
 });    
+
+
+Route::middleware(['auth'])->prefix('kpi/so')->name('kpi.so.')->group(function () {
+    Route::get('/handling', [SoHandlingController::class, 'index'])->name('handling.index');
+    Route::post('/handling/save', [SoHandlingController::class, 'save'])->name('handling.save');
+});
+
+Route::prefix('kpi/so')->name('kpi.so.')->middleware('auth')->group(function () {
+    Route::resource('targets', \App\Http\Controllers\Kpi\SoTargetController::class)->except(['show','destroy']);
+    Route::post('targets/{target}/submit', [\App\Http\Controllers\Kpi\SoTargetController::class, 'submit'])->name('targets.submit');
+});
+
 
 // =========================
 // LEGAL PROPOSALS (USULAN)

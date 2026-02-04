@@ -19,7 +19,7 @@ use Maatwebsite\Excel\Validators\ValidationException as ExcelValidationException
 use App\Jobs\RunMonthlyLoanSnapshot;
 use App\Models\LegacySyncRun;
 use Illuminate\Support\Facades\DB;
-
+use App\Imports\LoanInstallmentsImport; 
 
 
 class LoanImportController extends Controller
@@ -166,7 +166,20 @@ class LoanImportController extends Controller
             ->latest('id')
             ->first();
 
-        return view('loans.import', compact('lastImport', 'lastLegacy', 'lastSchedule'));
+        // ✅ NEW: import installment terakhir (ikut posisi terakhir biar nyambung)
+        $lastInstallment = ImportLog::query()
+            ->with('importer:id,name')
+            ->where('module', 'installments')
+            ->when($posDate, fn ($q) => $q->whereDate('position_date', $posDate))
+            ->latest('id')
+            ->first();
+
+        return view('loans.import', compact(
+            'lastImport',
+            'lastLegacy',
+            'lastSchedule',
+            'lastInstallment'
+        ));
     }
 
     public function legacySync(Request $request)
@@ -486,6 +499,111 @@ class LoanImportController extends Controller
             'percent'   => $percent,
             'note'      => $note,
         ];
+    }
+
+    public function importInstallments(Request $request)
+    {
+        @ini_set('max_execution_time', '600');
+        @set_time_limit(600);
+        @ini_set('memory_limit', '1024M');
+
+        $validated = $request->validate([
+            'file_installments' => 'required|file|max:20480|mimes:xls,xlsx',
+            'position_date'     => ['required', 'date'],
+            'reimport'          => ['nullable', 'boolean'],
+            'reimport_reason'   => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $posDate  = Carbon::parse($validated['position_date'])->toDateString();
+        $file     = $request->file('file_installments');
+        $fileName = $file?->getClientOriginalName();
+
+        $reimport = (bool)($validated['reimport'] ?? false);
+        $reason   = trim((string)($validated['reimport_reason'] ?? ''));
+
+        // ✅ opsional: cegah double success posisi sama (kalau mau strict)
+        $exists = ImportLog::query()
+            ->where('module', 'installments')
+            ->where('status', 'success')
+            ->whereDate('position_date', $posDate)
+            ->exists();
+
+        if ($exists && !$reimport) {
+            return back()
+                ->withErrors(['position_date' => "Installment posisi {$posDate} sudah pernah diimport (SUCCESS). Jika koreksi, gunakan Re-import."])
+                ->withInput();
+        }
+
+        if ($exists && $reimport && $reason === '') {
+            return back()
+                ->withErrors(['reimport_reason' => 'Alasan re-import wajib diisi.'])
+                ->withInput();
+        }
+
+        $importer = new LoanInstallmentsImport($posDate); // sesuaikan constructor
+
+        try {
+            Excel::import($importer, $file);
+
+            $s = $importer->summary();
+
+            ImportLog::create([
+                'module'        => 'installments',
+                'position_date' => $posDate,
+                'run_type'      => $reimport ? 'reimport' : 'import',
+                'file_name'     => $fileName,
+                'rows_total'    => (int)($s['total'] ?? 0),
+                'rows_inserted' => (int)($s['inserted'] ?? 0),
+                'rows_updated'  => (int)($s['updated'] ?? 0),
+                'rows_skipped'  => (int)($s['skipped'] ?? 0),
+                'status'        => 'success',
+                'message'       => ($reimport ? 'RE-IMPORT' : 'IMPORT') . " installment sukses | total={$s['total']} inserted={$s['inserted']} skipped={$s['skipped']}",
+                'reason'        => $reimport ? $reason : null,
+                'imported_by'   => auth()->id(),
+            ]);
+
+            return redirect()
+                ->route('loans.import.form')
+                ->with('status', "Import installment selesai. Posisi: {$posDate}. Total: {$s['total']} | Inserted: {$s['inserted']} | Skipped: {$s['skipped']}");
+
+        } catch (ExcelValidationException $e) {
+
+            Log::error('[IMPORT INSTALLMENTS] ExcelValidationException', ['failures' => $e->failures()]);
+
+            ImportLog::create([
+                'module'        => 'installments',
+                'position_date' => $posDate,
+                'run_type'      => $reimport ? 'reimport' : 'import',
+                'file_name'     => $fileName,
+                'status'        => 'failed',
+                'message'       => 'Header/kolom installment tidak sesuai template.',
+                'reason'        => $reimport ? $reason : null,
+                'imported_by'   => auth()->id(),
+            ]);
+
+            return back()->with('error', 'Gagal import installment: header/kolom tidak sesuai template.')->withInput();
+
+        } catch (\Throwable $e) {
+
+            Log::error('[IMPORT INSTALLMENTS] Throwable', [
+                'msg'  => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            ImportLog::create([
+                'module'        => 'installments',
+                'position_date' => $posDate,
+                'run_type'      => $reimport ? 'reimport' : 'import',
+                'file_name'     => $fileName,
+                'status'        => 'failed',
+                'message'       => 'Import installment gagal: ' . $e->getMessage(),
+                'reason'        => $reimport ? $reason : null,
+                'imported_by'   => auth()->id(),
+            ]);
+
+            return back()->with('error', 'Gagal import installment. Detail ada di log.')->withInput();
+        }
     }
 
 }
