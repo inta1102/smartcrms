@@ -72,12 +72,11 @@ class NplCase extends Model
         return $this->hasMany(CaseAction::class, 'npl_case_id');
     }
 
-    public function isOverdueNextAction()
+    public function isOverdueNextAction(): bool
     {
-        $next = $this->actions->sortByDesc('action_at')->first();
-        if (!$next || !$next->next_action_due) return false;
-
-        return now()->toDateString() > $next->next_action_due->toDateString();
+        $a = $this->latestDueAction;
+        if (!$a || !$a->next_action_due) return false;
+        return now()->toDateString() > $a->next_action_due->toDateString();
     }
 
     public function schedules()
@@ -108,16 +107,17 @@ class NplCase extends Model
     public function activeResolutionTarget()
     {
         return $this->hasOne(CaseResolutionTarget::class)
-            ->whereIn('status', ['APPROVED_KASI', 'ACTIVE'])
+            ->whereIn('status', ['active'])   // atau ['active','approved_kasi'] kalau ada
             ->latestOfMany();
     }
 
     public function pendingResolutionTarget()
     {
         return $this->hasOne(CaseResolutionTarget::class)
-            ->whereIn('status', ['PENDING_TL', 'PENDING_KASI'])
+            ->whereIn('status', ['pending_tl','pending_kasi'])
             ->latestOfMany();
     }
+
 
     public function aoAgendas()
     {
@@ -163,24 +163,48 @@ class NplCase extends Model
             UserRole::KABAG, UserRole::KBL, UserRole::KBO, UserRole::KTI, UserRole::KBF,
             UserRole::PE,
         ])) {
-            return $q; // ✅ no filter
+            return $q;
         }
 
+        // helper: normalisasi kode (leading zero)
+        $normCodes = function (array $codes): array {
+            $out = [];
+            foreach ($codes as $c) {
+                $c = strtoupper(trim((string) $c));
+                if ($c === '') continue;
+
+                $out[] = $c;
+
+                $nz = ltrim($c, '0');
+                if ($nz !== '') $out[] = $nz;
+
+                if (ctype_digit($nz)) {
+                    // sesuaikan panjang kalau ao_code kamu bukan 6 digit
+                    $out[] = str_pad($nz, 6, '0', STR_PAD_LEFT);
+                }
+            }
+            return array_values(array_unique($out));
+        };
+
         // ===============================
-        // BE (Legal) - HYBRID
+        // FIELD STAFF (AO/BE/FE/SO/RO/SA)
+        // ✅ hardening: PIC OR ao_code match
         // ===============================
-        if ($user->hasAnyRole([UserRole::BE])) {
-            return $q->where(function ($qq) use ($user) {
-                $qq->where('pic_user_id', $user->id)
-                   ->orWhere('is_legal', 1);
+        if ($user->hasAnyRole([UserRole::AO, UserRole::BE, UserRole::FE, UserRole::SO, UserRole::RO, UserRole::SA])) {
+            $codes = $normCodes([
+                (string) ($user->employee_code ?? ''),
+                (string) ($user->username ?? ''),
+            ]);
+
+            return $q->where(function ($w) use ($user, $codes) {
+                $w->where('pic_user_id', (int) $user->id);
+
+                if (!empty($codes)) {
+                    $w->orWhereHas('loanAccount', function ($x) use ($codes) {
+                        $x->whereIn('ao_code', $codes);
+                    });
+                }
             });
-        }
-
-        // ===============================
-        // AO / FE / SO / RO / SA (field staff biasa)
-        // ===============================
-        if ($user->hasAnyRole([UserRole::AO, UserRole::FE, UserRole::SO, UserRole::RO, UserRole::SA])) {
-            return $q->where('pic_user_id', $user->id);
         }
 
         // ===============================
@@ -188,10 +212,11 @@ class NplCase extends Model
         // ===============================
         if ($user->hasAnyRole([UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR])) {
             $staffIds = OrgAssignment::query()
-                ->where('leader_id', $user->id)
-                ->where('is_active', 1)
-                ->whereNull('effective_to')
+                ->active()
+                ->where('leader_id', (int) $user->id)
                 ->pluck('user_id')
+                ->map(fn($v) => (int) $v)
+                ->values()
                 ->all();
 
             return empty($staffIds)
@@ -200,46 +225,61 @@ class NplCase extends Model
         }
 
         // ===============================
-        // KASI (hybrid)
+        // KASI (KSL/KSO/KSA/KSF/KSD/KSR)
+        // - Direct bawahan: bisa TL atau staff
+        // - Ambil staff under TL juga
         // ===============================
         if ($user->hasAnyRole([UserRole::KSL, UserRole::KSO, UserRole::KSA, UserRole::KSF, UserRole::KSD, UserRole::KSR])) {
 
             $directIds = OrgAssignment::query()
-                ->where('leader_id', $user->id)
-                ->where('is_active', 1)
-                ->whereNull('effective_to')
+                ->active()
+                ->where('leader_id', (int) $user->id)
                 ->pluck('user_id')
+                ->map(fn($v) => (int) $v)
+                ->values()
                 ->all();
 
             if (empty($directIds)) {
                 return $q->whereRaw('1=0');
             }
 
+            // level string (bukan enum object)
+            $tlRoleVals = ['TL','TLL','TLF','TLR'];
+            $staffRoleVals = ['AO','BE','FE','SO','RO','SA'];
+
             $tlIds = User::query()
                 ->whereIn('id', $directIds)
-                ->whereIn('level', [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR])
+                ->whereIn('level', $tlRoleVals)
                 ->pluck('id')
+                ->map(fn($v) => (int) $v)
+                ->values()
                 ->all();
 
             $directStaffIds = User::query()
                 ->whereIn('id', $directIds)
-                ->whereIn('level', [UserRole::AO, UserRole::BE, UserRole::FE, UserRole::SO, UserRole::RO, UserRole::SA])
+                ->whereIn('level', $staffRoleVals)
                 ->pluck('id')
+                ->map(fn($v) => (int) $v)
+                ->values()
                 ->all();
 
             $staffFromTlIds = [];
             if (!empty($tlIds)) {
                 $staffFromTlIds = OrgAssignment::query()
+                    ->active()
                     ->whereIn('leader_id', $tlIds)
-                    ->where('is_active', 1)
-                    ->whereNull('effective_to')
                     ->pluck('user_id')
+                    ->map(fn($v) => (int) $v)
+                    ->values()
                     ->all();
 
+                // filter benar2 staff lapangan
                 $staffFromTlIds = User::query()
                     ->whereIn('id', $staffFromTlIds)
-                    ->whereIn('level', [UserRole::AO, UserRole::BE, UserRole::FE, UserRole::SO])
+                    ->whereIn('level', $staffRoleVals)
                     ->pluck('id')
+                    ->map(fn($v) => (int) $v)
+                    ->values()
                     ->all();
             }
 
