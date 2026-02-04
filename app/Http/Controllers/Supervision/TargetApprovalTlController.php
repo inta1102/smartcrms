@@ -4,15 +4,14 @@ namespace App\Http\Controllers\Supervision;
 
 use App\Http\Controllers\Controller;
 use App\Models\CaseResolutionTarget;
+use App\Models\OrgAssignment;
 use App\Services\Crms\ResolutionTargetService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Enums\UserRole;
 
-
 class TargetApprovalTlController extends Controller
 {
-
     protected function ensureTlLevel(): void
     {
         $u = auth()->user();
@@ -30,6 +29,31 @@ class TargetApprovalTlController extends Controller
         abort_unless($isTl, 403);
     }
 
+    /**
+     * ✅ Hardening utama: TL hanya boleh lihat/approve target yg dibuat oleh staff dalam tim TL tsb.
+     * Dengan org_assignments:
+     * - staff_user_id = proposed_by (user pembuat target)
+     * - leader_id     = TL (user yg login)
+     * - leader_role   = 'TL' (atau variasi bila kamu simpan spesifik)
+     * - is_active     = 1
+     */
+    protected function assertWithinTlScope(int $proposedByUserId): void
+    {
+        $tlId = (int) auth()->id();
+        abort_unless($tlId > 0, 403);
+
+        // ✅ kalau TL bikin target sendiri (opsional, tapi aman)
+        if ($proposedByUserId === $tlId) return;
+
+        $ok = OrgAssignment::query()
+            ->where('staff_user_id', $proposedByUserId)
+            ->where('leader_id', $tlId)
+            ->where('is_active', 1)
+            ->whereIn('leader_role', ['TL', 'TLL', 'TLF', 'TLR']) // kalau di DB kamu cuma simpan 'TL', boleh jadi ['TL'] saja
+            ->exists();
+
+        abort_unless($ok, 403);
+    }
 
     public function index(Request $request)
     {
@@ -48,17 +72,20 @@ class TargetApprovalTlController extends Controller
             $q->where('status', $status);
         }
 
-        // ✅ (OPSIONAL) scope TL: hanya lihat target dari tim TL tersebut
-        // kalau struktur org_assignments sudah dipakai, aktifkan ini
-        //
-        // $tlId = auth()->id();
-        // $q->whereHas('proposer.orgAssignmentsAsStaff', function($x) use ($tlId) {
-        //     $x->where('leader_id', $tlId)
-        //       ->where('is_active', 1)
-        //       ->where('leader_role', 'TL');
-        // });
+        // ✅ WAJIB scope TL: hanya target dari bawahan TL tsb (atau milik sendiri)
+        $tlId = (int) auth()->id();
 
-        // ✅ search (FIX: group OR dalam closure)
+        $q->where(function ($w) use ($tlId) {
+            $w->where('proposed_by', $tlId)
+            ->orWhereHas('proposer.orgAssignmentsAsStaff', function ($x) use ($tlId) {
+                $x->active()
+                    ->where('leader_id', $tlId)
+                    ->whereIn('leader_role', ['TL','TLL','TLF','TLR']);
+            });
+        });
+
+
+        // ✅ search (group OR dalam closure)
         if ($kw !== '') {
             $q->where(function ($w) use ($kw) {
                 $w->whereHas('nplCase.loanAccount', fn($x) => $x->where('customer_name', 'like', "%{$kw}%"))
@@ -73,7 +100,6 @@ class TargetApprovalTlController extends Controller
             $q->where('created_at', '<', now()->subDays($tlSlaDays));
         }
 
-        // urutkan dari paling lama pending dulu
         $targets = $q->orderBy('created_at')
             ->paginate($perPage)
             ->withQueryString();
@@ -99,7 +125,9 @@ class TargetApprovalTlController extends Controller
         DB::transaction(function () use ($target, $svc, $request) {
             $t = CaseResolutionTarget::whereKey($target->id)->lockForUpdate()->firstOrFail();
 
-            // Guard: harus pending TL
+            // ✅ Anti-bocor: policy scope check (setelah lock)
+            $this->authorize('approveTl', $t);
+
             abort_unless($t->status === CaseResolutionTarget::STATUS_PENDING_TL, 422);
 
             $svc->approveTl($t, auth()->id(), $request->input('notes'));
@@ -119,7 +147,9 @@ class TargetApprovalTlController extends Controller
         DB::transaction(function () use ($target, $svc, $request) {
             $t = CaseResolutionTarget::whereKey($target->id)->lockForUpdate()->firstOrFail();
 
-            // Guard: harus pending TL
+            // ✅ Anti-bocor
+            $this->authorize('approveTl', $t); // boleh reuse approveTl untuk reject TL, atau bikin rejectTl kalau mau rapi
+
             abort_unless($t->status === CaseResolutionTarget::STATUS_PENDING_TL, 422);
 
             $svc->reject($t, auth()->id(), $request->input('reason'));

@@ -5,97 +5,176 @@ namespace App\Providers;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\View;
+use Illuminate\Support\Facades\Cache;
+
+// Models
 use App\Models\OrgAssignment;
-use App\Policies\OrgAssignmentPolicy;
-use App\Enums\UserRole;
-use App\Models\NplCase;
+use App\Models\LoanAccount;
 use App\Models\ShmCheckRequest;
 
-// === OBSERVERS ===
+// Enums
+use App\Enums\UserRole;
+
+// Observers
 use App\Observers\HtAuctionObserver;
 use App\Observers\HtUnderhandSaleObserver;
 use App\Observers\HtDocumentObserver;
 
+// Services
 use App\Services\Restructure\RestructureDashboardService;
-use App\Models\LoanAccount;
-use Illuminate\Support\Facades\Cache;
-
 use App\Services\Ews\EwsMacetService;
-
-use Illuminate\Support\Facades\View;
 use App\Services\Crms\ApprovalBadgeService;
-// use App\Services\Supervision\ApprovalBadgeService;
-
 
 class AppServiceProvider extends ServiceProvider
 {
-    /**
-     * Register any application services.
-     */
     public function register(): void
     {
         //
     }
 
-    /**
-     * Bootstrap any application services.
-     */
     public function boot(): void
     {
-        /*
-        |--------------------------------------------------------------------------
-        | HT AUCTION OBSERVER
-        |--------------------------------------------------------------------------
-        | Daftarkan observer HANYA jika modelnya benar-benar ada
-        | Ini mencegah error "Class not found"
-        */
+        // =========================================================
+        // Observers (fail-safe: only if model exists)
+        // =========================================================
         if (class_exists(\App\Models\LegalActionHtAuction::class)) {
             \App\Models\LegalActionHtAuction::observe(HtAuctionObserver::class);
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | HT UNDERHAND SALE OBSERVER
-        |--------------------------------------------------------------------------
-        */
         if (class_exists(\App\Models\LegalActionHtUnderhandSale::class)) {
             \App\Models\LegalActionHtUnderhandSale::observe(HtUnderhandSaleObserver::class);
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | HT DOCUMENT OBSERVER
-        |--------------------------------------------------------------------------
-        */
         if (class_exists(\App\Models\LegalActionHtDocument::class)) {
             \App\Models\LegalActionHtDocument::observe(HtDocumentObserver::class);
         }
 
+        // =========================================================
+        // Blade directive: @role('ao','tl',...)
+        // =========================================================
         Blade::if('role', function (...$roles) {
             $user = auth()->user();
-            if (! $user) return false;
+            if (!$user) return false;
 
             $level = strtolower((string) ($user->level ?? ''));
-            $roles = array_map(fn($r) => strtolower(trim($r)), $roles);
+            $roles = array_map(fn ($r) => strtolower(trim((string)$r)), $roles);
 
             return in_array($level, $roles, true);
         });
 
+        // =========================================================
+        // Gate before: top management allow all
+        // =========================================================
         Gate::before(function ($user, $ability) {
-            // super admin / top management
-            if ($user->hasAnyRole([UserRole::DIREKSI, UserRole::KABAG, UserRole::PE, UserRole::KTI])) {
+            if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole([
+                UserRole::DIREKSI,
+                UserRole::KABAG,
+                UserRole::PE,
+                UserRole::KTI,
+            ])) {
                 return true;
             }
             return null;
         });
 
-        view()->composer('layouts.partials.sidebar', function ($view) {
-            if (!auth()->check()) return;
-
+        // =========================================================
+        // ✅ SINGLE composer untuk sidebar (SATU PINTU)
+        // =========================================================
+        View::composer('layouts.partials.sidebar', function ($view) {
             $u = auth()->user();
+            if (!$u) {
+                $view->with('sidebarBadges', []);
+                $view->with('rsKritisMeta', null);
+                $view->with('rsKritisRatio', 0);
+                $view->with('macetWarnMeta', null);
+                return;
+            }
 
-            $svc = app(RestructureDashboardService::class);
+            // -----------------------------
+            // Role groups (string-safe)
+            // -----------------------------
+            $roleVal = method_exists($u, 'roleValue')
+                ? strtoupper((string) $u->roleValue())
+                : strtoupper((string) ($u->level ?? ''));
 
+            $tlRoles   = ['TL','TLL','TLF','TLR'];
+            $kasiRoles = ['KSL','KSO','KSA','KSF','KSD','KSR','KASI']; // tambah KASI kalau dipakai
+            $sadRoles  = ['SAD','KSA','KBO']; // sesuai kebutuhan badge SHM
+
+            $isTl   = in_array($roleVal, $tlRoles, true);
+            $isKasi = in_array($roleVal, $kasiRoles, true);
+            $isSad  = in_array($roleVal, $sadRoles, true);
+
+            // -----------------------------
+            // Base sidebar badges
+            // -----------------------------
+            $sidebarBadges = [
+                'approval_target' => 0,
+                'approval_target_over_sla' => 0,
+                'shm' => 0,
+            ];
+
+            // =====================================================
+            // 1) APPROVAL TARGET badges (TL/KASI) — scoped
+            // =====================================================
+            if ($isTl || $isKasi) {
+                try {
+                    $svc = app(ApprovalBadgeService::class);
+
+                    if ($isTl) {
+                        $sidebarBadges['approval_target'] = Cache::remember(
+                            "badge:tl_target:{$u->id}",
+                            now()->addSeconds(60),
+                            fn () => (int) $svc->tlTargetInboxCount((int) $u->id)
+                        );
+
+                        if (method_exists($svc, 'tlTargetOverSlaCount')) {
+                            $sidebarBadges['approval_target_over_sla'] = Cache::remember(
+                                "badge:tl_target_over_sla:{$u->id}",
+                                now()->addSeconds(60),
+                                fn () => (int) $svc->tlTargetOverSlaCount((int) $u->id)
+                            );
+                        }
+                    }
+
+                    if ($isKasi) {
+                        $sidebarBadges['approval_target'] = Cache::remember(
+                            "badge:kasi_target:{$u->id}",
+                            now()->addSeconds(60),
+                            fn () => (int) $svc->kasiTargetInboxCount((int) $u->id)
+                        );
+
+                        if (method_exists($svc, 'kasiTargetOverSlaCount')) {
+                            $sidebarBadges['approval_target_over_sla'] = Cache::remember(
+                                "badge:kasi_target_over_sla:{$u->id}",
+                                now()->addSeconds(60),
+                                fn () => (int) $svc->kasiTargetOverSlaCount((int) $u->id)
+                            );
+                        }
+                    }
+                } catch (\Throwable $e) {
+                    // fail-safe: jangan bikin dashboard 500
+                    $sidebarBadges['approval_target'] = 0;
+                    $sidebarBadges['approval_target_over_sla'] = 0;
+                }
+            }
+
+            // =====================================================
+            // 2) SHM badge (SAD/KSA/KBO) — policy/scope aware
+            // =====================================================
+            if ($isSad) {
+                try {
+                    $sidebarBadges['shm'] = (int) ShmCheckRequest::query()
+                        ->visibleFor($u) // pastikan scope ini ada di model
+                        ->where('status', ShmCheckRequest::STATUS_SUBMITTED)
+                        ->count();
+                } catch (\Throwable $e) {
+                    $sidebarBadges['shm'] = 0;
+                }
+            }
+
+            // =====================================================
+            // 3) RS Kritis + Macet Warn meta (cache + visibility)
+            // =====================================================
             $latestDate = LoanAccount::max('position_date');
 
             $filter = [
@@ -104,197 +183,100 @@ class AppServiceProvider extends ServiceProvider
                 'ao_code'       => null,
             ];
 
-            // ✅ visibility dibuat lokal (tidak bergantung controller)
-            $visibleAoCodes = (function () use ($u) {
-                // Top/Management: ALL
-                if (method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['DIREKSI','DIR','KOM','KABAG','KBL','KBO','KTI','KBF','PE'])) {
-                    return null;
-                }
+            $visibleAoCodes = $this->visibleAoCodesForSidebar($u);
 
-                // Field staff: dirinya
-                if (method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['AO','BE','FE','SO','RO','SA'])) {
-                    $code = $u->employee_code ? trim((string)$u->employee_code) : '';
-                    if ($code === '') return [];
-                    return $this->normalizeAoCodesForSidebar([$code]); // lihat helper di bawah
-                }
+            // cache key stabil
+            $aoKey = is_array($visibleAoCodes) ? md5(json_encode($visibleAoCodes)) : 'ALL';
+            $rsCacheKey    = "sidebar:rs_kritis_meta:{$u->id}:{$latestDate}:{$aoKey}";
+            $macetCacheKey = "sidebar:macet_warn_meta:{$u->id}:{$latestDate}:{$aoKey}";
 
-                // TL/KASI: bawahan
-                if (method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['TL','TLL','TLF','TLR','KSL','KSO','KSA','KSF','KSD','KSR'])) {
-                    if (!class_exists(OrgAssignment::class)) return [];
+            $rsMeta = null;
+            $macetMeta = null;
 
-                    $codes = OrgAssignment::query()
-                        ->where('leader_id', $u->id)
-                        ->join('users', 'users.id', '=', 'org_assignments.user_id')
-                        ->whereNotNull('users.employee_code')
-                        ->pluck('users.employee_code')
-                        ->map(fn($v) => trim((string)$v))
-                        ->filter()
-                        ->unique()
-                        ->values()
-                        ->all();
-
-                    return $this->normalizeAoCodesForSidebar($codes);
-                }
-
-                return [];
-            })();
-
-            // ✅ cache ringan biar sidebar gak “berat”
-            $cacheKey = 'rs_kritis_meta:' . ($u->id ?? 0) . ':' . ($latestDate ?? 'null') . ':' . md5(json_encode($visibleAoCodes));
-
-            $meta = Cache::remember($cacheKey, now()->addMinutes(5), function () use ($svc, $filter, $visibleAoCodes) {
-                return $svc->kritisMeta($filter, $visibleAoCodes);
-            });
-
-            $view->with('rsKritisMeta', $meta);
-            $view->with('rsKritisRatio', (float)($meta['ratio'] ?? 0)); // kalau blade lama masih pakai ratio
-        });
-
-        // ...
-        view()->composer('layouts.partials.sidebar', function ($view) {
-            if (!auth()->check()) return;
-
-            // =============================
-            // RS Kritis meta (sudah ada)
-            // =============================
             try {
-                $svc = app(\App\Services\Rs\RestructureDashboardService::class);
-
-                $latestDate = \App\Models\LoanAccount::max('position_date');
-
-                $filter = [
-                    'position_date' => $latestDate,
-                    'branch_code'   => null,
-                    'ao_code'       => null,
-                ];
-
-                $controller = app(\App\Http\Controllers\RestructureDashboardController::class);
-                $visibleAoCodes = method_exists($controller, 'visibleAoCodes')
-                    ? $controller->visibleAoCodes()
-                    : null;
-
-                $ratio = $svc->kritisRatio($filter, $visibleAoCodes);
-
-                // kalau kamu sudah punya meta lebih lengkap:
-                // $rsMeta = $svc->kritisMeta($filter, $visibleAoCodes);
-                // $view->with('rsKritisMeta', $rsMeta);
-
-                $view->with('rsKritisRatio', $ratio);
+                $rsSvc = app(RestructureDashboardService::class);
+                $rsMeta = Cache::remember($rsCacheKey, now()->addMinutes(5), function () use ($rsSvc, $filter, $visibleAoCodes) {
+                    return $rsSvc->kritisMeta($filter, $visibleAoCodes);
+                });
             } catch (\Throwable $e) {
-                $view->with('rsKritisRatio', 0);
+                $rsMeta = null;
             }
 
-            // =============================
-            // NEW: Macet usia warning meta
-            // =============================
             try {
-                $latestDate = \App\Models\LoanAccount::max('position_date');
-
-                $filter = [
-                    'position_date' => $latestDate,
-                    'branch_code'   => null,
-                    'ao_code'       => null,
-                ];
-
-                $controller = app(\App\Http\Controllers\RestructureDashboardController::class);
-                $visibleAoCodes = method_exists($controller, 'visibleAoCodes')
-                    ? $controller->visibleAoCodes()
-                    : null;
-
-                $macetSvc  = app(EwsMacetService::class);
-                $macetMeta = $macetSvc->warnMeta($filter, $visibleAoCodes);
-
-                $view->with('macetWarnMeta', $macetMeta);
+                $macetSvc = app(EwsMacetService::class);
+                $macetMeta = Cache::remember($macetCacheKey, now()->addMinutes(5), function () use ($macetSvc, $filter, $visibleAoCodes) {
+                    return $macetSvc->warnMeta($filter, $visibleAoCodes);
+                });
             } catch (\Throwable $e) {
-                $view->with('macetWarnMeta', null);
-            }
-        });
-
-        View::composer('*', function ($view) {
-            $user = auth()->user();
-            if (!$user) return;
-
-            $roleVal = method_exists($user, 'roleValue')
-                ? strtoupper((string) $user->roleValue())
-                : strtoupper((string) ($user->level ?? ''));
-
-            $isTl   = in_array($roleVal, ['TL','TLL','TLR','TLF'], true);
-            $isKasi = in_array($roleVal, ['KSL','KSO','KSA','KSF','KSD','KSR'], true);
-
-            // default
-            $view->with('badgeApprovalTarget', 0);
-            $view->with('approvalTargetUrl', null);
-
-            if (!($isTl || $isKasi)) return;
-
-            $svc = app(ApprovalBadgeService::class);
-
-            if ($isTl) {
-                $view->with('approvalTargetUrl', route('supervision.tl.approvals.targets.index'));
-
-                $count = cache()->remember("badge:tl_target:{$user->id}", 60, fn () =>
-                    $svc->tlTargetInboxCount((int) $user->id)
-                );
-
-                $view->with('badgeApprovalTarget', $count);
-                return;
+                $macetMeta = null;
             }
 
-            if ($isKasi) {
-                $view->with('approvalTargetUrl', route('supervision.kasi.approvals.targets.index'));
-
-                $count = cache()->remember("badge:kasi_target:{$user->id}", 60, fn () =>
-                    $svc->kasiTargetInboxCount((int) $user->id)
-                );
-
-                $view->with('badgeApprovalTarget', $count);
-                return;
-            }
-        });    
-
-        View::composer('*', function ($view) {
-            $user = auth()->user();
-            if (!$user) {
-                $view->with('sidebarBadges', []);
-                return;
-            }
-
-            $rv = strtoupper(trim($user->roleValue() ?? ''));
-            $isSad = in_array($rv, ['KSA', 'KBO', 'SAD'], true);
-
-            $sidebarBadges = [];
-
-            if ($isSad) {
-                // ✅ hitung antrian SUBMITTED sesuai visibility policy/model scope
-                $countSubmitted = ShmCheckRequest::query()
-                    ->visibleFor($user)
-                    ->where('status', ShmCheckRequest::STATUS_SUBMITTED)
-                    ->count();
-
-                $sidebarBadges['shm'] = $countSubmitted;
-            }
-
+            // =====================================================
+            // Output to view (single-source)
+            // =====================================================
             $view->with('sidebarBadges', $sidebarBadges);
+
+            $view->with('rsKritisMeta', $rsMeta);
+            $view->with('rsKritisRatio', (float) ($rsMeta['ratio'] ?? 0));
+
+            $view->with('macetWarnMeta', $macetMeta);
         });
-
-        // View::composer('layouts.partials.sidebar', function ($view) {
-        //     $u = auth()->user();
-        //     $badges = [];
-
-        //     if ($u && $u->isKasi()) {
-        //         $svc = app(ApprovalBadgeService::class);
-        //         $badges['kasi_target_inbox'] = $svc->kasiTargetInboxCount((int) $u->id);
-        //     }
-
-        //     $view->with('badges', $badges);
-        // });
     }
 
+    /**
+     * Visibility AO codes untuk sidebar (tanpa bergantung controller).
+     * Return:
+     * - null => ALL (top management)
+     * - []   => empty visibility
+     * - [..] => codes
+     */
+    private function visibleAoCodesForSidebar($u): ?array
+    {
+        // Top/Management: ALL
+        if (method_exists($u, 'hasAnyRole') && $u->hasAnyRole([
+            'DIREKSI','DIR','KOM','KABAG','KBL','KBO','KTI','KBF','PE'
+        ])) {
+            return null;
+        }
+
+        // Field staff: dirinya
+        if (method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['AO','BE','FE','SO','RO','SA'])) {
+            $code = trim((string) ($u->employee_code ?? ''));
+            if ($code === '') return [];
+            return $this->normalizeAoCodesForSidebar([$code]);
+        }
+
+        // TL/KASI: bawahan langsung berdasar org_assignments
+        if (method_exists($u, 'hasAnyRole') && $u->hasAnyRole([
+            'TL','TLL','TLF','TLR',
+            'KSL','KSO','KSA','KSF','KSD','KSR','KASI',
+        ])) {
+            $codes = OrgAssignment::query()
+                ->active()
+                ->where('leader_id', (int) $u->id)
+                ->join('users', 'users.id', '=', 'org_assignments.user_id')
+                ->whereNotNull('users.employee_code')
+                ->pluck('users.employee_code')
+                ->map(fn ($v) => trim((string)$v))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+
+            return $this->normalizeAoCodesForSidebar($codes);
+        }
+
+        return [];
+    }
+
+    /**
+     * Normalisasi AoCode untuk handle leading zero dan variasi format.
+     */
     private function normalizeAoCodesForSidebar(array $codes): array
     {
         $out = [];
         foreach ($codes as $c) {
-            $c = strtoupper(trim((string)$c));
+            $c = strtoupper(trim((string) $c));
             if ($c === '') continue;
 
             $out[] = $c;
@@ -306,6 +288,7 @@ class AppServiceProvider extends ServiceProvider
                 $out[] = str_pad($noZero, 6, '0', STR_PAD_LEFT);
             }
         }
+
         return array_values(array_unique(array_filter($out)));
     }
 }

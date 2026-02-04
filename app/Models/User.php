@@ -272,4 +272,9 @@ class User extends Authenticatable
         return $this->hasMany(\App\Models\MarketingKpiResult::class, 'user_id');
     }
 
+    public function orgAssignmentsAsStaff()
+    {
+        return $this->hasMany(\App\Models\OrgAssignment::class, 'user_id');
+    }
+
 }

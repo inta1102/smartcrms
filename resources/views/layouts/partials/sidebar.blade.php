@@ -6,40 +6,62 @@
     use App\Models\OrgAssignment;
     use App\Models\LegalActionProposal;
     use App\Models\ShmCheckRequest;
-
+    use Illuminate\Support\Facades\Route;
 
     // ========= helpers =========
-    $is = fn($pattern) => request()->routeIs($pattern);
+    $is = fn(string $pattern) => request()->routeIs($pattern);
+
+    $routeIfExists = function (string $name, $params = []) {
+        try {
+            return Route::has($name) ? route($name, $params) : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    };
 
     $u = auth()->user();
 
-    // ✅ Role single-source-of-truth (enum)
-    $roleEnum  = $u ? $u->role() : null;                 // UserRole|null
-    $roleValue = $u ? strtoupper($u->roleValue()) : '';  // string: "KSL", "TL", dst
+    // ========= Role single-source-of-truth (enum) =========
+    $roleEnum  = $u && method_exists($u, 'role') ? $u->role() : null;               // UserRole|null
+    $roleValue = $u && method_exists($u, 'roleValue') ? strtoupper((string)$u->roleValue()) : ''; // "KSL", "TL", dst
 
-    // ====== Groups (enum-safe) ======
-    $isTl   = $roleEnum && in_array($roleEnum, [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR], true);
-    $isKasi = $roleEnum && in_array($roleEnum, [UserRole::KSL, UserRole::KTI, UserRole::KSA, UserRole::KSF, UserRole::KSD, UserRole::KSR], true);
-    $isKabagOrPe = $roleEnum && in_array($roleEnum, [UserRole::KABAG, UserRole::KBL, UserRole::KBO, UserRole::KTI, UserRole::KBF, UserRole::PE], true);
-    $isPimpinan = $roleEnum && in_array($roleEnum, [
-        UserRole::KABAG, UserRole::KBL, UserRole::KBO, UserRole::KTI, UserRole::KBF, UserRole::PE,
-        UserRole::DIR, UserRole::DIREKSI, UserRole::KOM,
-    ], true);
+    // ====== Groups (enum-first, fallback string) ======
+    $isTl = ($roleEnum instanceof UserRole)
+        ? in_array($roleEnum, [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR], true)
+        : in_array($roleValue, ['TL','TLL','TLF','TLR'], true);
 
-    // supervisor: TL ke atas (pakai enum function kamu)
-    $isSupervisor = $roleEnum ? $roleEnum->isSupervisor() : false;
+    // KASI group (catatan: KTI bukan KASI, tapi kamu sebelumnya ikutkan. Aku pisahin biar rapi.)
+    $isKasi = ($roleEnum instanceof UserRole)
+        ? in_array($roleEnum, [UserRole::KSL, UserRole::KSA, UserRole::KSF, UserRole::KSD, UserRole::KSR], true)
+        : in_array($roleValue, ['KSL','KSA','KSF','KSD','KSR','KASI'], true);
+
+    $isOrgAdmin = ($roleEnum instanceof UserRole)
+        ? in_array($roleEnum, [UserRole::KTI, UserRole::KABAG], true)
+        : in_array($roleValue, ['KTI','KABAG'], true);
+
+    $isKabagOrPe = ($roleEnum instanceof UserRole)
+        ? in_array($roleEnum, [UserRole::KABAG, UserRole::KBL, UserRole::KBO, UserRole::KTI, UserRole::KBF, UserRole::PE], true)
+        : in_array($roleValue, ['KABAG','KBL','KBO','KTI','KBF','PE'], true);
+
+    $isPimpinan = ($roleEnum instanceof UserRole)
+        ? in_array($roleEnum, [
+            UserRole::KABAG, UserRole::KBL, UserRole::KBO, UserRole::KTI, UserRole::KBF, UserRole::PE,
+            UserRole::DIR, UserRole::DIREKSI, UserRole::KOM,
+        ], true)
+        : in_array($roleValue, ['KABAG','KBL','KBO','KTI','KBF','PE','DIR','DIREKSI','KOM'], true);
+
+    // supervisor: TL ke atas (kalau enum punya function isSupervisor)
+    $isSupervisor = ($roleEnum instanceof UserRole) ? $roleEnum->isSupervisor() : false;
 
     // staff lapangan (yang punya agenda sendiri)
-    $isFieldStaff = $roleEnum && in_array($roleEnum, [UserRole::AO, UserRole::RO, UserRole::SO, UserRole::FE, UserRole::BE], true);
-
-    // org admin
-    $isOrgAdmin = $roleEnum && in_array($roleEnum, [UserRole::KTI, UserRole::KABAG], true);
+    $isFieldStaff = ($roleEnum instanceof UserRole)
+        ? in_array($roleEnum, [UserRole::AO, UserRole::RO, UserRole::SO, UserRole::FE, UserRole::BE], true)
+        : in_array($roleValue, ['AO','RO','SO','FE','BE'], true);
 
     // ====== Active: overdue vs cases.* (anti bentrok) ======
     $isOverdueActive = $is('cases.overdue');
     $isNplActive     = $is('cases.*') && !$isOverdueActive;
-    $isShmActive = request()->routeIs('shm.*');
-
+    $isShmActive     = $is('shm.*');
 
     // ====== Active states supervisi ======
     $isSupervisionActive =
@@ -80,6 +102,36 @@
             : 'ml-auto inline-flex min-w-[22px] justify-center rounded-full bg-amber-500 px-2 py-0.5 text-[11px] font-semibold text-white';
     };
 
+    // =========================================================
+    // Badges dari composer (source-of-truth baru)
+    // =========================================================
+    // AppServiceProvider sekarang inject: $sidebarBadges = ['approval_target'=>..,'approval_target_over_sla'=>..,'shm'=>..]
+    $sidebarBadges = $sidebarBadges ?? [];
+    $badgeApprovalTarget        = (int) ($sidebarBadges['approval_target'] ?? 0);
+    $badgeApprovalTargetOverSla = (int) ($sidebarBadges['approval_target_over_sla'] ?? 0);
+    $shmBadge                   = (int) ($sidebarBadges['shm'] ?? 0);
+
+    // =========================================================
+    // FAIL-SAFE: kalau composer belum inject (misal partial dipakai di view lain)
+    // =========================================================
+    if ($u && ($isTl || $isKasi) && ($badgeApprovalTarget === 0 && empty($sidebarBadges))) {
+        try {
+            $svc = app(\App\Services\Crms\ApprovalBadgeService::class);
+
+            $badgeApprovalTarget = $isTl
+                ? (int) $svc->tlTargetInboxCount((int) $u->id)
+                : (int) $svc->kasiTargetInboxCount((int) $u->id);
+
+            if (method_exists($svc, 'kasiTargetOverSlaCount')) {
+                $badgeApprovalTargetOverSla = $isTl
+                    ? (method_exists($svc, 'tlTargetOverSlaCount') ? (int) $svc->tlTargetOverSlaCount((int) $u->id) : 0)
+                    : (int) $svc->kasiTargetOverSlaCount((int) $u->id);
+            }
+        } catch (\Throwable $e) {
+            $badgeApprovalTarget = 0;
+            $badgeApprovalTargetOverSla = 0;
+        }
+    }
 
     // ====== Overdue badge count (fail-safe) ======
     $overdueCount = 0;
@@ -112,113 +164,83 @@
         }
     }
 
-    // ====== Cek SHM ======
+    // ====== Cek SHM gate ======
     $canViewShm = $u ? Gate::allows('viewAny', ShmCheckRequest::class) : false;
 
-    // ====== SHM badge (fail-safe) ======
-    $shmBadge = null;
-
-    if ($u && $canViewShm) {
+    // ====== SHM badge (fail-safe) - jika composer belum inject shm ======
+    if ($u && $canViewShm && (empty($sidebarBadges) || !array_key_exists('shm', $sidebarBadges))) {
         try {
-            $rv = strtoupper(trim($u->roleValue() ?? ''));
-
-            // ✅ minimal: antrian gabungan (submitted + handed_to_sad)
-            // nanti tinggal tambah status lain di array ini
             $queueStatuses = [
                 ShmCheckRequest::STATUS_SUBMITTED,
                 ShmCheckRequest::STATUS_HANDED_TO_SAD,
             ];
 
-            $q = ShmCheckRequest::query()
-                ->whereIn('status', $queueStatuses);
+            $q = ShmCheckRequest::query()->whereIn('status', $queueStatuses);
 
-            // ✅ kalau scope visibleFor ada, pakai (biar sesuai hak akses)
             if (method_exists(ShmCheckRequest::class, 'scopeVisibleFor')) {
                 $q->visibleFor($u);
             }
 
-            $shmBadge = $q->count();
-
+            $shmBadge = (int) $q->count();
         } catch (\Throwable $e) {
-            $shmBadge = null;
+            $shmBadge = 0;
         }
     }
 
     // ====== Monitoring HT gate ======
     $canViewHtMonitoring = $u ? Gate::allows('viewHtMonitoring') : false;
 
-    // ✅ 1 pintu supervisi: SELALU ke route supervision.home
-    // biar user KASI gak pernah nyasar ke TL
-    $supervisionHomeUrl = route('supervision.home');
+    // ✅ 1 pintu supervisi
+    $supervisionHomeUrl = $routeIfExists('supervision.home') ?? '#';
 
     // ✅ URL Approval Target sesuai role
     $approvalTargetUrl = $supervisionHomeUrl;
-
     if ($isTl) {
-        $approvalTargetUrl = route('supervision.tl.approvals.targets.index');
+        $approvalTargetUrl = $routeIfExists('supervision.tl.approvals.targets.index') ?? $supervisionHomeUrl;
     } elseif ($isKasi) {
-        $approvalTargetUrl = route('supervision.kasi.approvals.targets.index');
+        $approvalTargetUrl = $routeIfExists('supervision.kasi.approvals.targets.index') ?? $supervisionHomeUrl;
     }
 
-    // ✅ URL Approval Non-Lit (TL & Kasi) - sesuai routes yang bener
+    // ✅ URL Approval Non-Lit (TL & KASI)
     $approvalNonLitUrl = null;
-
     if ($isTl) {
-        $approvalNonLitUrl = route('supervision.tl.approvals.nonlit.index');
+        $approvalNonLitUrl = $routeIfExists('supervision.tl.approvals.nonlit.index');
     } elseif ($isKasi) {
-        $approvalNonLitUrl = route('supervision.kasi.approvals.nonlit.index');
+        $approvalNonLitUrl = $routeIfExists('supervision.kasi.approvals.nonlit.index');
     }
 
-    // ✅ active (TL + KASI)
-    $isApprovalNonLitActive =
-        request()->routeIs('tl.approvals.nonlit.*')
-        || request()->routeIs('supervision.kasi.approvals.nonlit.*');
-
-
-    // ✅ Active approvals (biar menu Approval Target nyala pas di halaman approvals)
+    // ✅ Active approvals
     $isApprovalTargetsActive =
-        $is('supervision.tl.approvals.targets.*')
-        || $is('supervision.kasi.approvals.targets.*');
+        $is('supervision.tl.approvals.targets.*') ||
+        $is('supervision.kasi.approvals.targets.*');
 
-    
-        // ✅ URL Approval Legal (TL & Kasi)
+    $isApprovalNonLitActive =
+        $is('supervision.tl.approvals.nonlit.*') ||
+        $is('supervision.kasi.approvals.nonlit.*');
+
+    // ✅ URL Approval Legal (TL & KASI)
     $approvalLegalUrl = null;
-
-    // TL melihat pending TL
     if ($isTl) {
-        $approvalLegalUrl = route('legal.proposals.index', ['status' => 'pending_tl']);
+        $approvalLegalUrl = $routeIfExists('legal.proposals.index', ['status' => 'pending_tl']);
+    } elseif ($isKasi) {
+        $approvalLegalUrl = $routeIfExists('legal.proposals.index', ['status' => 'approved_tl']);
     }
-    // Kasi melihat yang sudah approved TL (butuh approve Kasi)
-    elseif ($isKasi) {
-        $approvalLegalUrl = route('legal.proposals.index', ['status' => 'approved_tl']);
-    }
-
     $isApprovalLegalActive = $is('legal.proposals.*');
 
     // ✅ Active dashboard supervisi (biar Dashboard Supervisi nyala kalau bukan approvals)
     $isSupervisionDashboardActive =
-        $is('supervision.home')
-        || ($is('supervision.*') && !$isApprovalTargetsActive && !$isApprovalNonLitActive);
+        $is('supervision.home') ||
+        ($is('supervision.*') && !$isApprovalTargetsActive && !$isApprovalNonLitActive);
 
-        // ====== Active states EWS ======
-    $isEwsActive =
-        $is('ews.*')
-        || $is('rs.monitoring.*'); 
+    // ====== Active states EWS ======
+    $isEwsActive = $is('ews.*') || $is('rs.monitoring.*');
 
     $rsKritisRatio = $rsKritisRatio ?? 0;
 
-    $isBE = strtoupper(trim($u?->roleValue() ?? '')) === 'BE';
+    // contoh flag role
+    $isBE = $u ? (strtoupper(trim((string)($u->roleValue() ?? ''))) === 'BE') : false;
 
-    $routeIfExists = function (string $name, $params = []) {
-        try {
-            return \Illuminate\Support\Facades\Route::has($name)
-                ? route($name, $params)
-                : null;
-        } catch (\Throwable $e) {
-            return null;
-        }
-    };
-
+    // legal actions href
     $legalHref = $routeIfExists('legal-actions.index');
 
     // ====== Helper: bawahan TL (aktif) ======
@@ -229,12 +251,12 @@
             $today = now()->toDateString();
 
             return OrgAssignment::query()
-                ->where('leader_id', $u->id)
+                ->where('leader_id', (int)$u->id)
                 ->where('is_active', 1)
                 ->whereDate('effective_from', '<=', $today)
                 ->where(function ($q) use ($today) {
                     $q->whereNull('effective_to')
-                    ->orWhereDate('effective_to', '>=', $today);
+                      ->orWhereDate('effective_to', '>=', $today);
                 })
                 ->pluck('user_id')
                 ->map(fn($id) => (int) $id)
@@ -244,95 +266,47 @@
         }
     };
 
-    // ====== Approval Legal badge (TL & Kasi) ======
-    $legalApprovalBadge = null;
-
+    // ====== Approval Legal badge (TL & KASI) ======
+    $legalApprovalBadge = 0;
     try {
         if ($u && $isTl) {
             $ids = $subordinateUserIds();
-            $legalApprovalBadge = empty($ids) ? 0 : LegalActionProposal::query()
+            $legalApprovalBadge = empty($ids) ? 0 : (int) LegalActionProposal::query()
                 ->where('status', 'pending_tl')
                 ->whereIn('proposed_by', $ids)
                 ->count();
-        }
-        elseif ($u && $isKasi) {
-            $legalApprovalBadge = LegalActionProposal::query()
-                ->where('status', 'approved_tl') // atau pending_kasi
+        } elseif ($u && $isKasi) {
+            $legalApprovalBadge = (int) LegalActionProposal::query()
+                ->where('status', 'approved_tl') // atau pending_kasi jika kamu pakai itu
                 ->count();
         }
     } catch (\Throwable $e) {
-        $legalApprovalBadge = null;
+        $legalApprovalBadge = 0;
     }
 
-    $u = auth()->user();
-
-    // ============================================
-    // ✅ FAIL-SAFE: kalau composer belum inject, hitung di sini
-    // ============================================
-    $badgeApprovalTarget = $badgeApprovalTarget ?? null;
-    $badgeApprovalTargetOverSla = $badgeApprovalTargetOverSla ?? null;
-
-    if ($u && ($isTl || $isKasi)) {
-        try {
-            $svc = app(\App\Services\Crms\ApprovalBadgeService::class);
-
-            if ($badgeApprovalTarget === null) {
-                $badgeApprovalTarget = $isTl
-                    ? $svc->tlTargetInboxCount((int)$u->id)
-                    : $svc->kasiTargetInboxCount((int)$u->id);
-            }
-
-            // optional: kalau kamu sudah punya method overSLA
-            if ($badgeApprovalTargetOverSla === null && method_exists($svc, 'kasiTargetOverSlaCount')) {
-                $badgeApprovalTargetOverSla = $isTl
-                    ? (method_exists($svc, 'tlTargetOverSlaCount') ? $svc->tlTargetOverSlaCount((int)$u->id) : 0)
-                    : $svc->kasiTargetOverSlaCount((int)$u->id);
-            }
-
-        } catch (\Throwable $e) {
-            $badgeApprovalTarget = $badgeApprovalTarget ?? 0;
-            $badgeApprovalTargetOverSla = $badgeApprovalTargetOverSla ?? 0;
-        }
-    } else {
-        $badgeApprovalTarget = $badgeApprovalTarget ?? 0;
-        $badgeApprovalTargetOverSla = $badgeApprovalTargetOverSla ?? 0;
-    }
-
-    // default dashboard route
-    $dashboardRouteName = 'lending.performance.index';
-    // $dashboardRouteName = 'dashboard';
-
-    // KOM/DIR/DIREKSI → executive.targets.index
-    if ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['KOM', 'DIR', 'DIREKSI'])) {
-        $dashboardRouteName = 'executive.targets.index';
-    }
-
-    // contoh kalau ada role lain
-    elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['BE'])) {
-        $dashboardRouteName = 'legal-actions.index';
-    }
-
-    $is = fn($name) => request()->routeIs($name . '*');
-
-    $badge = (int)($badgeApprovalTarget ?? 0);
-    $over  = (int)($badgeApprovalTargetOverSla ?? 0);
-
-    // ===== Approval Non-Lit badge =====
-
+    // ====== Approval Non-Lit badge (fallback; idealnya dari composer juga) ======
     $badgeApprovalNonLit = 0;
-
     if ($u && ($isTl || $isKasi)) {
         try {
             $svc = app(\App\Services\Crms\ApprovalBadgeService::class);
-
             $badgeApprovalNonLit = $isTl
-                ? $svc->tlNonLitInboxCount((int) $u->id)
-                : $svc->kasiNonLitInboxCount((int) $u->id);
-
+                ? (int) $svc->tlNonLitInboxCount((int) $u->id)
+                : (int) $svc->kasiNonLitInboxCount((int) $u->id);
         } catch (\Throwable $e) {
             $badgeApprovalNonLit = 0;
         }
     }
+
+    // default dashboard route
+    $dashboardRouteName = 'lending.performance.index';
+    if ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['KOM', 'DIR', 'DIREKSI'])) {
+        $dashboardRouteName = 'executive.targets.index';
+    } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['BE'])) {
+        $dashboardRouteName = 'legal-actions.index';
+    }
+
+    $badge = (int) $badgeApprovalTarget;
+    $over  = (int) $badgeApprovalTargetOverSla;
 
     // ====== Menus ======
     $menus = [
