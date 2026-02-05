@@ -19,6 +19,10 @@ class MarketingTargetController extends Controller
         $user = auth()->user();
         abort_unless($user, 403);
 
+        if (strtoupper((string)$user->level) === 'SO') {
+            return redirect()->route('kpi.so.targets.index');
+        }
+
         $targets = MarketingKpiTarget::query()
             ->with(['achievement'])
             ->where('user_id', $user->id)
@@ -33,7 +37,7 @@ class MarketingTargetController extends Controller
     {
         $user = auth()->user();
         abort_unless($user, 403);
-        abort_unless($user->hasAnyRole(['AO','RO','SO','FE','BE']), 403);
+        abort_unless($user->hasAnyRole(['AO','RO','FE','BE']), 403);
 
         $period = $request->get('period')
             ? Carbon::parse($request->get('period'))->startOfMonth()

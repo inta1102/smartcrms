@@ -549,6 +549,22 @@ Route::middleware(['auth'])->prefix('kpi/so')->name('kpi.so.')->group(function (
 Route::prefix('kpi/so')->name('kpi.so.')->middleware('auth')->group(function () {
     Route::resource('targets', \App\Http\Controllers\Kpi\SoTargetController::class)->except(['show','destroy']);
     Route::post('targets/{target}/submit', [\App\Http\Controllers\Kpi\SoTargetController::class, 'submit'])->name('targets.submit');
+
+    // ✅ approvals SO (TL/KASI)
+    Route::get('approvals', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'index'])
+        ->name('approvals.index');
+
+    Route::get('approvals/{target}', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'show'])
+        ->name('approvals.show');
+
+    Route::put('approvals/{target}', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'update'])
+        ->name('approvals.update');
+
+    Route::post('approvals/{target}/approve', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'approve'])
+        ->name('approvals.approve');
+
+    Route::post('approvals/{target}/reject', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'reject'])
+        ->name('approvals.reject');
 });
 
 
@@ -673,3 +689,10 @@ Route::middleware(['auth'])
             ->name('ht.close');
 
     });
+
+    use App\Http\Controllers\NplCaseAssessmentController;
+
+Route::middleware(['auth'])->group(function () {
+    Route::post('/cases/{case}/assessment', [NplCaseAssessmentController::class, 'store'])
+        ->name('cases.assessment.store');
+});

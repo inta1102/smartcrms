@@ -44,6 +44,9 @@ class NplCase extends Model
         'is_legal',
         'legal_started_at',
         'legal_note',
+        'assessment',
+        'assessment_updated_by',
+        'assessment_updated_at',
     ];
 
     protected $casts = [
@@ -323,6 +326,11 @@ class NplCase extends Model
     public function pic()
     {
         return $this->belongsTo(User::class, 'pic_user_id');
+    }
+
+    public function assessmentUpdater()
+    {
+        return $this->belongsTo(User::class, 'assessment_updated_by');
     }
 
 }

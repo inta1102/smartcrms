@@ -9,10 +9,19 @@
     </div>
 
     <div class="flex items-center gap-2">
-      <a href="{{ route('kpi.marketing.targets.create') }}"
+      @php
+        $isSo = strtoupper((string)auth()->user()?->level) === 'SO';
+        $periodYmd = now()->startOfMonth()->toDateString(); // atau ambil dari request/period aktif
+      @endphp
+
+      <a href="{{ $isSo
+            ? route('kpi.so.targets.create', ['period' => $periodYmd])
+            : route('kpi.marketing.targets.create', ['period' => $periodYmd])
+        }}"
         class="rounded-xl bg-slate-900 px-4 py-2 text-white text-sm font-semibold hover:bg-slate-800">
         + Buat Target
       </a>
+
 
       <a href="{{ route('kpi.marketing.achievements.index') }}"
          class="rounded-xl border border-slate-300 px-4 py-2 text-slate-700 text-sm font-semibold hover:bg-slate-50">

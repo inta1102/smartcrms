@@ -49,6 +49,24 @@ class NplCasePolicy
         return $this->isOwnerAo($user, $case);
     }
 
+    public function updateAssessment(User $user, NplCase $case): bool
+    {
+        // management ok
+        if ($this->allowRoles($user, $this->rolesManagementNpl())) return true;
+
+        // TL/Kasi/Kabag/PE boleh isi assessment
+        if ($this->allowRoles($user, $this->rolesTl())) return true;
+        if ($this->allowRoles($user, $this->rolesKasi())) return true;
+        if ($this->allowRoles($user, $this->rolesKabagPe())) return true;
+
+        // BE (Legal) tidak boleh isi assessment (sesuai rule "inti case")
+        if ($this->allowRoles($user, [UserRole::BE])) return false;
+
+        // AO/SO/FE/RO/SA: boleh kalau dia owner/scope
+        return $this->isOwnerFieldStaff($user, $case);
+    }
+
+
     /**
      * Ability khusus: update aspek legal (is_legal, legal_started_at, legal_note)
      */
@@ -107,9 +125,13 @@ class NplCasePolicy
     {
         $role = strtoupper(trim((string) $user->roleValue()));
 
-        if (!in_array($role, ['AO','SO','FE','BE','RO','SA'], true)) {
+        if (!in_array($role, ['AO','SO','FE','RO','SA'], true)) {
             return false;
         }
+
+        // if (!in_array($role, ['AO','SO','FE','BE','RO','SA'], true)) {
+        //     return false;
+        // }
 
         if ((int) ($case->pic_user_id ?? 0) === (int) $user->id) {
             return true;

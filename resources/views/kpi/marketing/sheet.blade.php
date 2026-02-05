@@ -1,12 +1,25 @@
 @extends('layouts.app')
 
-@section('title', 'KPI Marketing Sheet')
+@section('title', 'KPI Sheet')
 
 @section('content')
 @php
   // Pastikan periodYm selalu tersedia dari controller atau fallback dari request
   $periodYm = $periodYm ?? request('period', $period->format('Y-m'));
   $roleSel  = $role ?? request('role', 'SO');
+
+  // Pastikan periodYm selalu tersedia dari controller atau fallback dari request
+  $periodYm = $periodYm ?? request('period', $period->format('Y-m'));
+  $roleSel  = $role ?? request('role', 'SO');
+
+  // ✅ period date (Y-m-01) buat parameter route
+  $periodYmd = $periodYm . '-01';
+
+  // ✅ tombol "Buat Target" harus ngarah sesuai role
+  $createTargetUrl = $roleSel === 'SO'
+      ? route('kpi.so.targets.create', ['period' => $periodYmd])
+      : route('kpi.marketing.targets.create', ['period' => $periodYmd]); // AO/marketing
+
 @endphp
 
 <div class="max-w-6xl mx-auto p-4">
@@ -40,6 +53,10 @@
 
       {{-- ✅ ACTIONS (POST/LINK) - JANGAN di dalam form GET --}}
         <div class="flex gap-2">
+            <a href="{{ $createTargetUrl }}"
+            class="rounded-xl bg-slate-900 px-4 py-2 text-white text-sm font-semibold hover:bg-slate-800">
+            + Buat Target {{ $roleSel }}
+            </a>
 
             {{-- ✅ Input Handling (khusus SO & role tertentu) --}}
             @if($roleSel === 'SO' && auth()->user()?->hasAnyRole(['TLL','TLR','KSR','KSL','KBL']))

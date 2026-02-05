@@ -64,7 +64,15 @@ class User extends Authenticatable
      */
     public function roleValue(): string
     {
-        return $this->role()?->value ?? UserRole::STAFF->value;
+        $v = $this->level;
+
+        // kalau enum
+        if ($v instanceof \BackedEnum) return strtoupper((string)$v->value);
+        if ($v instanceof \UnitEnum)   return strtoupper((string)$v->name);
+
+        // kalau string biasa
+        return strtoupper((string)$v);
+        // return $this->role()?->value ?? UserRole::STAFF->value;
     }
 
     /**

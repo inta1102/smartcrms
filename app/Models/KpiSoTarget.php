@@ -32,4 +32,10 @@ class KpiSoTarget extends Model
         'approved_at' => 'datetime',
         'target_rr' => 'decimal:2',
     ];
+
+    public function user()
+    {
+        return $this->belongsTo(\App\Models\User::class, 'user_id');
+    }
+
 }
