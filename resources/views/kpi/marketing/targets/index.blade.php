@@ -10,8 +10,20 @@
 
     <div class="flex items-center gap-2">
       @php
-        $isSo = strtoupper((string)auth()->user()?->level) === 'SO';
-        $periodYmd = now()->startOfMonth()->toDateString(); // atau ambil dari request/period aktif
+        $u = auth()->user();
+
+        // prioritas: roleValue() -> string (kalau helpermu ada)
+        $lvl = strtoupper(trim((string)($u?->roleValue() ?? '')));
+
+        // fallback: ambil dari enum/string di kolom level
+        if ($lvl === '') {
+            $raw = $u?->level;
+            $lvl = strtoupper(trim((string)($raw instanceof \BackedEnum ? $raw->value : $raw)));
+        }
+
+        $isSo = ($lvl === 'SO');
+
+        $periodYmd = now()->startOfMonth()->toDateString(); // kalau ini memang kamu butuh
       @endphp
 
       <a href="{{ $isSo
@@ -49,7 +61,7 @@
       </thead>
 
       <tbody class="divide-y divide-slate-100">
-        @forelse($targets as $t)
+        @forelse($items as $t)
           <tr>
             <td class="px-4 py-3 font-semibold text-slate-900">
               {{ \Carbon\Carbon::parse($t->period)->format('M Y') }}
@@ -123,7 +135,7 @@
   </div>
 
   <div class="mt-4">
-    {{ $targets->links() }}
+    {{ $items->links() }}
   </div>
 </div>
 @endsection

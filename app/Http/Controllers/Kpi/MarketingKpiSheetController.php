@@ -108,7 +108,8 @@ public function index(Request $request)
               ->where('t.period', '=', $periodDate);
         })
         ->where('m.period', $periodDate)   // ✅ FIX
-        ->whereIn('u.level', ['AO','RO','SO','FE','BE'])
+        ->whereIn('u.level', ['AO'])
+        // ->whereIn('u.level', ['AO','RO','SO','FE','BE'])
         ->select([
             'u.id as user_id','u.name','u.ao_code','u.level',
             't.id as target_id',

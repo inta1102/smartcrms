@@ -51,7 +51,7 @@ class AoKpiMonthlyService
         }
 
         // adjust levels if needed
-        $usersQ->whereIn('level', ['AO', 'RO', 'SO', 'FE', 'BE']);
+        $usersQ->whereIn('level', ['AO']);
 
         $users = $usersQ->get();
 

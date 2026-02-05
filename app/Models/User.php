@@ -285,4 +285,15 @@ class User extends Authenticatable
         return $this->hasMany(\App\Models\OrgAssignment::class, 'user_id');
     }
 
+    public function levelValue(): string
+    {
+        if (method_exists($this, 'roleValue')) {
+            $v = (string) $this->roleValue();
+            if ($v !== '') return strtoupper(trim($v));
+        }
+
+        $lvl = $this->level instanceof \BackedEnum ? $this->level->value : $this->level;
+        return strtoupper(trim((string)$lvl));
+    }
+
 }

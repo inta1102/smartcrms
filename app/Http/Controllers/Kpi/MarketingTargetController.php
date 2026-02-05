@@ -19,18 +19,39 @@ class MarketingTargetController extends Controller
         $user = auth()->user();
         abort_unless($user, 403);
 
-        if (strtoupper((string)$user->level) === 'SO') {
+        // ✅ enum-safe role
+        $lvl = strtoupper(trim((string)($user->roleValue() ?? '')));
+        if ($lvl === '') {
+            $lvl = strtoupper(trim((string)(
+                $user->level instanceof \BackedEnum ? $user->level->value : $user->level
+            )));
+        }
+
+        // ✅ kalau SO, jangan masuk marketing. Lempar ke target SO
+        if ($lvl === 'SO') {
             return redirect()->route('kpi.so.targets.index');
         }
 
-        $targets = MarketingKpiTarget::query()
-            ->with(['achievement'])
-            ->where('user_id', $user->id)
-            ->orderByDesc('period')
-            ->paginate(10)
-            ->withQueryString();
+        // ✅ selain SO: tampilkan daftar target marketing (JANGAN redirect ke dirinya sendiri)
+        abort_unless($user->hasAnyRole(['AO','RO','FE','BE']), 403);
 
-        return view('kpi.marketing.targets.index', compact('targets'));
+        // periode filter (opsional)
+        $period = $request->get('period')
+            ? Carbon::parse($request->get('period'))->startOfMonth()->toDateString()
+            : now()->startOfMonth()->toDateString();
+
+        $q = MarketingKpiTarget::query()
+            ->where('user_id', $user->id)
+            ->when($request->filled('period'), fn($qq) => $qq->where('period', $period))
+            ->orderByDesc('period');
+
+        $items = $q->paginate(10)->withQueryString();
+
+        return view('kpi.marketing.targets.index', [
+            'items' => $items,
+            'period'  => Carbon::parse($period),
+        ]);
+
     }
 
     public function create(Request $request)
@@ -282,6 +303,29 @@ class MarketingTargetController extends Controller
 
         // ✅ butuh TL hanya jika leader_role memang TL*
         return in_array($leaderRole, ['TL','TLL','TLR','TLF'], true);
+    }
+
+    public function marketingIndex(Request $request)
+    {
+        $user = auth()->user();
+        abort_unless($user, 403);
+
+        // level/role enum-safe
+        $lvl = strtoupper(trim((string)($user->roleValue() ?? '')));
+        if ($lvl === '') {
+            $raw = $user->level;
+            $lvl = strtoupper(trim((string)($raw instanceof \BackedEnum ? $raw->value : $raw)));
+        }
+
+        // kalau SO jangan masuk sini
+        abort_unless($lvl !== 'SO', 403);
+
+        $targets = MarketingKpiTarget::query()
+            ->where('user_id', $user->id)
+            ->orderByDesc('period')
+            ->get();
+
+        return view('kpi.marketing.targets.index', compact('targets', 'lvl'));
     }
 
 }

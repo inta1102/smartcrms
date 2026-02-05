@@ -72,6 +72,8 @@ use App\Http\Controllers\Kpi\KpiRecalcController;
 use App\Http\Controllers\Kpi\SoHandlingController;
 use App\Http\Controllers\Kpi\SoTargetController;
 
+use App\Http\Controllers\Kpi\KpiTargetRouterController;
+
 Route::model('action', LegalAction::class);
 
 
@@ -696,3 +698,6 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/cases/{case}/assessment', [NplCaseAssessmentController::class, 'store'])
         ->name('cases.assessment.store');
 });
+
+Route::get('/kpi/targets', [\App\Http\Controllers\Kpi\KpiTargetRouterController::class, 'index'])
+    ->name('kpi.targets');
