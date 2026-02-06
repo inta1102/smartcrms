@@ -132,17 +132,6 @@ class SoTargetController extends Controller
             $t = KpiSoTarget::query()->whereKey($target->id)->lockForUpdate()->firstOrFail();
             abort_unless($t->status === KpiSoTarget::STATUS_DRAFT, 422);
 
-            // pakai fungsi needsTlApprovalForUser versi SO (boleh copy dari yg marketing)
-            $oa = OrgAssignment::query()->active()->where('user_id', $me->id)->first();
-            $next = KpiSoTarget::STATUS_PENDING_TL;
-
-            if ($oa) {
-            $leaderRole = strtoupper((string)$oa->leader_role);
-            if (!in_array($leaderRole, ['TL','TLL','TLR','TLF'], true)) {
-                $next = KpiSoTarget::STATUS_PENDING_KASI;
-            }
-            }
-
             $needsTl = $this->needsTlApprovalForUser((int)$me->id);
 
             $t->status = $needsTl
@@ -157,7 +146,12 @@ class SoTargetController extends Controller
 
     protected function needsTlApprovalForUser(int $userId): bool
     {
-        $oa = OrgAssignment::query()->active()->where('user_id', $userId)->first();
+        $oa = OrgAssignment::query()
+            ->active()
+            ->where('user_id', $userId)
+            ->orderByDesc('effective_from')
+            ->orderByDesc('id')
+            ->first();
 
         // kalau struktur tidak ada → langsung ke KASI (skip TL)
         if (!$oa) return false;
@@ -165,6 +159,7 @@ class SoTargetController extends Controller
         $leaderRole = strtoupper(trim((string)$oa->leader_role));
         return in_array($leaderRole, ['TL','TLL','TLR','TLF'], true);
     }
+
 
     private function ensureSo($me): void
     {
