@@ -512,6 +512,21 @@
             ],
 
             // =========================
+            // ACHIEVEMENT (Marketing KPI Targets)
+            // =========================
+            [
+                'label'  => 'Achievement',
+                'icon'   => '🏆',
+                'href'   => \Illuminate\Support\Facades\Route::has('kpi.marketing.achievements.index')
+                    ? route('kpi.marketing.achievements.index')
+                    : null,
+                'active' => request()->routeIs('kpi.marketing.achievements.*'),
+
+                // tampil untuk AO family (bukan SO)
+                'show'   => $u && $u->hasAnyRole(['AO','SO','RO','FE','BE']),
+            ],
+
+            // =========================
             // APPROVAL KPI (TL/Kasi/Kabag, dst)
             // =========================
             [

@@ -103,8 +103,8 @@ class ShmCheckRequestController extends Controller
             'notary_name' => ['nullable', 'string', 'max:191'],
             'notes' => ['nullable', 'string', 'max:5000'],
 
-            'ktp_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
-            'shm_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
+            'ktp_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
+            'shm_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
         ]);
 
         $user = auth()->user();
@@ -202,8 +202,8 @@ class ShmCheckRequestController extends Controller
         abort_unless($req->status === ShmCheckRequest::STATUS_SENT_TO_NOTARY, 422);
 
         $data = $request->validate([
-            'sp_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
-            'sk_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
+            'sp_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
+            'sk_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
@@ -255,7 +255,7 @@ class ShmCheckRequestController extends Controller
         abort_unless($req->status === ShmCheckRequest::STATUS_SENT_TO_BPN, 422);
 
         $data = $request->validate([
-            'result_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
+            'result_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
@@ -289,8 +289,8 @@ class ShmCheckRequestController extends Controller
         abort_unless($req->status === ShmCheckRequest::STATUS_SP_SK_UPLOADED, 422);
 
         $data = $request->validate([
-            'signed_sp_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
-            'signed_sk_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:5120'],
+            'signed_sp_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
+            'signed_sk_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
