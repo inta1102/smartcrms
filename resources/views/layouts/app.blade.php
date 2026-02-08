@@ -62,7 +62,8 @@
     </div>
 </header>
 
-<div class="max-w-7xl mx-auto px-3 sm:px-4 py-4 overflow-x-hidden">
+
+<div class="max-w-7xl mx-auto px-3 sm:px-4 py-4">
     @auth
         <div class="flex gap-4 min-w-0 overflow-x-hidden">
             @include('layouts.partials.sidebar')

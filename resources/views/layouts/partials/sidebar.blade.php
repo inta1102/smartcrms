@@ -868,11 +868,24 @@
 </aside>
 
 {{-- Sidebar mobile drawer --}}
-<div x-data="{ open:false }" x-on:toggle-sidebar.window="open = !open" x-cloak class="sm:hidden">
+<div x-data="{ open:false }" <div
+  x-data="{ open:false }"
+    x-on:toggle-sidebar.window="
+        open = !open;
+        if (open) {
+            document.documentElement.classList.add('overflow-hidden');
+        } else {
+            document.documentElement.classList.remove('overflow-hidden');
+        }
+    "
+    x-cloak
+    class="sm:hidden"
+>
+
     <div x-show="open" class="fixed inset-0 z-40">
         <div class="absolute inset-0 bg-black/40" @click="open=false"></div>
 
-        <aside class="absolute left-0 top-0 bottom-0 w-72 bg-white shadow-xl p-3">
+        <aside class="absolute left-0 top-0 h-dvh w-72 bg-white shadow-xl p-3 flex flex-col">
             <div class="flex items-center justify-between px-2 py-2">
                 <div>
                     <div class="text-sm font-bold text-slate-900">Menu</div>
@@ -881,7 +894,7 @@
                 <button class="rounded-lg border border-slate-200 px-2 py-1 text-sm" @click="open=false">✕</button>
             </div>
 
-            <nav class="mt-2">
+            <nav class="mt-2 flex-1 overflow-y-auto overscroll-contain">
                 {{-- UTAMA --}}
                 <div class="{{ $sectionTitle }}">Utama</div>
                 <div class="mt-2 space-y-1">
