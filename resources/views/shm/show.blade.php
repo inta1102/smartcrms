@@ -1,4 +1,4 @@
-@extends('layouts.app') 
+@extends('layouts.app')
 
 @section('content')
 <div class="mx-auto max-w-6xl px-4 py-6">
@@ -25,6 +25,12 @@
         </div>
     @endif
 
+    @if(session('error'))
+        <div class="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            {{ session('error') }}
+        </div>
+    @endif
+
     {{-- =========================
         ACTION BUTTONS
     ========================= --}}
@@ -34,7 +40,7 @@
         <div class="mt-3 flex flex-wrap gap-2">
 
             {{-- =====================
-                KBO / KSA ACTIONS
+                KBO / KSA / SAD ACTIONS
             ====================== --}}
             @can('sadAction', \App\Models\ShmCheckRequest::class)
 
@@ -46,6 +52,17 @@
                         ➡️ Teruskan ke Notaris
                     </button>
                 @endif
+
+                {{-- ✅ APPROVE REVISION (Opsi A) --}}
+                @can('approveRevisionInitialDocs', $req)
+                    @if($req->status === \App\Models\ShmCheckRequest::STATUS_REVISION_REQUESTED)
+                        <button type="button"
+                            onclick="openModal('approveRevisionModal')"
+                            class="btn-primary">
+                            ✅ Approve Revisi Dokumen (KTP/SHM)
+                        </button>
+                    @endif
+                @endcan
 
                 {{-- Upload SP/SK hanya SENT_TO_NOTARY --}}
                 @if($req->status === \App\Models\ShmCheckRequest::STATUS_SENT_TO_NOTARY)
@@ -76,8 +93,26 @@
             @endcan
 
             {{-- =====================
-                AO ACTIONS
+                AO / STAFF ACTIONS
             ====================== --}}
+
+            {{-- ✅ SUBMITTED: dua mode (auto) --}}
+            @can('replaceInitialFiles', $req)
+                @if($req->status === \App\Models\ShmCheckRequest::STATUS_SUBMITTED)
+                    <button type="button" onclick="openModal('replaceInitialFilesModal')" class="btn-secondary">
+                        ♻️ Perbaiki Dokumen (KTP/SHM)
+                    </button>
+                @endif
+            @endcan
+
+            @can('aoRevisionRequest', $req)
+                @if($req->status === \App\Models\ShmCheckRequest::STATUS_SUBMITTED)
+                    <button type="button" onclick="openModal('requestRevisionModal')" class="btn-secondary">
+                        ♻️ Ajukan Revisi Dokumen (KTP/SHM)
+                    </button>
+                @endif
+            @endcan
+
             {{-- AO Upload Signed hanya SP_SK_UPLOADED --}}
             @can('aoSignedUpload', $req)
                 @if($req->status === \App\Models\ShmCheckRequest::STATUS_SP_SK_UPLOADED)
@@ -88,6 +123,7 @@
                     </button>
                 @endif
             @endcan
+
 
             {{-- AO Serahkan fisik hanya SIGNED_UPLOADED --}}
             @can('aoSignedUpload', $req)
@@ -101,21 +137,68 @@
                 @endif
             @endcan
 
+            {{-- ✅ OPSI A: Ajukan revisi (kalau sudah locked oleh SAD/KSA) --}}
+            @can('aoRevisionRequest', $req)
+                @if($req->status === \App\Models\ShmCheckRequest::STATUS_SUBMITTED)
+                    <button type="button"
+                        onclick="openModal('requestRevisionModal')"
+                        class="btn-secondary">
+                        ♻️ Ajukan Revisi Dokumen (KTP/SHM)
+                    </button>
+                @endif
+            @endcan
+
+            {{-- ✅ OPSI A: Upload revisi (setelah approved oleh SAD/KSA) --}}
+            @can('aoRevisionUpload', $req)
+                @if($req->status === \App\Models\ShmCheckRequest::STATUS_REVISION_APPROVED)
+                    <button type="button"
+                        onclick="openModal('uploadRevisionModal')"
+                        class="btn-secondary">
+                        ⬆️ Upload Perbaikan Dokumen (KTP/SHM)
+                    </button>
+                @endif
+            @endcan
+
         </div>
+
+        {{-- kecil info status revisi --}}
+        @if(in_array($req->status, [
+            \App\Models\ShmCheckRequest::STATUS_REVISION_REQUESTED,
+            \App\Models\ShmCheckRequest::STATUS_REVISION_APPROVED,
+        ], true))
+            <div class="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                <span class="font-semibold">Mode Revisi:</span>
+                @if($req->status === \App\Models\ShmCheckRequest::STATUS_REVISION_REQUESTED)
+                    Menunggu approval SAD/KSA.
+                @else
+                    Revisi disetujui. Silakan upload dokumen pengganti.
+                @endif
+            </div>
+        @endif
     </div>
 
     @php
         /**
-        * Helper buka modal otomatis kalau ada error validasi dari modal tertentu.
-        * - uploadSpSk: sp_file / sk_file / spdd_file (baru)
-        * - uploadSigned: signed_sp_file / signed_sk_file / signed_spdd_file (baru)
-        * - uploadResult: result_file
-        * - sentToNotary: notary_name / notes
-        */
+         * Helper buka modal otomatis kalau ada error validasi dari modal tertentu.
+         * - sentToNotary: notary_name / notes
+         * - uploadSpSk: sp_file / sk_file / spdd_file
+         * - uploadSigned: signed_sp_file / signed_sk_file / signed_spdd_file
+         * - uploadResult: result_file
+         * - requestRevision: revision_reason
+         * - approveRevision: approve_notes
+         * - uploadRevision: rev_ktp_file / rev_shm_file
+         */
+        $openSentToNotary = $errors->has('notary_name') || $errors->has('notes');
+
         $openSpSk   = $errors->has('sp_file') || $errors->has('sk_file') || $errors->has('spdd_file');
         $openSigned = $errors->has('signed_sp_file') || $errors->has('signed_sk_file') || $errors->has('signed_spdd_file');
         $openResult = $errors->has('result_file');
-        $openSentToNotary = $errors->has('notary_name') || $errors->has('notes');
+
+        $openReqRevision    = $errors->has('revision_reason');
+        $openApproveRevision= $errors->has('approve_notes');
+        $openUploadRevision = $errors->has('rev_ktp_file') || $errors->has('rev_shm_file');
+        $openReplaceInitial = $errors->has('ktp_file') || $errors->has('shm_file') || $errors->has('replace_notes');
+
     @endphp
 
     @php
@@ -126,6 +209,199 @@
         $modalBody = "px-5 py-4";
         $modalFoot = "flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-4";
     @endphp
+
+    {{-- =========================
+    MODAL: Request Revision (AO) - OPSI A
+    ========================= --}}
+    <div
+        x-data="{ open: {{ $openReqRevision ? 'true' : 'false' }} }"
+        x-init="
+            window.addEventListener('open-modal', e => { if(e.detail==='requestRevisionModal') open=true })
+            window.addEventListener('close-modal', e => { if(e.detail==='requestRevisionModal') open=false })
+        "
+        x-show="open"
+        x-cloak
+        class="{{ $modalBackdrop }}"
+        x-transition.opacity
+        x-trap.noscroll="open"
+        @keydown.escape.window="open=false"
+    >
+        <div class="{{ $modalCard }}" @click.away="open=false">
+            <div class="{{ $modalHead }}">
+                <div>
+                    <div class="text-sm font-bold text-slate-900">♻️ Ajukan Revisi Dokumen (KTP/SHM)</div>
+                    <div class="mt-0.5 text-xs text-slate-500">
+                        Dipakai jika dokumen sudah terlanjur diunduh/di-lock oleh SAD/KSA dan ternyata keliru.
+                    </div>
+                </div>
+                <button type="button" class="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100" @click="open=false">✕</button>
+            </div>
+
+            <form method="POST" action="{{ route('shm.revision.requestInitial', $req) }}">
+                @csrf
+                <div class="{{ $modalBody }}">
+                    <div class="grid gap-3">
+                        <div class="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800 border border-amber-200">
+                            <span class="font-semibold">Catatan:</span> Setelah diajukan, status akan berubah menjadi
+                            <span class="font-semibold">REVISION_REQUESTED</span> dan menunggu approval SAD/KSA.
+                        </div>
+
+                        <div>
+                            <label class="text-xs font-semibold text-slate-600">
+                                Alasan revisi <span class="text-rose-600">*</span>
+                            </label>
+                            <textarea
+                                name="revision_reason"
+                                rows="4"
+                                required
+                                class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                                placeholder="Contoh: KTP/SHM salah debitur, tertukar dengan pengajuan lain. Mohon izin revisi.">{{ old('revision_reason') }}</textarea>
+                            @error('revision_reason')
+                                <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
+                            @enderror
+                        </div>
+                    </div>
+                </div>
+
+                <div class="{{ $modalFoot }}">
+                    <button type="button" class="btn-secondary" @click="open=false">Batal</button>
+                    <button type="submit" class="btn-primary">Ajukan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {{-- =========================
+    MODAL: Approve Revision (SAD/KSA/KBO) - OPSI A
+    ========================= --}}
+    <div
+        x-data="{ open: {{ $openApproveRevision ? 'true' : 'false' }} }"
+        x-init="
+            window.addEventListener('open-modal', e => { if(e.detail==='approveRevisionModal') open=true })
+            window.addEventListener('close-modal', e => { if(e.detail==='approveRevisionModal') open=false })
+        "
+        x-show="open"
+        x-cloak
+        class="{{ $modalBackdrop }}"
+        x-transition.opacity
+        x-trap.noscroll="open"
+        @keydown.escape.window="open=false"
+    >
+        <div class="{{ $modalCard }}" @click.away="open=false">
+            <div class="{{ $modalHead }}">
+                <div>
+                    <div class="text-sm font-bold text-slate-900">✅ Approve Revisi Dokumen (KTP/SHM)</div>
+                    <div class="mt-0.5 text-xs text-slate-500">
+                        Setelah approve, pemohon bisa upload dokumen pengganti.
+                    </div>
+                </div>
+                <button type="button" class="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100" @click="open=false">✕</button>
+            </div>
+
+            <form method="POST" action="{{ route('shm.revision.approveInitial', $req) }}">
+                @csrf
+                <div class="{{ $modalBody }}">
+                    <div class="grid gap-3">
+                        <div class="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                            Status akan menjadi <span class="font-semibold">REVISION_APPROVED</span>.
+                        </div>
+
+                        <div>
+                            <label class="text-xs font-semibold text-slate-600">Catatan approval (opsional)</label>
+                            <textarea
+                                name="approve_notes"
+                                rows="3"
+                                class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                                placeholder="Catatan (opsional)">{{ old('approve_notes') }}</textarea>
+                            @error('approve_notes')
+                                <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
+                            @enderror
+                        </div>
+                    </div>
+                </div>
+
+                <div class="{{ $modalFoot }}">
+                    <button type="button" class="btn-secondary" @click="open=false">Batal</button>
+                    <button type="submit" class="btn-primary">Approve</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    {{-- =========================
+    MODAL: Upload Revision Files (AO) - OPSI A
+    ========================= --}}
+    <div
+        x-data="{ open: {{ $openUploadRevision ? 'true' : 'false' }} }"
+        x-init="
+            window.addEventListener('open-modal', e => { if(e.detail==='uploadRevisionModal') open=true })
+            window.addEventListener('close-modal', e => { if(e.detail==='uploadRevisionModal') open=false })
+        "
+        x-show="open"
+        x-cloak
+        class="{{ $modalBackdrop }}"
+        x-transition.opacity
+        x-trap.noscroll="open"
+        @keydown.escape.window="open=false"
+    >
+        <div class="{{ $modalCard }}" @click.away="open=false">
+            <div class="{{ $modalHead }}">
+                <div>
+                    <div class="text-sm font-bold text-slate-900">⬆️ Upload Perbaikan Dokumen (KTP/SHM)</div>
+                    <div class="mt-0.5 text-xs text-slate-500">
+                        Upload file pengganti. File lama tetap tersimpan untuk audit trail.
+                    </div>
+                </div>
+                <button type="button" class="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100" @click="open=false">✕</button>
+            </div>
+
+            <form method="POST" action="{{ route('shm.revision.uploadInitial', $req) }}" enctype="multipart/form-data">
+                @csrf
+                <div class="{{ $modalBody }}">
+                    <div class="grid gap-4 sm:grid-cols-2">
+                        <div>
+                            <label class="text-xs font-semibold text-slate-600">KTP Baru <span class="text-rose-600">*</span></label>
+                            <input type="file" name="rev_ktp_file" accept="application/pdf"
+                                class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
+                            @error('rev_ktp_file')
+                                <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
+                            @enderror
+                        </div>
+
+                        <div>
+                            <label class="text-xs font-semibold text-slate-600">SHM Baru <span class="text-rose-600">*</span></label>
+                            <input type="file" name="rev_shm_file" accept="application/pdf"
+                                class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
+                            @error('rev_shm_file')
+                                <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
+                            @enderror
+                        </div>
+
+                        <div class="sm:col-span-2">
+                            <label class="text-xs font-semibold text-slate-600">Catatan (opsional)</label>
+                            <textarea
+                                name="notes"
+                                rows="3"
+                                class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                                placeholder="Catatan (opsional)">{{ old('notes') }}</textarea>
+                            @error('notes')
+                                <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
+                            @enderror
+                        </div>
+                    </div>
+
+                    <div class="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                        Setelah upload, status akan kembali ke <span class="font-semibold">SUBMITTED</span> agar SAD/KSA dapat melanjutkan proses.
+                    </div>
+                </div>
+
+                <div class="{{ $modalFoot }}">
+                    <button type="button" class="btn-secondary" @click="open=false">Batal</button>
+                    <button type="submit" class="btn-primary">Upload</button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     {{-- =========================
     MODAL: Send to Notaris (KSA/KBO)
@@ -338,7 +614,6 @@
                             @enderror
                         </div>
 
-                        {{-- ✅ Signed SPDD (Jogja only) --}}
                         @if($req->is_jogja)
                             <div class="sm:col-span-2">
                                 <label class="text-xs font-semibold text-slate-600">Signed SPDD (optional, PDF)</label>
@@ -426,6 +701,82 @@
         </div>
     </div>
 
+    {{-- =========================
+    MODAL: Replace Initial KTP/SHM (AO/RO/SO/BE/FE) - hanya sebelum LOCK
+    ========================= --}}
+    <div
+        x-data="{ open: {{ $openReplaceInitial ? 'true' : 'false' }} }"
+        x-init="
+            window.addEventListener('open-modal', e => { if(e.detail==='replaceInitialFilesModal') open=true })
+            window.addEventListener('close-modal', e => { if(e.detail==='replaceInitialFilesModal') open=false })
+        "
+        x-show="open"
+        x-cloak
+        class="{{ $modalBackdrop }}"
+        x-transition.opacity
+        x-trap.noscroll="open"
+        @keydown.escape.window="open=false"
+    >
+        <div class="{{ $modalCard }}" @click.away="open=false">
+            <div class="{{ $modalHead }}">
+                <div>
+                    <div class="text-sm font-bold text-slate-900">♻️ Perbaiki Dokumen (KTP/SHM)</div>
+                    <div class="mt-0.5 text-xs text-slate-500">
+                        Upload ulang dokumen yang benar. Fitur ini hanya bisa sebelum dokumen dikunci (belum diproses SAD/KSA).
+                    </div>
+                </div>
+                <button type="button" class="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100" @click="open=false">✕</button>
+            </div>
+
+            <form method="POST" action="{{ route('shm.replaceInitialFiles', $req) }}" enctype="multipart/form-data">
+                @csrf
+                <div class="{{ $modalBody }}">
+                    <div class="grid gap-4">
+                        <div class="grid gap-4 sm:grid-cols-2">
+                            <div>
+                                <label class="text-xs font-semibold text-slate-600">KTP Baru <span class="text-rose-600">*</span></label>
+                                <input type="file" name="ktp_file" accept=".pdf,.jpg,.jpeg,.png" required
+                                    class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
+                                @error('ktp_file')
+                                    <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
+                                @enderror
+                            </div>
+
+                            <div>
+                                <label class="text-xs font-semibold text-slate-600">SHM Baru <span class="text-rose-600">*</span></label>
+                                <input type="file" name="shm_file" accept=".pdf,.jpg,.jpeg,.png" required
+                                    class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
+                                @error('shm_file')
+                                    <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
+                                @enderror
+                            </div>
+                        </div>
+
+                        <div>
+                            <label class="text-xs font-semibold text-slate-600">Catatan Perbaikan (opsional)</label>
+                            <textarea name="replace_notes" rows="3"
+                                    class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
+                                    placeholder="Contoh: tadi salah upload, ini file yang benar.">{{ old('replace_notes') }}</textarea>
+                            @error('replace_notes')
+                                <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
+                            @enderror
+                        </div>
+
+                        <div class="rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800 border border-amber-100">
+                            Setelah diganti, sistem akan menyimpan versi terbaru sebagai dokumen utama.
+                            Versi lama sebaiknya ditandai sebagai <span class="font-semibold">obsolete</span> (akan kita handle di backend).
+                        </div>
+                    </div>
+                </div>
+
+                <div class="{{ $modalFoot }}">
+                    <button type="button" class="btn-secondary" @click="open=false">Batal</button>
+                    <button type="submit" class="btn-primary">Simpan Perbaikan</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <div class="grid gap-4 lg:grid-cols-3">
         {{-- LEFT --}}
         <div class="lg:col-span-2 space-y-4">
@@ -473,16 +824,10 @@
                         'shm' => 'SHM',
                         'sp' => 'Srt Pengantar (Notaris)',
                         'sk' => 'Srt Kuasa (Notaris)',
-
-                        // ✅ SPDD hanya untuk Jogja (akan kita filter juga di loop)
                         'spdd' => 'Surat Perlindungan Data Diri (SPDD)',
-
                         'signed_sp' => 'Srt Pengantar Bertandatangan',
                         'signed_sk' => 'Srt Kuasa Bertandatangan',
-
-                        // ✅ SPDD Bertandatangan (Jogja only)
                         'signed_spdd' => 'Surat Perlindungan Data Diri (SPDD) Bertandatangan',
-
                         'result' => 'Hasil Cek SHM',
                     ];
                 @endphp
@@ -490,7 +835,7 @@
                 <div class="mt-4 space-y-4">
                     @forelse($labels as $type => $label)
 
-                        {{-- ✅ hide card SPDD jika bukan Jogja --}}
+                        {{-- hide card SPDD jika bukan Jogja --}}
                         @if(in_array($type, ['spdd','signed_spdd'], true) && !(bool)($req->is_jogja ?? false))
                             @continue
                         @endif

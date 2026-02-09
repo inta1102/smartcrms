@@ -57,10 +57,14 @@ class ShmCheckRequestController extends Controller
             ShmCheckRequest::STATUS_RESULT_UPLOADED,
             ShmCheckRequest::STATUS_CLOSED,
             ShmCheckRequest::STATUS_REJECTED,
+
+            // ✅ revisi
+            ShmCheckRequest::STATUS_REVISION_REQUESTED,
+            ShmCheckRequest::STATUS_REVISION_APPROVED,
         ];
 
         // ======================
-        // ✅ COUNTS for Quick Chips
+        // ✅ COUNTS for Quick Chips (SAD)
         // ======================
         $counts = [];
 
@@ -80,6 +84,7 @@ class ShmCheckRequestController extends Controller
                 ShmCheckRequest::STATUS_SUBMITTED => (int)($byStatus[ShmCheckRequest::STATUS_SUBMITTED] ?? 0),
                 ShmCheckRequest::STATUS_SENT_TO_NOTARY => (int)($byStatus[ShmCheckRequest::STATUS_SENT_TO_NOTARY] ?? 0),
                 ShmCheckRequest::STATUS_SENT_TO_BPN => (int)($byStatus[ShmCheckRequest::STATUS_SENT_TO_BPN] ?? 0),
+                ShmCheckRequest::STATUS_REVISION_REQUESTED => (int)($byStatus[ShmCheckRequest::STATUS_REVISION_REQUESTED] ?? 0),
             ];
         }
 
@@ -100,7 +105,7 @@ class ShmCheckRequestController extends Controller
             'debtor_name' => ['required', 'string', 'max:191'],
             'debtor_phone' => ['nullable', 'string', 'max:50'],
             'collateral_address' => ['nullable', 'string', 'max:255'],
-            'is_jogja' => ['nullable', 'boolean'], // ✅ baru
+            'is_jogja' => ['nullable', 'boolean'],
             'certificate_no' => ['nullable', 'string', 'max:100'],
             'notary_name' => ['nullable', 'string', 'max:191'],
             'notes' => ['nullable', 'string', 'max:5000'],
@@ -112,7 +117,7 @@ class ShmCheckRequestController extends Controller
 
         $user = auth()->user();
 
-        return DB::transaction(function () use ($data, $user) {
+        return DB::transaction(function () use ($data, $user, $request) {
 
             $requestNo = $this->generateRequestNo();
 
@@ -135,8 +140,8 @@ class ShmCheckRequestController extends Controller
             ]);
 
             // store files
-            $this->storeFile($req, 'ktp', request()->file('ktp_file'));
-            $this->storeFile($req, 'shm', request()->file('shm_file'));
+            $this->storeFile($req, 'ktp', $request->file('ktp_file'));
+            $this->storeFile($req, 'shm', $request->file('shm_file'));
 
             $this->log($req, 'submitted', null, ShmCheckRequest::STATUS_SUBMITTED, 'Pengajuan dibuat');
 
@@ -154,7 +159,7 @@ class ShmCheckRequestController extends Controller
         $this->authorize('view', $req);
 
         $req->load([
-            'requester:id,name',
+            'requester:id,name,wa_number',
             'files.uploader:id,name',
             'logs.actor:id,name',
         ]);
@@ -162,6 +167,50 @@ class ShmCheckRequestController extends Controller
         $filesByType = $req->files->groupBy('type');
 
         return view('shm.show', compact('req', 'filesByType'));
+    }
+
+    public function replaceInitialFiles(Request $request, ShmCheckRequest $req)
+    {
+        // pemohon harus punya akses lihat & update (policy update kamu sudah: hanya SUBMITTED & pemohon)
+        $this->authorize('view', $req);
+        $this->authorize('update', $req);
+
+        // ✅ kalau sudah di-lock oleh SAD/KSA (karena sudah pernah download), jangan replace langsung.
+        // Opsi A: wajib lewat alur revisi (requestRevision -> approve -> uploadCorrected)
+        if (!is_null($req->initial_files_locked_at)) {
+            return back()->with('status', 'Dokumen awal sudah dikunci (sudah diunduh SAD/KSA). Silakan ajukan revisi melalui alur revisi.');
+        }
+
+        // kamu di store() wajib PDF, tapi di modal accept juga gambar.
+        // biar fleksibel & aman, kita izinkan pdf/jpg/jpeg/png
+        $data = $request->validate([
+            'ktp_file'      => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
+            'shm_file'      => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
+            'replace_notes' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        return DB::transaction(function () use ($req, $request, $data) {
+            $from = $req->status;
+
+            // Simpan versi baru sebagai file baru (audit trail tetap ada).
+            // Karena tabel file kamu belum punya flag "active/current", kita biarkan historinya ada.
+            $note = $data['replace_notes'] ?? 'Perbaikan dokumen awal (KTP/SHM)';
+
+            $this->storeFile($req, 'ktp', $request->file('ktp_file'), $note);
+            $this->storeFile($req, 'shm', $request->file('shm_file'), $note);
+
+            // status tetap SUBMITTED (tidak berubah), hanya dokumen yang diperbaiki
+            $this->log(
+                $req,
+                'replace_initial_files',
+                $from,
+                $req->status,
+                'Pemohon memperbaiki dokumen awal (KTP/SHM)',
+                ['notes' => $note]
+            );
+
+            return back()->with('status', 'Dokumen KTP/SHM berhasil diperbaiki.');
+        });
     }
 
     // =======================
@@ -211,10 +260,7 @@ class ShmCheckRequestController extends Controller
         $data = $request->validate([
             'sp_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
             'sk_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
-
-            // ✅ SPDD optional (Jogja only, PDF)
             'spdd_file' => ['nullable', 'file', 'mimes:pdf', 'max:20480'],
-
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
@@ -224,7 +270,7 @@ class ShmCheckRequestController extends Controller
             $this->storeFile($req, 'sp', $request->file('sp_file'), $data['notes'] ?? null);
             $this->storeFile($req, 'sk', $request->file('sk_file'), $data['notes'] ?? null);
 
-            // ✅ SPDD disimpan hanya jika ada file & lokasi Jogja
+            // ✅ SPDD hanya jika Jogja & ada file
             if ((bool)($req->is_jogja ?? false) && $request->hasFile('spdd_file')) {
                 $this->storeFile($req, 'spdd', $request->file('spdd_file'), $data['notes'] ?? null);
             }
@@ -236,10 +282,10 @@ class ShmCheckRequestController extends Controller
 
             $this->log($req, 'upload_sp_sk', $from, $req->status, 'KSA/KBO upload SP & SK dari notaris');
 
-            // (opsional) WA ke pemohon saat SP/SK uploaded — sudah ada dispatcher, kalau mau nyalakan tinggal uncomment
-            // DB::afterCommit(function () use ($req) {
-            //     $this->dispatchWaSpSkUploadedToRequester($req);
-            // });
+            // ✅ WA notify AO (pemohon) bahwa SP/SK sudah siap
+            DB::afterCommit(function () use ($req) {
+                $this->dispatchWaSpSkUploadedToRequester($req);
+            });
 
             return back()->with('status', 'SP & SK berhasil diupload. Menunggu tanda tangan debitur oleh AO.');
         });
@@ -274,14 +320,14 @@ class ShmCheckRequestController extends Controller
         abort_unless($req->status === ShmCheckRequest::STATUS_SENT_TO_BPN, 422);
 
         $data = $request->validate([
-            'result_file' => ['required', 'file', 'mimes:pdf', 'max:20480'], // ✅ PDF only
+            'result_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
-        return DB::transaction(function () use ($req, $data) {
+        return DB::transaction(function () use ($req, $data, $request) {
             $from = $req->status;
 
-            $this->storeFile($req, 'result', request()->file('result_file'), $data['notes'] ?? null);
+            $this->storeFile($req, 'result', $request->file('result_file'), $data['notes'] ?? null);
 
             $req->update([
                 'status' => ShmCheckRequest::STATUS_CLOSED,
@@ -290,7 +336,7 @@ class ShmCheckRequestController extends Controller
 
             $this->log($req, 'upload_result', $from, $req->status, 'KSA/KBO upload hasil cek SHM (pengajuan ditutup)');
 
-            // ✅ WA: notify pemohon setelah hasil diupload (CLOSED)
+            // ✅ WA notify requester: hasil uploaded (kamu sudah test OK)
             DB::afterCommit(function () use ($req) {
                 $this->dispatchWaResultUploadedToRequester($req);
             });
@@ -300,7 +346,129 @@ class ShmCheckRequestController extends Controller
     }
 
     // =======================
-    // AO actions
+    // ✅ REVISION FLOW (Opsi A)
+    // =======================
+
+    /**
+     * AO ajukan revisi KTP/SHM (hanya jika sudah lock)
+     * SUBMITTED + initial_files_locked_at != null => REVISION_REQUESTED
+     */
+    public function requestRevisionInitialDocs(Request $request, ShmCheckRequest $req)
+    {
+        $this->authorize('view', $req);
+        $this->authorize('aoRevisionRequest', $req);
+
+        abort_unless($req->status === ShmCheckRequest::STATUS_SUBMITTED, 422);
+        abort_unless(!is_null($req->initial_files_locked_at), 422);
+
+        $data = $request->validate([
+            'revision_reason' => ['required', 'string', 'max:2000'],
+        ]);
+
+        return DB::transaction(function () use ($req, $data) {
+            $from = $req->status;
+
+            $req->update([
+                'status' => ShmCheckRequest::STATUS_REVISION_REQUESTED,
+                'revision_requested_at' => now(),
+                'revision_requested_by' => auth()->id(),
+                'revision_reason' => $data['revision_reason'],
+                // reset approval (kalau pernah approve lalu minta lagi)
+                'revision_approved_at' => null,
+                'revision_approved_by' => null,
+                'revision_approval_notes' => null,
+            ]);
+
+            $this->log($req, 'revision_requested', $from, $req->status, 'AO mengajukan revisi dokumen KTP/SHM', [
+                'reason' => $data['revision_reason'],
+            ]);
+
+            DB::afterCommit(function () use ($req) {
+                $this->dispatchWaRevisionRequestedToSad($req);
+            });
+
+            return back()->with('status', 'Permintaan revisi dikirim ke SAD/KSA.');
+        });
+    }
+
+    /**
+     * SAD/KSA approve revisi => REVISION_APPROVED
+     */
+    public function approveRevisionInitialDocs(Request $request, ShmCheckRequest $req)
+    {
+        $this->authorize('sadAction', ShmCheckRequest::class);
+        $this->authorize('view', $req);
+
+        abort_unless($req->status === ShmCheckRequest::STATUS_REVISION_REQUESTED, 422);
+
+        $data = $request->validate([
+            'revision_approval_notes' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        return DB::transaction(function () use ($req, $data) {
+            $from = $req->status;
+
+            $req->update([
+                'status' => ShmCheckRequest::STATUS_REVISION_APPROVED,
+                'revision_approved_at' => now(),
+                'revision_approved_by' => auth()->id(),
+                'revision_approval_notes' => $data['revision_approval_notes'] ?? null,
+            ]);
+
+            $this->log($req, 'revision_approved', $from, $req->status, 'SAD/KSA menyetujui revisi dokumen KTP/SHM', [
+                'notes' => $data['revision_approval_notes'] ?? null,
+            ]);
+
+            DB::afterCommit(function () use ($req) {
+                $this->dispatchWaRevisionApprovedToRequester($req);
+            });
+
+            return back()->with('status', 'Revisi disetujui. AO bisa upload perbaikan KTP/SHM.');
+        });
+    }
+
+    /**
+     * AO upload dokumen KTP/SHM pengganti setelah revisi di-approve
+     * REVISION_APPROVED => kembali SUBMITTED (tetap locked)
+     */
+    public function uploadCorrectedInitialDocs(Request $request, ShmCheckRequest $req)
+    {
+        $this->authorize('view', $req);
+        $this->authorize('aoRevisionUpload', $req);
+
+        abort_unless($req->status === ShmCheckRequest::STATUS_REVISION_APPROVED, 422);
+
+        $data = $request->validate([
+            // ✅ wajib PDF
+            'ktp_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+            'shm_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+            'notes' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        return DB::transaction(function () use ($req, $data, $request) {
+            $from = $req->status;
+
+            // simpan sebagai versi baru (type sama: ktp/shm) -> audit trail tetap ada
+            $this->storeFile($req, 'ktp', $request->file('ktp_file'), $data['notes'] ?? 'Revisi KTP');
+            $this->storeFile($req, 'shm', $request->file('shm_file'), $data['notes'] ?? 'Revisi SHM');
+
+            $req->update([
+                'status' => ShmCheckRequest::STATUS_SUBMITTED,
+                // jangan buka lock; tetap locked
+            ]);
+
+            $this->log($req, 'revision_uploaded', $from, $req->status, 'AO upload perbaikan dokumen KTP/SHM (revisi)');
+
+            DB::afterCommit(function () use ($req) {
+                $this->dispatchWaRevisionUploadedToSad($req);
+            });
+
+            return back()->with('status', 'Perbaikan KTP/SHM berhasil diupload. Menunggu tindak lanjut SAD/KSA.');
+        });
+    }
+
+    // =======================
+    // AO actions (existing)
     // =======================
     public function uploadSigned(Request $request, ShmCheckRequest $req)
     {
@@ -310,11 +478,10 @@ class ShmCheckRequestController extends Controller
         abort_unless($req->status === ShmCheckRequest::STATUS_SP_SK_UPLOADED, 422);
 
         $data = $request->validate([
-            // ✅ request user: PDF only (signed juga PDF only biar konsisten)
             'signed_sp_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
             'signed_sk_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
 
-            // ✅ Signed SPDD optional (Jogja only, PDF only)
+            // ✅ signed SPDD optional (Jogja only)
             'signed_spdd_file' => ['nullable', 'file', 'mimes:pdf', 'max:20480'],
 
             'notes' => ['nullable', 'string', 'max:2000'],
@@ -326,7 +493,6 @@ class ShmCheckRequestController extends Controller
             $this->storeFile($req, 'signed_sp', $request->file('signed_sp_file'), $data['notes'] ?? null);
             $this->storeFile($req, 'signed_sk', $request->file('signed_sk_file'), $data['notes'] ?? null);
 
-            // ✅ Signed SPDD disimpan hanya jika Jogja & ada file
             if ((bool)($req->is_jogja ?? false) && $request->hasFile('signed_spdd_file')) {
                 $this->storeFile($req, 'signed_spdd', $request->file('signed_spdd_file'), $data['notes'] ?? null);
             }
@@ -336,9 +502,9 @@ class ShmCheckRequestController extends Controller
                 'signed_uploaded_at' => now(),
             ]);
 
-            $this->log($req, 'upload_signed', $from, $req->status, 'AO upload dokumen bertandatangan (SP/SK/SPDD)');
+            $this->log($req, 'upload_signed', $from, $req->status, 'AO upload SP & SK yang sudah ditandatangani');
 
-            // ✅ WA: notify SAD/KSA setelah AO upload signed
+            // ✅ WA ke SAD/KSA bahwa signed sudah diupload (opsional kalau mau)
             DB::afterCommit(function () use ($req) {
                 $this->dispatchWaSignedUploadedToSad($req);
             });
@@ -362,42 +528,47 @@ class ShmCheckRequestController extends Controller
                 'handed_to_sad_at' => now(),
             ]);
 
-            $this->log(
-                $req,
-                'handed_to_sad',
-                $from,
-                $req->status,
-                'AO menyerahkan fisik SP & SK ke KSA/KBO'
-            );
+            $this->log($req, 'handed_to_sad', $from, $req->status, 'AO menyerahkan fisik SP & SK ke KSA/KBO');
 
             return back()->with('status', 'Berkas fisik ditandai sudah diserahkan ke KSA/KBO.');
         });
     }
 
+    // =======================
+    // ✅ Download + LOCK logic
+    // =======================
     public function downloadFile(ShmCheckRequestFile $file)
     {
         $req = $file->request()->firstOrFail();
-
         $this->authorize('view', $req);
 
-        abort_if(
-            $file->request_id !== $req->id,
-            403,
-            'Akses file tidak valid'
-        );
+        abort_if($file->request_id !== $req->id, 403, 'Akses file tidak valid');
+
+        // ✅ saat SAD/KSA download KTP/SHM => lock
+        $user = auth()->user();
+        $rv = strtoupper(trim($user->roleValue() ?? ''));
+        $isSad = in_array($rv, ['KSA','KBO','SAD'], true);
+
+        if ($isSad && in_array($file->type, ['ktp','shm'], true)) {
+            if (is_null($req->initial_files_locked_at)) {
+                $req->forceFill([
+                    'initial_files_locked_at' => now(),
+                    'initial_files_locked_by' => $user->id,
+                ])->save();
+
+                $this->log($req, 'initial_files_locked', $req->status, $req->status, 'Dokumen awal (KTP/SHM) terkunci karena sudah diunduh SAD/KSA');
+            }
+        }
 
         if (!Storage::disk('local')->exists($file->file_path)) {
             abort(404, 'File tidak ditemukan.');
         }
 
-        return Storage::disk('local')->download(
-            $file->file_path,
-            $file->original_name
-        );
+        return Storage::disk('local')->download($file->file_path, $file->original_name);
     }
 
     // =======================
-    // WA dispatchers (SHM flow)
+    // WA dispatchers (existing + tambahan revisi)
     // =======================
     protected function dispatchWaSubmitToSad(ShmCheckRequest $req): void
     {
@@ -441,7 +612,6 @@ class ShmCheckRequestController extends Controller
         if ($tpl === '') return;
 
         $req->loadMissing(['requester:id,name,wa_number']);
-
         $requester = $req->requester;
         if (!$requester) return;
 
@@ -465,7 +635,37 @@ class ShmCheckRequestController extends Controller
         SendWaTemplateJob::dispatch($to, $tpl, $vars, $meta)->onQueue('wa');
     }
 
-    // ✅ NEW: AO upload signed -> notify SAD/KSA
+    // ✅ hasil uploaded -> requester (kamu sudah test OK)
+    protected function dispatchWaResultUploadedToRequester(ShmCheckRequest $req): void
+    {
+        $tpl = (string) config('whatsapp.qontak.templates.ticket_notify_any');
+        if ($tpl === '') return;
+
+        $req->loadMissing(['requester:id,name,wa_number']);
+        $requester = $req->requester;
+        if (!$requester) return;
+
+        $to = $this->userWaTo($requester);
+        if (!$to) return;
+
+        $vars = ShmMessageFactory::buildResultUploadedToRequesterVars($req, [
+            'requester_name' => $requester->name ?? 'Pemohon',
+        ]);
+
+        $meta = [
+            'buttons' => [
+                [
+                    'type'  => 'URL',
+                    'index' => '0',
+                    'value' => ShmMessageFactory::shmButtonPath($req),
+                ],
+            ],
+        ];
+
+        SendWaTemplateJob::dispatch($to, $tpl, $vars, $meta)->onQueue('wa');
+    }
+
+    // ✅ signed uploaded -> SAD (opsional)
     protected function dispatchWaSignedUploadedToSad(ShmCheckRequest $req): void
     {
         $tpl = (string) config('whatsapp.qontak.templates.ticket_notify_any');
@@ -502,21 +702,57 @@ class ShmCheckRequestController extends Controller
         }
     }
 
-    // ✅ NEW: hasil diupload/closed -> notify pemohon
-    protected function dispatchWaResultUploadedToRequester(ShmCheckRequest $req): void
+    // ✅ revisi requested -> SAD
+    protected function dispatchWaRevisionRequestedToSad(ShmCheckRequest $req): void
+    {
+        $tpl = (string) config('whatsapp.qontak.templates.ticket_notify_any');
+        if ($tpl === '') return;
+
+        $req->loadMissing(['requester:id,name']);
+
+        $vars = ShmMessageFactory::buildRevisionRequestedToSadVars($req, [
+            'audience' => 'SAD',
+            'requester_name' => $req->requester?->name ?? 'Pemohon',
+        ]);
+
+        $meta = [
+            'buttons' => [
+                [
+                    'type'  => 'URL',
+                    'index' => '0',
+                    'value' => ShmMessageFactory::shmButtonPath($req),
+                ],
+            ],
+        ];
+
+        $group = (string) config('whatsapp.recipients.shm_sad_group', '');
+        if (trim($group) !== '') {
+            SendWaTemplateJob::dispatch($group, $tpl, $vars, $meta)->onQueue('wa');
+            return;
+        }
+
+        foreach ($this->sadUsersByBranch($req->branch_code) as $u) {
+            $to = $this->userWaTo($u);
+            if (!$to) continue;
+
+            SendWaTemplateJob::dispatch($to, $tpl, $vars, $meta)->onQueue('wa');
+        }
+    }
+
+    // ✅ revisi approved -> AO
+    protected function dispatchWaRevisionApprovedToRequester(ShmCheckRequest $req): void
     {
         $tpl = (string) config('whatsapp.qontak.templates.ticket_notify_any');
         if ($tpl === '') return;
 
         $req->loadMissing(['requester:id,name,wa_number']);
-
         $requester = $req->requester;
         if (!$requester) return;
 
         $to = $this->userWaTo($requester);
         if (!$to) return;
 
-        $vars = ShmMessageFactory::buildResultUploadedToRequesterVars($req, [
+        $vars = ShmMessageFactory::buildRevisionApprovedToRequesterVars($req, [
             'requester_name' => $requester->name ?? 'Pemohon',
         ]);
 
@@ -533,12 +769,48 @@ class ShmCheckRequestController extends Controller
         SendWaTemplateJob::dispatch($to, $tpl, $vars, $meta)->onQueue('wa');
     }
 
+    // ✅ revisi uploaded -> SAD (minta redownload)
+    protected function dispatchWaRevisionUploadedToSad(ShmCheckRequest $req): void
+    {
+        $tpl = (string) config('whatsapp.qontak.templates.ticket_notify_any');
+        if ($tpl === '') return;
+
+        $req->loadMissing(['requester:id,name']);
+
+        $vars = ShmMessageFactory::buildRevisionUploadedToSadVars($req, [
+            'audience' => 'SAD',
+            'requester_name' => $req->requester?->name ?? 'Pemohon',
+        ]);
+
+        $meta = [
+            'buttons' => [
+                [
+                    'type'  => 'URL',
+                    'index' => '0',
+                    'value' => ShmMessageFactory::shmButtonPath($req),
+                ],
+            ],
+        ];
+
+        $group = (string) config('whatsapp.recipients.shm_sad_group', '');
+        if (trim($group) !== '') {
+            SendWaTemplateJob::dispatch($group, $tpl, $vars, $meta)->onQueue('wa');
+            return;
+        }
+
+        foreach ($this->sadUsersByBranch($req->branch_code) as $u) {
+            $to = $this->userWaTo($u);
+            if (!$to) continue;
+
+            SendWaTemplateJob::dispatch($to, $tpl, $vars, $meta)->onQueue('wa');
+        }
+    }
+
     protected function sadUsersByBranch(?string $branchCode)
     {
         return User::query()
             ->select(['id', 'name', 'level', 'wa_number'])
             ->whereIn('level', ['KSA'])
-            // ->whereIn('level', ['KSA', 'KBO', 'SAD'])
             ->get();
     }
 

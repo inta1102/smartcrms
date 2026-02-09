@@ -21,12 +21,22 @@ class ShmCheckRequest extends Model
     public const STATUS_RESULT_UPLOADED  = 'RESULT_UPLOADED';
     public const STATUS_CLOSED           = 'CLOSED';
     public const STATUS_REJECTED         = 'REJECTED';
+    // ✅ Status revisi
+    public const STATUS_REVISION_REQUESTED = 'REVISION_REQUESTED';
+    public const STATUS_REVISION_APPROVED  = 'REVISION_APPROVED';
 
     protected $fillable = [
         'request_no','requested_by','branch_code','ao_code',
         'debtor_name','debtor_phone','collateral_address','certificate_no','notary_name',
         'status','submitted_at','sent_to_notary_at','sp_sk_uploaded_at','signed_uploaded_at',
-        'handed_to_sad_at','sent_to_bpn_at','result_uploaded_at','closed_at','notes', 'is_jogja',
+        'handed_to_sad_at','sent_to_bpn_at','result_uploaded_at','closed_at','notes', 'is_jogja','initial_files_locked_at',
+        'initial_files_locked_by',
+        'revision_requested_at',
+        'revision_requested_by',
+        'revision_reason',
+        'revision_approved_at',
+        'revision_approved_by',
+        'revision_approval_notes',
     ];
 
     protected $casts = [
@@ -38,6 +48,11 @@ class ShmCheckRequest extends Model
         'sent_to_bpn_at' => 'datetime',
         'result_uploaded_at' => 'datetime',
         'closed_at' => 'datetime',
+        'is_jogja' => 'boolean',
+        'submitted_at' => 'datetime',
+        'initial_files_locked_at' => 'datetime',
+        'revision_requested_at' => 'datetime',
+        'revision_approved_at' => 'datetime',
     ];
 
     public function requester(): BelongsTo

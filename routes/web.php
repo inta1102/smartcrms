@@ -74,6 +74,7 @@ use App\Http\Controllers\Kpi\SoTargetController;
 
 use App\Http\Controllers\Kpi\KpiTargetRouterController;
 
+
 Route::model('action', LegalAction::class);
 
 
@@ -441,6 +442,21 @@ Route::middleware('auth')->group(function () {
     Route::get('/shm-check', [ShmCheckRequestController::class, 'index'])->name('shm.index');
     Route::get('/shm-check/create', [ShmCheckRequestController::class, 'create'])->name('shm.create');
     Route::post('/shm-check', [ShmCheckRequestController::class, 'store'])->name('shm.store');
+
+   
+    Route::prefix('shm')->name('shm.')->group(function () {
+     Route::post('{req}/replace-initial-files', [ShmCheckRequestController::class, 'replaceInitialFiles'])
+        ->name('replaceInitialFiles');
+
+        Route::post('{req}/revision/request-initial', [\App\Http\Controllers\ShmCheckRequestController::class, 'requestRevisionInitialDocs'])
+            ->name('revision.requestInitial');
+
+        Route::post('{req}/revision/approve-initial', [\App\Http\Controllers\ShmCheckRequestController::class, 'approveRevisionInitialDocs'])
+            ->name('revision.approveInitial');
+
+        Route::post('{req}/revision/upload-initial', [\App\Http\Controllers\ShmCheckRequestController::class, 'uploadCorrectedInitialDocs'])
+            ->name('revision.uploadInitial');
+    });    
 
     Route::get('/shm-check/{req}', [ShmCheckRequestController::class, 'show'])->name('shm.show');
 
