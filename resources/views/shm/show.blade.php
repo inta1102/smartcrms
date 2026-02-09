@@ -1,4 +1,4 @@
-@extends('layouts.app')
+@extends('layouts.app') 
 
 @section('content')
 <div class="mx-auto max-w-6xl px-4 py-6">
@@ -107,13 +107,13 @@
     @php
         /**
         * Helper buka modal otomatis kalau ada error validasi dari modal tertentu.
-        * - uploadSpSk: sp_file / sk_file
-        * - uploadSigned: signed_sp_file / signed_sk_file
+        * - uploadSpSk: sp_file / sk_file / spdd_file (baru)
+        * - uploadSigned: signed_sp_file / signed_sk_file / signed_spdd_file (baru)
         * - uploadResult: result_file
         * - sentToNotary: notary_name / notes
         */
-        $openSpSk   = $errors->has('sp_file') || $errors->has('sk_file');
-        $openSigned = $errors->has('signed_sp_file') || $errors->has('signed_sk_file');
+        $openSpSk   = $errors->has('sp_file') || $errors->has('sk_file') || $errors->has('spdd_file');
+        $openSigned = $errors->has('signed_sp_file') || $errors->has('signed_sk_file') || $errors->has('signed_spdd_file');
         $openResult = $errors->has('result_file');
         $openSentToNotary = $errors->has('notary_name') || $errors->has('notes');
     @endphp
@@ -229,7 +229,7 @@
             <div class="{{ $modalHead }}">
                 <div>
                     <div class="text-sm font-bold text-slate-900">⬆️ Upload SP & SK</div>
-                    <div class="mt-0.5 text-xs text-slate-500">Upload dokumen dari notaris (pdf/jpg/png, maks 5MB).</div>
+                    <div class="mt-0.5 text-xs text-slate-500">Upload dokumen dari notaris (pdf).</div>
                 </div>
                 <button type="button" class="rounded-lg px-2 py-1 text-slate-500 hover:bg-slate-100" @click="open=false">✕</button>
             </div>
@@ -240,7 +240,7 @@
                     <div class="grid gap-4 sm:grid-cols-2">
                         <div>
                             <label class="text-xs font-semibold text-slate-600">File SP <span class="text-rose-600">*</span></label>
-                            <input type="file" name="sp_file" accept=".pdf,.jpg,.jpeg,.png"
+                            <input type="file" name="sp_file" accept="application/pdf"
                                 class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
                             @error('sp_file')
                                 <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
@@ -249,12 +249,23 @@
 
                         <div>
                             <label class="text-xs font-semibold text-slate-600">File SK <span class="text-rose-600">*</span></label>
-                            <input type="file" name="sk_file" accept=".pdf,.jpg,.jpeg,.png"
+                            <input type="file" name="sk_file" accept="application/pdf"
                                 class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
                             @error('sk_file')
                                 <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
                             @enderror
                         </div>
+
+                        @if($req->is_jogja)
+                        <div>
+                            <label class="text-xs font-semibold text-slate-600">Surat Perlindungan Data Diri (SPDD) - optional (PDF)</label>
+                            <input type="file" name="spdd_file" accept="application/pdf"
+                                class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
+                            @error('spdd_file')
+                                <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
+                            @enderror
+                        </div>
+                        @endif
 
                         <div class="sm:col-span-2">
                             <label class="text-xs font-semibold text-slate-600">Catatan</label>
@@ -326,6 +337,18 @@
                                 <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
                             @enderror
                         </div>
+
+                        {{-- ✅ Signed SPDD (Jogja only) --}}
+                        @if($req->is_jogja)
+                            <div class="sm:col-span-2">
+                                <label class="text-xs font-semibold text-slate-600">Signed SPDD (optional, PDF)</label>
+                                <input type="file" name="signed_spdd_file" accept="application/pdf"
+                                    class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
+                                @error('signed_spdd_file')
+                                    <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
+                                @enderror
+                            </div>
+                        @endif
 
                         <div class="sm:col-span-2">
                             <label class="text-xs font-semibold text-slate-600">Catatan</label>
@@ -450,14 +473,28 @@
                         'shm' => 'SHM',
                         'sp' => 'Srt Pengantar (Notaris)',
                         'sk' => 'Srt Kuasa (Notaris)',
+
+                        // ✅ SPDD hanya untuk Jogja (akan kita filter juga di loop)
+                        'spdd' => 'Surat Perlindungan Data Diri (SPDD)',
+
                         'signed_sp' => 'Srt Pengantar Bertandatangan',
                         'signed_sk' => 'Srt Kuasa Bertandatangan',
+
+                        // ✅ SPDD Bertandatangan (Jogja only)
+                        'signed_spdd' => 'Surat Perlindungan Data Diri (SPDD) Bertandatangan',
+
                         'result' => 'Hasil Cek SHM',
                     ];
                 @endphp
 
                 <div class="mt-4 space-y-4">
                     @forelse($labels as $type => $label)
+
+                        {{-- ✅ hide card SPDD jika bukan Jogja --}}
+                        @if(in_array($type, ['spdd','signed_spdd'], true) && !(bool)($req->is_jogja ?? false))
+                            @continue
+                        @endif
+
                         @php $files = $filesByType[$type] ?? collect(); @endphp
                         <div class="rounded-2xl border border-slate-100 bg-slate-50 p-4">
                             <div class="flex items-center justify-between">

@@ -54,7 +54,12 @@
                            class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
                            placeholder="Alamat agunan (opsional)">
                 </div>
-
+                <div class="sm:col-span-2">
+                    <label class="inline-flex items-center gap-2">
+                        <input type="checkbox" name="is_jogja" value="1" class="rounded border-slate-300">
+                        <span>Lokasi agunan berada di Kota Yogyakarta</span>
+                    </label>
+                </div>
                 <div>
                     <label class="text-xs font-semibold text-slate-600">No Sertifikat</label>
                     <input type="text" name="certificate_no" value="{{ old('certificate_no') }}"
@@ -84,16 +89,16 @@
                 <div class="grid gap-4 sm:grid-cols-2">
                     <div>
                         <label class="text-xs font-semibold text-slate-600">File KTP <span class="text-rose-600">*</span></label>
-                        <input type="file" name="ktp_file" accept=".pdf,.jpg,.jpeg,.png"
+                        <input type="file" name="ktp_file" accept="application/pdf"
                                class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
-                        <div class="mt-1 text-xs text-slate-500">pdf/jpg/png, maks 5MB</div>
+                        <div class="mt-1 text-xs text-slate-500">hanya boleh pdf</div>
                     </div>
 
                     <div>
                         <label class="text-xs font-semibold text-slate-600">File SHM <span class="text-rose-600">*</span></label>
-                        <input type="file" name="shm_file" accept=".pdf,.jpg,.jpeg,.png"
+                        <input type="file" name="shm_file" accept="application/pdf"
                                class="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm">
-                        <div class="mt-1 text-xs text-slate-500">pdf/jpg/png, maks 5MB</div>
+                        <div class="mt-1 text-xs text-slate-500">hanya boleh pdf</div>
                     </div>
                 </div>
             </div>

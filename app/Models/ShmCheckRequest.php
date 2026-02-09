@@ -26,7 +26,7 @@ class ShmCheckRequest extends Model
         'request_no','requested_by','branch_code','ao_code',
         'debtor_name','debtor_phone','collateral_address','certificate_no','notary_name',
         'status','submitted_at','sent_to_notary_at','sp_sk_uploaded_at','signed_uploaded_at',
-        'handed_to_sad_at','sent_to_bpn_at','result_uploaded_at','closed_at','notes',
+        'handed_to_sad_at','sent_to_bpn_at','result_uploaded_at','closed_at','notes', 'is_jogja',
     ];
 
     protected $casts = [

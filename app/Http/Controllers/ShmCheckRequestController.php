@@ -2,9 +2,12 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\SendWaTemplateJob;
 use App\Models\ShmCheckRequest;
 use App\Models\ShmCheckRequestFile;
 use App\Models\ShmCheckRequestLog;
+use App\Models\User;
+use App\Services\WhatsApp\ShmMessageFactory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -58,8 +61,6 @@ class ShmCheckRequestController extends Controller
 
         // ======================
         // ✅ COUNTS for Quick Chips
-        // - hitung berdasarkan visibility user
-        // - tidak ikut filter status (biar chips menunjukkan antrian total)
         // ======================
         $counts = [];
 
@@ -99,12 +100,14 @@ class ShmCheckRequestController extends Controller
             'debtor_name' => ['required', 'string', 'max:191'],
             'debtor_phone' => ['nullable', 'string', 'max:50'],
             'collateral_address' => ['nullable', 'string', 'max:255'],
+            'is_jogja' => ['nullable', 'boolean'], // ✅ baru
             'certificate_no' => ['nullable', 'string', 'max:100'],
             'notary_name' => ['nullable', 'string', 'max:191'],
             'notes' => ['nullable', 'string', 'max:5000'],
 
-            'ktp_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
-            'shm_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
+            // ✅ PDF only
+            'ktp_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+            'shm_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
         ]);
 
         $user = auth()->user();
@@ -123,7 +126,8 @@ class ShmCheckRequestController extends Controller
                 'debtor_phone' => $data['debtor_phone'] ?? null,
                 'collateral_address' => $data['collateral_address'] ?? null,
                 'certificate_no' => $data['certificate_no'] ?? null,
-                'notary_name' => $data['notary_name'] ?? null, // optional (AO boleh isi, tapi final ditetapkan KSA/KBO)
+                'notary_name' => $data['notary_name'] ?? null,
+                'is_jogja' => (bool)($data['is_jogja'] ?? false),
 
                 'status' => ShmCheckRequest::STATUS_SUBMITTED,
                 'submitted_at' => now(),
@@ -135,6 +139,11 @@ class ShmCheckRequestController extends Controller
             $this->storeFile($req, 'shm', request()->file('shm_file'));
 
             $this->log($req, 'submitted', null, ShmCheckRequest::STATUS_SUBMITTED, 'Pengajuan dibuat');
+
+            // ✅ WA: setelah commit sukses -> notify KSA/SAD
+            DB::afterCommit(function () use ($req) {
+                $this->dispatchWaSubmitToSad($req);
+            });
 
             return redirect()->route('shm.show', $req)->with('status', 'Pengajuan cek SHM berhasil dibuat.');
         });
@@ -150,7 +159,6 @@ class ShmCheckRequestController extends Controller
             'logs.actor:id,name',
         ]);
 
-        // map file groups
         $filesByType = $req->files->groupBy('type');
 
         return view('shm.show', compact('req', 'filesByType'));
@@ -175,7 +183,7 @@ class ShmCheckRequestController extends Controller
             $from = $req->status;
 
             $req->update([
-                'notary_name'       => $data['notary_name'], // ✅ ditetapkan final oleh KSA/KBO/SAD
+                'notary_name'       => $data['notary_name'],
                 'status'            => ShmCheckRequest::STATUS_SENT_TO_NOTARY,
                 'sent_to_notary_at' => now(),
             ]);
@@ -198,20 +206,28 @@ class ShmCheckRequestController extends Controller
         $this->authorize('sadAction', ShmCheckRequest::class);
         $this->authorize('view', $req);
 
-        // ✅ sesuai flow: upload SP/SK saat sudah SENT_TO_NOTARY
         abort_unless($req->status === ShmCheckRequest::STATUS_SENT_TO_NOTARY, 422);
 
         $data = $request->validate([
-            'sp_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
-            'sk_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
+            'sp_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+            'sk_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+
+            // ✅ SPDD optional (Jogja only, PDF)
+            'spdd_file' => ['nullable', 'file', 'mimes:pdf', 'max:20480'],
+
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
-        return DB::transaction(function () use ($req, $data) {
+        return DB::transaction(function () use ($req, $data, $request) {
             $from = $req->status;
 
-            $this->storeFile($req, 'sp', request()->file('sp_file'), $data['notes'] ?? null);
-            $this->storeFile($req, 'sk', request()->file('sk_file'), $data['notes'] ?? null);
+            $this->storeFile($req, 'sp', $request->file('sp_file'), $data['notes'] ?? null);
+            $this->storeFile($req, 'sk', $request->file('sk_file'), $data['notes'] ?? null);
+
+            // ✅ SPDD disimpan hanya jika ada file & lokasi Jogja
+            if ((bool)($req->is_jogja ?? false) && $request->hasFile('spdd_file')) {
+                $this->storeFile($req, 'spdd', $request->file('spdd_file'), $data['notes'] ?? null);
+            }
 
             $req->update([
                 'status' => ShmCheckRequest::STATUS_SP_SK_UPLOADED,
@@ -219,6 +235,11 @@ class ShmCheckRequestController extends Controller
             ]);
 
             $this->log($req, 'upload_sp_sk', $from, $req->status, 'KSA/KBO upload SP & SK dari notaris');
+
+            // (opsional) WA ke pemohon saat SP/SK uploaded — sudah ada dispatcher, kalau mau nyalakan tinggal uncomment
+            // DB::afterCommit(function () use ($req) {
+            //     $this->dispatchWaSpSkUploadedToRequester($req);
+            // });
 
             return back()->with('status', 'SP & SK berhasil diupload. Menunggu tanda tangan debitur oleh AO.');
         });
@@ -229,7 +250,6 @@ class ShmCheckRequestController extends Controller
         $this->authorize('sadAction', ShmCheckRequest::class);
         $this->authorize('view', $req);
 
-        // ✅ sesuai koreksi: baru boleh ke BPN setelah AO menyerahkan fisik (HANDED_TO_SAD)
         abort_unless($req->status === ShmCheckRequest::STATUS_HANDED_TO_SAD, 422);
 
         return DB::transaction(function () use ($req) {
@@ -251,11 +271,10 @@ class ShmCheckRequestController extends Controller
         $this->authorize('sadAction', ShmCheckRequest::class);
         $this->authorize('view', $req);
 
-        // ✅ upload hasil hanya saat sudah SENT_TO_BPN
         abort_unless($req->status === ShmCheckRequest::STATUS_SENT_TO_BPN, 422);
 
         $data = $request->validate([
-            'result_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
+            'result_file' => ['required', 'file', 'mimes:pdf', 'max:20480'], // ✅ PDF only
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
@@ -264,14 +283,17 @@ class ShmCheckRequestController extends Controller
 
             $this->storeFile($req, 'result', request()->file('result_file'), $data['notes'] ?? null);
 
-            // ✅ sesuai koreksi: setelah hasil diupload -> CLOSED
             $req->update([
                 'status' => ShmCheckRequest::STATUS_CLOSED,
                 'result_uploaded_at' => now(),
-                // 'closed_at' => now(), // aktifkan kalau kolom ada
             ]);
 
             $this->log($req, 'upload_result', $from, $req->status, 'KSA/KBO upload hasil cek SHM (pengajuan ditutup)');
+
+            // ✅ WA: notify pemohon setelah hasil diupload (CLOSED)
+            DB::afterCommit(function () use ($req) {
+                $this->dispatchWaResultUploadedToRequester($req);
+            });
 
             return back()->with('status', 'Hasil cek berhasil diupload. Pengajuan ditutup (closed).');
         });
@@ -285,27 +307,41 @@ class ShmCheckRequestController extends Controller
         $this->authorize('aoSignedUpload', $req);
         $this->authorize('view', $req);
 
-        // ✅ AO upload signed hanya setelah SP_SK_UPLOADED
         abort_unless($req->status === ShmCheckRequest::STATUS_SP_SK_UPLOADED, 422);
 
         $data = $request->validate([
-            'signed_sp_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
-            'signed_sk_file' => ['required', 'file', 'mimes:pdf,jpg,jpeg,png', 'max:20480'],
+            // ✅ request user: PDF only (signed juga PDF only biar konsisten)
+            'signed_sp_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+            'signed_sk_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+
+            // ✅ Signed SPDD optional (Jogja only, PDF only)
+            'signed_spdd_file' => ['nullable', 'file', 'mimes:pdf', 'max:20480'],
+
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
-        return DB::transaction(function () use ($req, $data) {
+        return DB::transaction(function () use ($req, $data, $request) {
             $from = $req->status;
 
-            $this->storeFile($req, 'signed_sp', request()->file('signed_sp_file'), $data['notes'] ?? null);
-            $this->storeFile($req, 'signed_sk', request()->file('signed_sk_file'), $data['notes'] ?? null);
+            $this->storeFile($req, 'signed_sp', $request->file('signed_sp_file'), $data['notes'] ?? null);
+            $this->storeFile($req, 'signed_sk', $request->file('signed_sk_file'), $data['notes'] ?? null);
+
+            // ✅ Signed SPDD disimpan hanya jika Jogja & ada file
+            if ((bool)($req->is_jogja ?? false) && $request->hasFile('signed_spdd_file')) {
+                $this->storeFile($req, 'signed_spdd', $request->file('signed_spdd_file'), $data['notes'] ?? null);
+            }
 
             $req->update([
                 'status' => ShmCheckRequest::STATUS_SIGNED_UPLOADED,
                 'signed_uploaded_at' => now(),
             ]);
 
-            $this->log($req, 'upload_signed', $from, $req->status, 'AO upload SP & SK yang sudah ditandatangani');
+            $this->log($req, 'upload_signed', $from, $req->status, 'AO upload dokumen bertandatangan (SP/SK/SPDD)');
+
+            // ✅ WA: notify SAD/KSA setelah AO upload signed
+            DB::afterCommit(function () use ($req) {
+                $this->dispatchWaSignedUploadedToSad($req);
+            });
 
             return back()->with('status', 'Dokumen bertandatangan berhasil diupload. Silakan serahkan fisik ke KSA/KBO.');
         });
@@ -313,7 +349,7 @@ class ShmCheckRequestController extends Controller
 
     public function markHandedToSad(ShmCheckRequest $req)
     {
-        $this->authorize('aoSignedUpload', $req); // AO pemohon
+        $this->authorize('aoSignedUpload', $req);
         $this->authorize('view', $req);
 
         abort_unless($req->status === ShmCheckRequest::STATUS_SIGNED_UPLOADED, 422);
@@ -323,7 +359,7 @@ class ShmCheckRequestController extends Controller
 
             $req->update([
                 'status' => ShmCheckRequest::STATUS_HANDED_TO_SAD,
-                'handed_to_sad_at' => now(), // kalau kolom belum ada, buat migration / hilangkan baris ini
+                'handed_to_sad_at' => now(),
             ]);
 
             $this->log(
@@ -358,6 +394,164 @@ class ShmCheckRequestController extends Controller
             $file->file_path,
             $file->original_name
         );
+    }
+
+    // =======================
+    // WA dispatchers (SHM flow)
+    // =======================
+    protected function dispatchWaSubmitToSad(ShmCheckRequest $req): void
+    {
+        $tpl = (string) config('whatsapp.qontak.templates.ticket_notify_any');
+        if ($tpl === '') return;
+
+        $req->loadMissing(['requester:id,name']);
+
+        $vars = ShmMessageFactory::buildSubmitToSadVars($req, [
+            'audience' => 'SAD',
+            'requester_name' => $req->requester?->name ?? 'Pemohon',
+        ]);
+
+        $meta = [
+            'buttons' => [
+                [
+                    'type'  => 'URL',
+                    'index' => '0',
+                    'value' => ShmMessageFactory::shmButtonPath($req),
+                ],
+            ],
+        ];
+
+        $group = (string) config('whatsapp.recipients.shm_sad_group', '');
+        if (trim($group) !== '') {
+            SendWaTemplateJob::dispatch($group, $tpl, $vars, $meta)->onQueue('wa');
+            return;
+        }
+
+        foreach ($this->sadUsersByBranch($req->branch_code) as $u) {
+            $to = $this->userWaTo($u);
+            if (!$to) continue;
+
+            SendWaTemplateJob::dispatch($to, $tpl, $vars, $meta)->onQueue('wa');
+        }
+    }
+
+    protected function dispatchWaSpSkUploadedToRequester(ShmCheckRequest $req): void
+    {
+        $tpl = (string) config('whatsapp.qontak.templates.ticket_notify_any');
+        if ($tpl === '') return;
+
+        $req->loadMissing(['requester:id,name,wa_number']);
+
+        $requester = $req->requester;
+        if (!$requester) return;
+
+        $to = $this->userWaTo($requester);
+        if (!$to) return;
+
+        $vars = ShmMessageFactory::buildSpSkUploadedToRequesterVars($req, [
+            'requester_name' => $requester->name ?? 'Pemohon',
+        ]);
+
+        $meta = [
+            'buttons' => [
+                [
+                    'type'  => 'URL',
+                    'index' => '0',
+                    'value' => ShmMessageFactory::shmButtonPath($req),
+                ],
+            ],
+        ];
+
+        SendWaTemplateJob::dispatch($to, $tpl, $vars, $meta)->onQueue('wa');
+    }
+
+    // ✅ NEW: AO upload signed -> notify SAD/KSA
+    protected function dispatchWaSignedUploadedToSad(ShmCheckRequest $req): void
+    {
+        $tpl = (string) config('whatsapp.qontak.templates.ticket_notify_any');
+        if ($tpl === '') return;
+
+        $req->loadMissing(['requester:id,name']);
+
+        $vars = ShmMessageFactory::buildSignedUploadedToSadVars($req, [
+            'audience' => 'SAD',
+            'requester_name' => $req->requester?->name ?? 'Pemohon',
+        ]);
+
+        $meta = [
+            'buttons' => [
+                [
+                    'type'  => 'URL',
+                    'index' => '0',
+                    'value' => ShmMessageFactory::shmButtonPath($req),
+                ],
+            ],
+        ];
+
+        $group = (string) config('whatsapp.recipients.shm_sad_group', '');
+        if (trim($group) !== '') {
+            SendWaTemplateJob::dispatch($group, $tpl, $vars, $meta)->onQueue('wa');
+            return;
+        }
+
+        foreach ($this->sadUsersByBranch($req->branch_code) as $u) {
+            $to = $this->userWaTo($u);
+            if (!$to) continue;
+
+            SendWaTemplateJob::dispatch($to, $tpl, $vars, $meta)->onQueue('wa');
+        }
+    }
+
+    // ✅ NEW: hasil diupload/closed -> notify pemohon
+    protected function dispatchWaResultUploadedToRequester(ShmCheckRequest $req): void
+    {
+        $tpl = (string) config('whatsapp.qontak.templates.ticket_notify_any');
+        if ($tpl === '') return;
+
+        $req->loadMissing(['requester:id,name,wa_number']);
+
+        $requester = $req->requester;
+        if (!$requester) return;
+
+        $to = $this->userWaTo($requester);
+        if (!$to) return;
+
+        $vars = ShmMessageFactory::buildResultUploadedToRequesterVars($req, [
+            'requester_name' => $requester->name ?? 'Pemohon',
+        ]);
+
+        $meta = [
+            'buttons' => [
+                [
+                    'type'  => 'URL',
+                    'index' => '0',
+                    'value' => ShmMessageFactory::shmButtonPath($req),
+                ],
+            ],
+        ];
+
+        SendWaTemplateJob::dispatch($to, $tpl, $vars, $meta)->onQueue('wa');
+    }
+
+    protected function sadUsersByBranch(?string $branchCode)
+    {
+        return User::query()
+            ->select(['id', 'name', 'level', 'wa_number'])
+            ->whereIn('level', ['KSA'])
+            // ->whereIn('level', ['KSA', 'KBO', 'SAD'])
+            ->get();
+    }
+
+    protected function userWaTo(User $u): ?string
+    {
+        $raw = $u->wa_number ?? null;
+        if (!$raw) return null;
+
+        $s = preg_replace('/\D+/', '', (string) $raw);
+        if ($s === '') return null;
+
+        if (str_starts_with($s, '0')) $s = '62' . substr($s, 1);
+        return $s;
     }
 
     // =======================
