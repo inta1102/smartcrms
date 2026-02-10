@@ -218,84 +218,61 @@ class ShmMessageFactory
         ];
     }
 
-
-    public static function buildRevisionRequestedToSadVars(ShmCheckRequest $req, array $ctx = []): array
+    public static function buildRevisionRequestedToSadVars(ShmCheckRequest $req, array $opt = []): array
     {
-        $audience = (string)($ctx['audience'] ?? 'SAD');
-        $requesterName = (string)($ctx['requester_name'] ?? ($req->requester?->name ?? 'Pemohon'));
+        $aud = strtoupper($opt['audience'] ?? 'SAD');
+        $reqName = $opt['requester_name'] ?? ($req->requester?->name ?? 'Pemohon');
 
-        $requestNo = (string)($req->request_no ?? '-');
-        $branch    = (string)($req->branch_code ?? '-');
-        $aoCode    = (string)($req->ao_code ?? '-');
-        $debtor    = (string)($req->debtor_name ?? '-');
+        $var1 = self::greeting($aud, $reqName);
 
-        $reason = (string)($req->revision_reason ?? '-');
-        $reason = trim($reason) === '' ? '-' : $reason;
+        $var2 = 'REVISION REQUESTED' . ' · ' . ($req->request_no ?? ('SHM-' . $req->id));
 
-        $submittedAt = $req->submitted_at
-            ? Carbon::parse($req->submitted_at)->format('d M Y H:i')
-            : ($req->created_at ? Carbon::parse($req->created_at)->format('d M Y H:i') : '-');
+        $var3 = "Debitur: " . ($req->debtor_name ?? '-') . " — SHM: " . ($req->certificate_no ?? '-');
 
-        $lockedAt = $req->initial_files_locked_at
-            ? Carbon::parse($req->initial_files_locked_at)->format('d M Y H:i')
-            : '-';
+        $reason = trim((string)($req->revision_reason ?? ''));
+        $reason = $reason !== '' ? $reason : '-';
+        $var4 = ($reqName ?: '-') . ' — Alasan: ' . str($reason)->limit(120);
 
-        $requestedAt = $req->revision_requested_at
-            ? Carbon::parse($req->revision_requested_at)->format('d M Y H:i')
-            : '-';
+        $var5 = "Cabang: " . ($req->branch_code ?? '-') . " ; Lihat: " . self::shmFullUrl($req);
 
-        // NOTE:
-        // Sesuaikan key ini dengan variable yang dipakai template Qontak kamu.
-        // Kalau template kamu pakai var1/var2/var3, tinggal mapping ulang key di sini.
-        return [
-            'audience'        => $audience,
-            'title'           => 'Permintaan Revisi Dokumen SHM',
-            'request_no'      => $requestNo,
-            'status'          => (string)($req->status ?? '-'),
-            'branch_code'     => $branch,
-            'ao_code'         => $aoCode,
-            'debtor_name'     => $debtor,
-            'requester_name'  => $requesterName,
-            'revision_reason' => $reason,
-            'submitted_at'    => $submittedAt,
-            'locked_at'       => $lockedAt,
-            'requested_at'    => $requestedAt,
-        ];
+        return [$var1, $var2, $var3, $var4, $var5];
     }
 
-    /**
-     * (Optional) kalau belum ada: build vars revisi approved -> requester
-     * Kamu sudah panggil buildRevisionApprovedToRequesterVars() di controller.
-     * Pastikan method ini benar-benar ada.
-     */
-    public static function buildRevisionApprovedToRequesterVars(ShmCheckRequest $req, array $ctx = []): array
+    public static function buildRevisionApprovedToRequesterVars(ShmCheckRequest $req, array $opt = []): array
     {
-        $requesterName = (string)($ctx['requester_name'] ?? ($req->requester?->name ?? 'Pemohon'));
+        $reqName = $opt['requester_name'] ?? ($req->requester?->name ?? 'Pemohon');
 
-        $requestNo = (string)($req->request_no ?? '-');
-        $branch    = (string)($req->branch_code ?? '-');
-        $aoCode    = (string)($req->ao_code ?? '-');
-        $debtor    = (string)($req->debtor_name ?? '-');
+        $var1 = self::greeting('USER', $reqName);
 
-        $approvedAt = $req->revision_approved_at
-            ? Carbon::parse($req->revision_approved_at)->format('d M Y H:i')
-            : '-';
+        $var2 = 'REVISION APPROVED' . ' · ' . ($req->request_no ?? ('SHM-' . $req->id));
 
-        $notes = (string)($req->revision_approval_notes ?? '-');
-        $notes = trim($notes) === '' ? '-' : $notes;
+        $var3 = "Debitur: " . ($req->debtor_name ?? '-') . " — SHM: " . ($req->certificate_no ?? '-');
 
-        return [
-            'title'              => 'Revisi Dokumen Disetujui',
-            'request_no'         => $requestNo,
-            'status'             => (string)($req->status ?? '-'),
-            'branch_code'        => $branch,
-            'ao_code'            => $aoCode,
-            'debtor_name'        => $debtor,
-            'requester_name'     => $requesterName,
-            'approval_notes'     => $notes,
-            'approved_at'        => $approvedAt,
-            'next_instruction'   => 'Silakan upload dokumen perbaikan (KTP/SHM) melalui sistem.',
-        ];
+        $notes = trim((string)($req->revision_approval_notes ?? ''));
+        $notes = $notes !== '' ? $notes : '-';
+        $var4 = 'Catatan: ' . str($notes)->limit(120);
+
+        $var5 = 'Silakan upload dokumen pengganti di sistem: ' . self::shmFullUrl($req);
+
+        return [$var1, $var2, $var3, $var4, $var5];
+    }
+
+    public static function buildRevisionUploadedToSadVars(ShmCheckRequest $req, array $opt = []): array
+    {
+        $aud = strtoupper($opt['audience'] ?? 'SAD');
+        $reqName = $opt['requester_name'] ?? ($req->requester?->name ?? 'Pemohon');
+
+        $var1 = self::greeting($aud, $reqName);
+
+        $var2 = 'REVISION UPLOADED' . ' · ' . ($req->request_no ?? ('SHM-' . $req->id));
+
+        $var3 = "Debitur: " . ($req->debtor_name ?? '-') . " — SHM: " . ($req->certificate_no ?? '-');
+
+        $var4 = ($reqName ?: '-') . ' — ' . self::formatWIB(now());
+
+        $var5 = "Silakan cek & download dokumen terbaru: " . self::shmFullUrl($req);
+
+        return [$var1, $var2, $var3, $var4, $var5];
     }
 
     // Pastikan method ini memang sudah ada di file kamu:
@@ -304,4 +281,5 @@ class ShmMessageFactory
         // contoh; sesuaikan dengan route kamu
         return '/shm/' . $req->id;
     }
+
 }

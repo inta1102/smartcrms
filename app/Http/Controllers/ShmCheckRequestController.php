@@ -414,7 +414,7 @@ class ShmCheckRequestController extends Controller
 
         // ✅ sinkron dengan Blade: textarea name="approve_notes"
         $data = $request->validate([
-            'approve_notes' => ['nullable', 'string', 'max:2000'],
+            'revision_approval_notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
         return DB::transaction(function () use ($req, $data) {
@@ -424,11 +424,11 @@ class ShmCheckRequestController extends Controller
                 'status' => ShmCheckRequest::STATUS_REVISION_APPROVED,
                 'revision_approved_at' => now(),
                 'revision_approved_by' => auth()->id(),
-                'revision_approval_notes' => $data['approve_notes'] ?? null,
+                'revision_approval_notes' => $data['revision_approval_notes'] ?? null,
             ]);
 
             $this->log($req, 'revision_approved', $from, $req->status, 'SAD/KSA menyetujui revisi dokumen KTP/SHM', [
-                'notes' => $data['approve_notes'] ?? null,
+                'notes' => $data['revision_approval_notes'] ?? null,
             ]);
 
             DB::afterCommit(function () use ($req) {
@@ -461,8 +461,8 @@ class ShmCheckRequestController extends Controller
 
         $data = $request->validate([
             // ✅ wajib PDF
-            'ktp_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
-            'shm_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+            'rev_ktp_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
+            'rev_shm_file' => ['required', 'file', 'mimes:pdf', 'max:20480'],
             'notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
@@ -470,8 +470,8 @@ class ShmCheckRequestController extends Controller
             $from = $req->status;
 
             // simpan sebagai versi baru (type sama: ktp/shm) -> audit trail tetap ada
-            $this->storeFile($req, 'ktp', $request->file('ktp_file'), $data['notes'] ?? 'Revisi KTP');
-            $this->storeFile($req, 'shm', $request->file('shm_file'), $data['notes'] ?? 'Revisi SHM');
+            $this->storeFile($req, 'ktp', $request->file('rev_ktp_file'), $data['notes'] ?? 'Revisi KTP');
+            $this->storeFile($req, 'shm', $request->file('rev_shm_file'), $data['notes'] ?? 'Revisi SHM');
 
             $req->update([
                 'status' => ShmCheckRequest::STATUS_SUBMITTED,

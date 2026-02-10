@@ -357,6 +357,7 @@
 
             <form method="POST" action="{{ route('shm.revision.uploadInitial', $req) }}" enctype="multipart/form-data">
                 @csrf
+
                 <div class="{{ $modalBody }}">
                     <div class="grid gap-4 sm:grid-cols-2">
                         <div>
@@ -389,12 +390,9 @@
                             @enderror
                         </div>
                     </div>
-
-                    <div class="mt-3 rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-600">
-                        Setelah upload, status akan kembali ke <span class="font-semibold">SUBMITTED</span> agar SAD/KSA dapat melanjutkan proses.
-                    </div>
                 </div>
 
+                {{-- ✅ INI YANG KURANG --}}
                 <div class="{{ $modalFoot }}">
                     <button type="button" class="btn-secondary" @click="open=false">Batal</button>
                     <button type="submit" class="btn-primary">Upload</button>
