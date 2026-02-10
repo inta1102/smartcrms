@@ -279,7 +279,7 @@ class ShmMessageFactory
     public static function shmButtonPath(ShmCheckRequest $req): string
     {
         // contoh; sesuaikan dengan route kamu
-        return '/shm/' . $req->id;
+        return '/shm-check/' . $req->id;
     }
 
 }

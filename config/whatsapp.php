@@ -89,7 +89,7 @@ return [
     'greetings' => [
         'kti' => 'Pak Kabag TI',
         'ksa' => 'Bu Kasi Admin Kredit',
-        'sad' => 'Bagian SAD',
+        'sad' => 'Admin Kredit',
     ],
 
 
