@@ -62,8 +62,8 @@ class WhatsAppNotifier
         $i = 1;
         foreach (array_values($vars) as $val) {
             $bodyParams[] = [
-                'key'        => (string) $i,
-                'value_text' => (string) $val,
+                'key'   => (string) $i,
+                'value' => (string) $val,   // ✅ FIX: value_text -> value
             ];
             $i++;
         }
@@ -72,10 +72,9 @@ class WhatsAppNotifier
             'body' => $bodyParams,
         ];
 
-        // Buttons (CTA URL) — sesuai docs Postman, taruh di parameters.buttons
         if (!empty($meta['buttons']) && is_array($meta['buttons'])) {
             $parameters['buttons'] = array_map(function ($b) {
-                $val = ltrim((string)($b['value'] ?? ''), '/'); // harus relative path
+                $val = ltrim((string)($b['value'] ?? ''), '/');
                 return [
                     'index' => (string)($b['index'] ?? '0'),
                     'type'  => strtolower((string)($b['type'] ?? 'url')),
