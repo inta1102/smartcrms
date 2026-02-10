@@ -43,51 +43,70 @@ class WhatsAppNotifier
         $base  = rtrim((string) config('whatsapp.qontak.base_url'), '/');
         $path  = ltrim((string) config('whatsapp.qontak.endpoint_send_template', ''), '/');
         $token = (string) config('whatsapp.qontak.api_token');
-        $chan  = config('whatsapp.qontak.channel_id'); // opsional
 
-        if ($base === '' || $path === '' || $token === '') {
-            Log::error('Qontak WA config missing', compact('base','path'));
-            throw new \RuntimeException('Qontak WA config missing (base_url/endpoint/api_token).');
+        // Ini WAJIB untuk endpoint direct:
+        $channelIntegrationId = (string) config('whatsapp.qontak.channel_id'); // simpan UUID integration di sini
+
+        if ($base === '' || $path === '' || $token === '' || $channelIntegrationId === '') {
+            Log::error('Qontak WA config missing', compact('base','path','channelIntegrationId'));
+            throw new \RuntimeException('Qontak WA config missing (base_url/endpoint/api_token/channel_id).');
         }
 
-        $payload = [
-            'to'       => $this->normalizeRecipient($to),
-            'template' => [
-                'name'     => $template,
-                'language' => config('whatsapp.defaults.language', 'id'),
-                'params'   => array_values($vars), // {{1}}..{{n}}
-            ],
+        $toNumber = $this->normalizeRecipient($to);
+
+        // untuk "to_name" boleh default (karena kamu tidak kirim nama penerima)
+        $toName = (string)($meta['to_name'] ?? 'Recipient');
+
+        // mapping vars -> parameters.body (key: "1","2",dst)
+        $bodyParams = [];
+        $i = 1;
+        foreach (array_values($vars) as $val) {
+            $bodyParams[] = [
+                'key'        => (string) $i,
+                'value_text' => (string) $val,
+            ];
+            $i++;
+        }
+
+        $parameters = [
+            'body' => $bodyParams,
         ];
 
-        if (!empty($chan)) $payload['channel_id'] = $chan;
-
-        // === tombol URL (opsional) ===
+        // Buttons (CTA URL) — sesuai docs Postman, taruh di parameters.buttons
         if (!empty($meta['buttons']) && is_array($meta['buttons'])) {
-            $buttons = array_map(function ($b) {
-                $val = $b['value'] ?? '';
-                $val = ltrim((string) $val, '/'); // WAJIB: "tickets/0012" (relative)
-
+            $parameters['buttons'] = array_map(function ($b) {
+                $val = ltrim((string)($b['value'] ?? ''), '/'); // harus relative path
                 return [
-                    'type'  => strtoupper($b['type'] ?? 'URL'),
-                    'index' => (string) ($b['index'] ?? '0'),
+                    'index' => (string)($b['index'] ?? '0'),
+                    'type'  => strtolower((string)($b['type'] ?? 'url')),
                     'value' => $val,
                 ];
             }, $meta['buttons']);
-
-            $payload['buttons'] = $buttons;
         }
 
-        // meta tambahan vendor
+        $payload = [
+            'to_name'               => $toName,
+            'to_number'             => $toNumber,                 // 62xxx
+            'message_template_id'   => $template,                 // UUID template
+            'channel_integration_id'=> $channelIntegrationId,     // UUID integration/channel
+            'language'              => ['code' => config('whatsapp.defaults.language', 'id')],
+            'parameters'            => $parameters,
+        ];
+
+        // meta tambahan vendor (kalau perlu)
         if (!empty($meta['extra']) && is_array($meta['extra'])) {
-            $payload = array_merge($payload, $meta['extra']);
+            $payload = array_replace_recursive($payload, $meta['extra']);
         }
+
+        $url = "{$base}/{$path}";
 
         $resp = Http::withToken($token)
             ->acceptJson()
-            ->post("{$base}/{$path}", $payload);
+            ->post($url, $payload);
 
         if (!$resp->successful()) {
             Log::error('Qontak WA send failed', [
+                'url'     => $url,
                 'status'  => $resp->status(),
                 'body'    => $resp->body(),
                 'payload' => $payload,
