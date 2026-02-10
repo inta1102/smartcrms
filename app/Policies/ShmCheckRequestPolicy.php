@@ -7,27 +7,36 @@ use App\Models\User;
 
 class ShmCheckRequestPolicy
 {
+    /**
+     * Normalisasi roleValue supaya aman dari karakter aneh (contoh: "SO |", "KSA -", dll).
+     */
+    private function rv(User $user): string
+    {
+        $raw = strtoupper((string) ($user->roleValue() ?? ''));
+        // ambil huruf A-Z saja -> "SO |" jadi "SO"
+        return preg_replace('/[^A-Z]/', '', $raw) ?: '';
+    }
+
     public function viewAny(User $user): bool
     {
-        $rv = strtoupper(trim($user->roleValue() ?? ''));
+        $rv = $this->rv($user);
 
         return in_array($rv, [
             'AO','RO','SO','BE','FE',
-            'KSA','KBO',
-            'SAD',
+            'KSA','KBO','SAD',
         ], true);
     }
 
     public function view(User $user, ShmCheckRequest $req): bool
     {
-        $rv = strtoupper(trim($user->roleValue() ?? ''));
+        $rv = $this->rv($user);
 
-        if (in_array($rv, ['KSA','KBO','SAD'], true)) {
-            return true;
-        }
+        // admin scope
+        if (in_array($rv, ['KSA','KBO','SAD'], true)) return true;
 
+        // pemohon hanya miliknya sendiri
         if (in_array($rv, ['AO','RO','SO','BE','FE'], true)) {
-            return (int)$req->requested_by === (int)$user->id;
+            return (int) $req->requested_by === (int) $user->id;
         }
 
         return false;
@@ -35,86 +44,92 @@ class ShmCheckRequestPolicy
 
     public function create(User $user): bool
     {
-        return $user->hasAnyRole(['AO','SO','RO','BE','FE','SA']);
+        $rv = $this->rv($user);
+        return in_array($rv, ['AO','SO','RO','BE','FE','SA'], true);
     }
 
     public function update(User $user, ShmCheckRequest $req): bool
     {
-        // update data pengajuan hanya oleh pembuat selama belum diproses SAD
-        if ($user->hasRole('SAD')) return true;
+        $rv = $this->rv($user);
 
-        return $req->requested_by === $user->id
-            && in_array($req->status, [ShmCheckRequest::STATUS_SUBMITTED], true);
+        // SAD boleh update (kalau kamu memang butuh)
+        if ($rv === 'SAD') return true;
+
+        // selain itu hanya pemohon & hanya saat SUBMITTED
+        return (int) $req->requested_by === (int) $user->id
+            && $req->status === ShmCheckRequest::STATUS_SUBMITTED;
     }
 
     public function sadAction(User $user): bool
     {
-        $rv = strtoupper(trim($user->roleValue() ?? ''));
+        $rv = $this->rv($user);
         return in_array($rv, ['KSA','KBO','SAD'], true);
     }
 
     public function aoSignedUpload(User $user, ShmCheckRequest $req): bool
     {
-        $rv = strtoupper(trim($user->roleValue() ?? ''));
+        $rv = $this->rv($user);
 
         if (!in_array($rv, ['AO','RO','SO','BE','FE'], true)) return false;
-
-        return (int)$req->requested_by === (int)$user->id;
+        return (int) $req->requested_by === (int) $user->id;
     }
 
     /**
-     * ✅ MODE CEPAT (sebelum lock):
+     * MODE CEPAT (sebelum lock):
      * SUBMITTED + pemohon => boleh ganti KTP/SHM langsung
      */
     public function replaceInitialFiles(User $user, ShmCheckRequest $req): bool
     {
-        $rv = strtoupper(trim($user->roleValue() ?? ''));
+        $rv = $this->rv($user);
 
         if (!in_array($rv, ['AO','RO','SO','BE','FE'], true)) return false;
-        if ((int)$req->requested_by !== (int)$user->id) return false;
+        if ((int) $req->requested_by !== (int) $user->id) return false;
 
-        // hanya ketika masih submitted
         if ($req->status !== ShmCheckRequest::STATUS_SUBMITTED) return false;
 
-        // ✅ hanya jika belum dikunci (belum ada download/lock oleh SAD/KSA)
+        // hanya jika belum dikunci
         return empty($req->initial_files_locked_at);
     }
 
     /**
-     * ✅ OPSI A (sesudah lock):
+     * OPSI A (sesudah lock):
      * SUBMITTED + sudah lock => pemohon boleh ajukan revisi
      */
     public function aoRevisionRequest(User $user, ShmCheckRequest $req): bool
     {
-        $rv = strtoupper(trim($user->roleValue() ?? ''));
+        $rv = $this->rv($user);
 
         if (!in_array($rv, ['AO','RO','SO','BE','FE'], true)) return false;
-        if ((int)$req->requested_by !== (int)$user->id) return false;
+        if ((int) $req->requested_by !== (int) $user->id) return false;
 
         if ($req->status !== ShmCheckRequest::STATUS_SUBMITTED) return false;
 
-        // ✅ hanya jika sudah dikunci
+        // hanya jika sudah dikunci
         return !empty($req->initial_files_locked_at);
     }
 
     /**
-     * ✅ SAD/KSA/KBO approve request revisi
+     * SAD/KSA/KBO approve request revisi
+     * hanya saat status REVISION_REQUESTED
      */
     public function approveRevisionInitialDocs(User $user, ShmCheckRequest $req): bool
     {
-        $rv = strtoupper(trim($user->roleValue() ?? ''));
-        return in_array($rv, ['KSA','KBO','SAD'], true);
+        $rv = $this->rv($user);
+
+        if (!in_array($rv, ['KSA','KBO','SAD'], true)) return false;
+
+        return $req->status === ShmCheckRequest::STATUS_REVISION_REQUESTED;
     }
 
     /**
-     * ✅ Pemohon upload file revisi setelah di-approve
+     * Pemohon upload file revisi setelah di-approve
      */
     public function aoRevisionUpload(User $user, ShmCheckRequest $req): bool
     {
-        $rv = strtoupper(trim($user->roleValue() ?? ''));
+        $rv = $this->rv($user);
 
         if (!in_array($rv, ['AO','RO','SO','BE','FE'], true)) return false;
-        if ((int)$req->requested_by !== (int)$user->id) return false;
+        if ((int) $req->requested_by !== (int) $user->id) return false;
 
         return $req->status === ShmCheckRequest::STATUS_REVISION_APPROVED;
     }

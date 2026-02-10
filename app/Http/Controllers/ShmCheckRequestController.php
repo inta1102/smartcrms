@@ -373,6 +373,7 @@ class ShmCheckRequestController extends Controller
                 'revision_requested_at' => now(),
                 'revision_requested_by' => auth()->id(),
                 'revision_reason' => $data['revision_reason'],
+
                 // reset approval (kalau pernah approve lalu minta lagi)
                 'revision_approved_at' => null,
                 'revision_approved_by' => null,
@@ -384,7 +385,16 @@ class ShmCheckRequestController extends Controller
             ]);
 
             DB::afterCommit(function () use ($req) {
-                $this->dispatchWaRevisionRequestedToSad($req);
+                // ✅ fail-safe: jangan sampai request revisi gagal gara-gara WA
+                try {
+                    $this->dispatchWaRevisionRequestedToSad($req);
+                } catch (\Throwable $e) {
+                    \Log::warning('WA revision_requested failed', [
+                        'request_id' => $req->id,
+                        'request_no' => $req->request_no,
+                        'err' => $e->getMessage(),
+                    ]);
+                }
             });
 
             return back()->with('status', 'Permintaan revisi dikirim ke SAD/KSA.');
@@ -392,17 +402,19 @@ class ShmCheckRequestController extends Controller
     }
 
     /**
-     * SAD/KSA approve revisi => REVISION_APPROVED
+     * SAD/KSA/KBO approve revisi => REVISION_APPROVED
      */
     public function approveRevisionInitialDocs(Request $request, ShmCheckRequest $req)
     {
-        $this->authorize('sadAction', ShmCheckRequest::class);
+        // ✅ authorize yang benar: ability approveRevisionInitialDocs butuh model $req
         $this->authorize('view', $req);
+        $this->authorize('approveRevisionInitialDocs', $req);
 
         abort_unless($req->status === ShmCheckRequest::STATUS_REVISION_REQUESTED, 422);
 
+        // ✅ sinkron dengan Blade: textarea name="approve_notes"
         $data = $request->validate([
-            'revision_approval_notes' => ['nullable', 'string', 'max:2000'],
+            'approve_notes' => ['nullable', 'string', 'max:2000'],
         ]);
 
         return DB::transaction(function () use ($req, $data) {
@@ -412,22 +424,31 @@ class ShmCheckRequestController extends Controller
                 'status' => ShmCheckRequest::STATUS_REVISION_APPROVED,
                 'revision_approved_at' => now(),
                 'revision_approved_by' => auth()->id(),
-                'revision_approval_notes' => $data['revision_approval_notes'] ?? null,
+                'revision_approval_notes' => $data['approve_notes'] ?? null,
             ]);
 
             $this->log($req, 'revision_approved', $from, $req->status, 'SAD/KSA menyetujui revisi dokumen KTP/SHM', [
-                'notes' => $data['revision_approval_notes'] ?? null,
+                'notes' => $data['approve_notes'] ?? null,
             ]);
 
             DB::afterCommit(function () use ($req) {
-                $this->dispatchWaRevisionApprovedToRequester($req);
+                // ✅ fail-safe juga
+                try {
+                    $this->dispatchWaRevisionApprovedToRequester($req);
+                } catch (\Throwable $e) {
+                    \Log::warning('WA revision_approved failed', [
+                        'request_id' => $req->id,
+                        'request_no' => $req->request_no,
+                        'err' => $e->getMessage(),
+                    ]);
+                }
             });
 
             return back()->with('status', 'Revisi disetujui. AO bisa upload perbaikan KTP/SHM.');
         });
     }
 
-    /**
+/**
      * AO upload dokumen KTP/SHM pengganti setelah revisi di-approve
      * REVISION_APPROVED => kembali SUBMITTED (tetap locked)
      */

@@ -48,12 +48,14 @@ class ShmCheckRequest extends Model
         'sent_to_bpn_at' => 'datetime',
         'result_uploaded_at' => 'datetime',
         'closed_at' => 'datetime',
+
         'is_jogja' => 'boolean',
-        'submitted_at' => 'datetime',
+
         'initial_files_locked_at' => 'datetime',
         'revision_requested_at' => 'datetime',
         'revision_approved_at' => 'datetime',
     ];
+
 
     public function requester(): BelongsTo
     {
@@ -62,13 +64,18 @@ class ShmCheckRequest extends Model
 
     public function files(): HasMany
     {
-        return $this->hasMany(ShmCheckRequestFile::class, 'request_id');
+        return $this->hasMany(ShmCheckRequestFile::class, 'request_id')
+            ->orderByDesc('uploaded_at')
+            ->orderByDesc('id');
     }
 
     public function logs(): HasMany
     {
-        return $this->hasMany(ShmCheckRequestLog::class, 'request_id');
+        return $this->hasMany(ShmCheckRequestLog::class, 'request_id')
+            ->orderByDesc('created_at')
+            ->orderByDesc('id');
     }
+
 
     public function scopeVisibleFor($q, $user)
     {

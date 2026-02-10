@@ -137,7 +137,7 @@
                 @endif
             @endcan
 
-            {{-- ✅ OPSI A: Ajukan revisi (kalau sudah locked oleh SAD/KSA) --}}
+            <!-- {{-- ✅ OPSI A: Ajukan revisi (kalau sudah locked oleh SAD/KSA) --}}
             @can('aoRevisionRequest', $req)
                 @if($req->status === \App\Models\ShmCheckRequest::STATUS_SUBMITTED)
                     <button type="button"
@@ -146,7 +146,7 @@
                         ♻️ Ajukan Revisi Dokumen (KTP/SHM)
                     </button>
                 @endif
-            @endcan
+            @endcan -->
 
             {{-- ✅ OPSI A: Upload revisi (setelah approved oleh SAD/KSA) --}}
             @can('aoRevisionUpload', $req)
@@ -185,7 +185,7 @@
          * - uploadSigned: signed_sp_file / signed_sk_file / signed_spdd_file
          * - uploadResult: result_file
          * - requestRevision: revision_reason
-         * - approveRevision: approve_notes
+         * - approveRevision: revision_approval_notes
          * - uploadRevision: rev_ktp_file / rev_shm_file
          */
         $openSentToNotary = $errors->has('notary_name') || $errors->has('notes');
@@ -194,10 +194,10 @@
         $openSigned = $errors->has('signed_sp_file') || $errors->has('signed_sk_file') || $errors->has('signed_spdd_file');
         $openResult = $errors->has('result_file');
 
-        $openReqRevision    = $errors->has('revision_reason');
-        $openApproveRevision= $errors->has('approve_notes');
-        $openUploadRevision = $errors->has('rev_ktp_file') || $errors->has('rev_shm_file');
-        $openReplaceInitial = $errors->has('ktp_file') || $errors->has('shm_file') || $errors->has('replace_notes');
+        $openReqRevision     = $errors->has('revision_reason');
+        $openApproveRevision = $errors->has('revision_approval_notes');
+        $openUploadRevision  = $errors->has('rev_ktp_file') || $errors->has('rev_shm_file');
+        $openReplaceInitial  = $errors->has('ktp_file') || $errors->has('shm_file') || $errors->has('replace_notes');
 
     @endphp
 
@@ -309,11 +309,11 @@
                         <div>
                             <label class="text-xs font-semibold text-slate-600">Catatan approval (opsional)</label>
                             <textarea
-                                name="approve_notes"
+                                name="revision_approval_notes"
                                 rows="3"
                                 class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
-                                placeholder="Catatan (opsional)">{{ old('approve_notes') }}</textarea>
-                            @error('approve_notes')
+                                placeholder="Catatan (opsional)">{{ old('revision_approval_notes') }}</textarea>
+                            @error('revision_approval_notes')
                                 <div class="mt-1 text-xs text-rose-600">{{ $message }}</div>
                             @enderror
                         </div>
