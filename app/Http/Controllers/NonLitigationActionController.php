@@ -281,6 +281,6 @@ class NonLitigationActionController extends Controller
 
         if (!$oa) return true;
 
-        return in_array(strtoupper((string)$oa->leader_role), ['TL', 'TLL', 'TLR'], true);
+        return in_array(strtoupper((string)$oa->leader_role), ['TL', 'TLL', 'TLR','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
     }
 }

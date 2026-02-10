@@ -41,6 +41,7 @@ class LoanAccount extends Model
         'nilai_agunan_yg_diperhitungkan',
         'ft_pokok',
         'ft_bunga',
+        'maturity_date',
 
     ];
 
@@ -55,6 +56,7 @@ class LoanAccount extends Model
         'nilai_agunan_yg_diperhitungkan' => 'decimal:2',
         'ft_pokok' => 'integer',
         'ft_bunga' => 'integer',
+        'maturity_date' => 'date',
 
     ];
 

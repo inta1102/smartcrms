@@ -49,7 +49,7 @@ trait AuthorizesByRole
 
     protected function rolesTl(): array
     {
-        return [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR];
+        return [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR, UserRole::TLRO, UserRole::TLSO, UserRole::TLFE, UserRole::TLBE, UserRole::TLUM];
     }
 
     protected function rolesStaffOps(): array

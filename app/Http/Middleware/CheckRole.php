@@ -2,23 +2,39 @@
 
 namespace App\Http\Middleware;
 
+use App\Enums\UserRole;
 use Closure;
 use Illuminate\Http\Request;
 
 class CheckRole
 {
-    public function handle(Request $request, Closure $next, ...$roles)
+    public function handle($request, \Closure $next, ...$roles)
     {
-        $user = $request->user();
+        $u = $request->user();
+        if (!$u) abort(401);
 
-        if (!$user) {
-            abort(401);
+        $current = strtoupper(trim((string)($u->roleValue() ?? $u->level ?? '')));
+
+        $expanded = [];
+
+        foreach ($roles as $r) {
+            $r = strtoupper(trim((string)$r));
+
+            // ✅ token group
+            if ($r === 'TL') {
+                $expanded = array_merge(
+                    $expanded,
+                    array_map(fn($e) => $e->value, UserRole::tlAll())
+                );
+                continue;
+            }
+
+            $expanded[] = $r;
         }
 
-        $userLevel = strtolower((string) ($user->level ?? ''));
-        $allowed   = array_map(fn ($r) => strtolower(trim($r)), $roles);
+        $expanded = array_values(array_unique($expanded));
 
-        if (! in_array($userLevel, $allowed, true)) {
+        if (!in_array($current, $expanded, true)) {
             abort(403);
         }
 

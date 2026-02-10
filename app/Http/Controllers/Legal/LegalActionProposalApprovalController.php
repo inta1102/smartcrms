@@ -22,7 +22,7 @@ class LegalActionProposalApprovalController extends Controller
     {
         $user = auth()->user();
         abort_unless($user, 403);
-        abort_unless($user->hasAnyRole(['TL','TLL','TLR']), 403);
+        abort_unless($user->hasAnyRole(['TL','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM']), 403);
 
         $data = $request->validate([
             'approval_notes' => ['required', 'string', 'max:2000'],
@@ -255,6 +255,6 @@ class LegalActionProposalApprovalController extends Controller
 
         if (!$oa) return true; // default aman: butuh TL
 
-        return in_array(strtoupper((string)$oa->leader_role), ['TL', 'TLL', 'TLR'], true);
+        return in_array(strtoupper((string)$oa->leader_role), ['TL', 'TLL', 'TLR','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
     }
 }

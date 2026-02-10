@@ -59,7 +59,9 @@ class OrgVisibilityService
         // =========================
         // 3) TL: staff langsung (aktif)
         // =========================
-        if (method_exists($me, 'hasAnyRole') && $me->hasAnyRole(['TLL', 'TLR', 'TLF', 'TL'])) {
+        $tlRoleStrings = array_map(fn($e) => $e->value, UserRole::tlAll());
+
+        if (method_exists($me, 'hasAnyRole') && $me->hasAnyRole($tlRoleStrings)) {
             $staffIds = $this->activeAssignments()
                 ->where('leader_id', $selfId)
                 ->pluck('user_id')
@@ -68,27 +70,6 @@ class OrgVisibilityService
             return collect([$selfId])->merge($staffIds)->unique()->values()->all();
         }
 
-        // =========================
-        // 4) KASI: TL langsung + staff dari TL (2 level)
-        // =========================
-        // if (method_exists($me, 'hasAnyRole') && $me->hasAnyRole(['KSL', 'KSO', 'KSA', 'KSF', 'KSD', 'KSR'])) {
-        //     $tlIds = $this->activeAssignments()
-        //         ->where('leader_id', $selfId)
-        //         ->pluck('user_id')
-        //         ->map(fn($v) => (int) $v);
-
-        //     $staffIds = $this->activeAssignments()
-        //         ->whereIn('leader_id', $tlIds->all())
-        //         ->pluck('user_id')
-        //         ->map(fn($v) => (int) $v);
-
-        //     return collect([$selfId])
-        //         ->merge($tlIds)
-        //         ->merge($staffIds)
-        //         ->unique()
-        //         ->values()
-        //         ->all();
-        // }
 
         if (method_exists($me, 'hasAnyRole') && $me->hasAnyRole(['KSL', 'KSO', 'KSA', 'KSF', 'KSD', 'KSR'])) {
             $ids = $this->subordinateUserIdsForKasi($selfId);

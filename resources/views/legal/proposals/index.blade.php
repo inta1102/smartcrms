@@ -40,7 +40,7 @@
 
                     $statusText = strtoupper(str_replace('_',' ', $status));
 
-                    $canApproveTl = auth()->user()->hasAnyRole(['TL','TLL','TLR'])
+                    $canApproveTl = auth()->user()->hasAnyRole(['TL','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM'])
                         && $status === \App\Models\LegalActionProposal::STATUS_PENDING_TL;
 
                     // ✅ Kasi hanya approve dari approved_tl (antrian Kasi)

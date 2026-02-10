@@ -49,7 +49,7 @@ class LegalActionProposalController extends Controller
         }
 
         // TL: hanya yg butuh approval TL DAN hanya dari bawahan
-        elseif ($user->hasAnyRole(['TL','TLL','TLR'])) {
+        elseif ($user->hasAnyRole(['TL','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM'])) {
 
             // ambil bawahan TL (aktif & effective date valid)
             $subordinateIds = OrgAssignment::query()
@@ -202,7 +202,7 @@ class LegalActionProposalController extends Controller
         $leaderRole = strtoupper((string) $oa->leader_role);
 
         // kalau leader_role memang TL level, maka butuh TL
-        return in_array($leaderRole, ['TL', 'TLL', 'TLR'], true);
+        return in_array($leaderRole, ['TL', 'TLL', 'TLR','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
     }
 
     public function execute(Request $request, LegalActionProposal $proposal)

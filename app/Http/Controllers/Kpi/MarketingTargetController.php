@@ -302,7 +302,7 @@ class MarketingTargetController extends Controller
         $leaderRole = strtoupper(trim((string) $oa->leader_role));
 
         // ✅ butuh TL hanya jika leader_role memang TL*
-        return in_array($leaderRole, ['TL','TLL','TLR','TLF'], true);
+        return in_array($leaderRole, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
     }
 
     public function marketingIndex(Request $request)

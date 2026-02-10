@@ -365,7 +365,7 @@ Route::middleware('auth')->group(function () {
             ->name('home');
 
         Route::get('/tl', [\App\Http\Controllers\Supervision\TlDashboardController::class, 'index'])
-            ->middleware('requireRole:TL,TLL,TLF,TLR')
+            ->middleware('requireRole:TL,TLL,TLF,TLR,TLRO,TLSO,TLFE,TLBE,TLUM')
             ->name('tl');
 
         Route::get('/kasi', [\App\Http\Controllers\Supervision\KasiDashboardController::class, 'index'])
@@ -381,7 +381,7 @@ Route::middleware('auth')->group(function () {
             ->name('pengurus');
 
         Route::prefix('tl/approvals')->name('tl.approvals.')
-            ->middleware('requireRole:TL,TLL,TLF,TLR')
+            ->middleware('requireRole:TL,TLL,TLF,TLR,TLRO,TLSO,TLFE,TLBE,TLUM')
             ->group(function () {
                 Route::get('/targets', [TargetApprovalTlController::class, 'index'])->name('targets.index');
                 Route::post('/targets/{target}/approve', [TargetApprovalTlController::class, 'approve'])->name('targets.approve');

@@ -9,28 +9,34 @@ enum UserRole: string
     case KOM = 'KOM';
     case DIR = 'DIR';
 
-    //Kabag + Pejabat eksekutif
+    // Kabag + Pejabat eksekutif
     case KABAG   = 'KABAG';
-    case KBL     = 'KBL';   // Kabag Lending
-    case KBO     = 'KBO';   // Kabag Operasional
-    case KTI     = 'KTI';   // Kabag TI
-    case KBF     = 'KBF';   // Kabag Funding (kalau ada)
-    
-    case PE      = 'PE';    // Pejabat Eksekutif
+    case KBL     = 'KBL';
+    case KBO     = 'KBO';
+    case KTI     = 'KTI';
+    case KBF     = 'KBF';
+    case PE      = 'PE';
 
-    //kasi
-    case KSL     = 'KSL';   // Kasi Lending
-    case KSO     = 'KSO';   // Kasi Operasional
-    case KSA     = 'KSA';   // Kasi Administrasi
-    case KSF     = 'KSF';   // Kasi Funding
-    case KSD     = 'KSD';   // Kasi SDM
-    case KSR     = 'KSR';   // Kasi Remedial (kalau ada)
+    // Kasi
+    case KSL     = 'KSL';
+    case KSO     = 'KSO';
+    case KSA     = 'KSA';
+    case KSF     = 'KSF';
+    case KSD     = 'KSD';
+    case KSR     = 'KSR';
 
-    //Team Leader
-    case TL      = 'TL';    // TL general
-    case TLL     = 'TLL';   // TL Lending (kalau dipisah)
-    case TLF     = 'TLF';   // TL Funding (kalau dipisah)
-    case TLR     = 'TLR';   // TL Funding (kalau dipisah)
+    // Team Leader
+    case TL      = 'TL';     // TL general
+    case TLL     = 'TLL';    // TL Lending
+    case TLF     = 'TLF';    // TL Funding
+    case TLR     = 'TLR';    // TL Remedial
+
+    // ✅ TL by division
+    case TLRO    = 'TLRO';
+    case TLFE    = 'TLFE';
+    case TLBE    = 'TLBE';
+    case TLSO    = 'TLSO';
+    case TLUM    = 'TLUM';
 
     // Staff
     case AO      = 'AO';
@@ -38,17 +44,42 @@ enum UserRole: string
     case TEL     = 'TEL';
     case BO      = 'BO';
     case ACC     = 'ACC';
-    case BE     = 'BE';
-    case SO     = 'SO';
+    case BE      = 'BE';
+    case SO      = 'SO';
     case TI      = 'TI';
-    case SAD      = 'SAD';
-    case SPE      = 'SPE';
-    case SSD      = 'SSD';
+    case SAD     = 'SAD';
+    case SPE     = 'SPE';
+    case SSD     = 'SSD';
     case RO      = 'RO';
     case SA      = 'SA';
     case FE      = 'FE';
     case FO      = 'FO';
     case STAFF   = 'STAFF';
+
+    // =========================
+    // ✅ GROUP HELPERS
+    // =========================
+
+    /** TL family (yang kamu minta) */
+    public static function tlFamily(): array
+    {
+        return [self::TLRO, self::TLFE, self::TLBE, self::TLSO, self::TLUM];
+    }
+
+    /** Semua TL (general + legacy + family) */
+    public static function tlAll(): array
+    {
+        return array_merge([self::TL, self::TLL, self::TLF, self::TLR], self::tlFamily());
+    }
+
+    /** cek string role/level termasuk TL* */
+    public static function isTlValue(string|null $v): bool
+    {
+        $v = strtoupper(trim((string)$v));
+        if ($v === '') return false;
+
+        return in_array($v, array_map(fn($e) => $e->value, self::tlAll()), true);
+    }
 
     public function rank(): int
     {
@@ -59,19 +90,20 @@ enum UserRole: string
 
             self::KSL, self::KSO, self::KSA, self::KSF, self::KSD, self::KSR => 60,
 
-            self::TL, self::TLL, self::TLF, self::TLR => 40,
+            // ✅ TL group (pakai helper)
+            self::tlAll() => 40,
 
             default => 20,
         };
     }
 
-        public static function supervisors(): array
+    public static function supervisors(): array
     {
         return [
             self::DIREKSI, self::KOM, self::DIR,
             self::KABAG, self::KBL, self::KBO, self::KTI, self::KBF, self::PE,
             self::KSL, self::KSO, self::KSA, self::KSF, self::KSD, self::KSR,
-            self::TL, self::TLL, self::TLF, self::TLR,
+            ...self::tlAll(),
         ];
     }
 

@@ -22,7 +22,7 @@ class EwsSummaryController extends Controller
         $user = auth()->user();
         abort_unless($user, 403);
 
-        abort_unless($user->hasAnyRole(['DIR','KOM','PE','KBO','KSA','SAD','KSL','KSR','KSO','TL','TLL','TLR','AO','RO','SO','BE','FE','SA']), 403);
+        abort_unless($user->hasAnyRole(['DIR','KOM','PE','KBO','KSA','SAD','KSL','KSR','KSO','TL','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM','AO','RO','SO','BE','FE','SA']), 403);
 
 
         $data = $this->service->build($request, $user);
@@ -70,7 +70,7 @@ class EwsSummaryController extends Controller
             return $ao !== '' ? "Personal ({$ao})" : "Personal";
         }
 
-        if ($user->hasAnyRole(['TL','TLL','TLR','TLF'])) {
+        if ($user->hasAnyRole(['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM'])) {
             return "Unit (Bawahan)";
         }
 

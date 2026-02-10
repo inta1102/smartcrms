@@ -155,6 +155,9 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
 
             $restructureFreq = $this->parseFreqOrDefault($freqRaw, $isRestructured);
 
+            $maturity = $this->parseMaturityDate($r['tgl_jto'] ?? $r['TGL_JTO'] ?? null);
+
+
             // =========================
             // ✅ FIELD BARU (EWS) - KOLEK 5 / USIA MACET
             // =========================
@@ -244,6 +247,7 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
                 'is_active'       => true,
                 'updated_at'      => $now,
                 'created_at'      => $now,
+                'maturity_date' => $maturity,
             ];
 
             // =========================
@@ -328,7 +332,7 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
                 'nilai_agunan_yg_diperhitungkan','ft_pokok','ft_bunga',
                 'is_restructured','restructure_freq','last_restructure_date','installment_day','last_payment_date',
                 'jenis_agunan','tgl_kolek','keterangan_sandi','cadangan_ppap',
-                'is_active','updated_at',
+                'is_active','updated_at','maturity_date',
             ]
         );
 
@@ -573,6 +577,7 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
                 // ignore
             }
         }
+
     }
 
     // =========================
@@ -722,6 +727,32 @@ class LoanAccountsImport implements ToCollection, WithHeadingRow, WithChunkReadi
         if ($i < 0) $i = 0;
         if ($i > 255) $i = 255;
         return $i;
+    }
+
+    private function parseMaturityDate($raw): ?string
+    {
+        if ($raw === null || $raw === '') return null;
+
+        // kalau sudah DateTime / Carbon
+        if ($raw instanceof \DateTimeInterface) {
+            return Carbon::instance($raw)->format('Y-m-d');
+        }
+
+        // excel serial number
+        if (is_numeric($raw)) {
+            try {
+                return ExcelDate::excelToDateTimeObject((float)$raw)->format('Y-m-d');
+            } catch (\Throwable $e) {
+                return null;
+            }
+        }
+
+        // string date
+        try {
+            return Carbon::parse((string)$raw)->format('Y-m-d');
+        } catch (\Throwable $e) {
+            return null;
+        }
     }
 
     // =========================

@@ -203,7 +203,7 @@ class SoTargetController extends Controller
         if (!$oa) return false;
 
         $leaderRole = strtoupper(trim((string)$oa->leader_role));
-        return in_array($leaderRole, ['TL','TLL','TLR','TLF'], true);
+        return in_array($leaderRole, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
     }
 
     private function ensureKbl($me): void

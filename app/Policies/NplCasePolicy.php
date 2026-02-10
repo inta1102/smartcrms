@@ -158,4 +158,16 @@ class NplCasePolicy
             UserRole::KSL,
         ];
     }
+
+    private function rolesTl(): array
+    {
+        return [
+            \App\Enums\UserRole::TLRO,
+            \App\Enums\UserRole::TLFE,
+            \App\Enums\UserRole::TLBE,
+            \App\Enums\UserRole::TLSO,
+            \App\Enums\UserRole::TLUM,
+        ];
+    }
+
 }

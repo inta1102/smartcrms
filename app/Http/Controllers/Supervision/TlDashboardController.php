@@ -15,7 +15,7 @@ class TlDashboardController extends Controller
     public function __construct()
     {
         // ✅ TL group (TL/TLL/TLF/TLR)
-        $this->middleware('requireRole:TL,TLL,TLF,TLR');
+        $this->middleware('requireRole:TL,TLL,TLF,TLR,TLRO,TLSO,TLFE,TLBE,TLUM');
     }
 
     /**

@@ -62,7 +62,7 @@ class AuthServiceProvider extends ServiceProvider
         Gate::policy(OrgAssignment::class, OrgAssignmentPolicy::class);
 
         Gate::define('is-supervisor', function ($user) {
-            return $user->inRoles(['DIREKSI','KABAG','KBL','KBO','KTI','KBF','KSR','KSL','KSO','KSA','KSF','KSD','TLR','TL','TLL','TLF']);
+            return $user->inRoles(['DIREKSI','KABAG','KBL','KBO','KTI','KBF','KSR','KSL','KSO','KSA','KSF','KSD','TLR','TL','TLL','TLF','TLRO','TLSO','TLFE','TLBE','TLUM']);
         });
 
         Gate::define('manage-org-assignments', function ($user) {
@@ -124,7 +124,7 @@ class AuthServiceProvider extends ServiceProvider
             $level = strtoupper(trim((string)($user->level instanceof \BackedEnum ? $user->level->value : $user->level)));
 
             // TL family + management boleh
-            return in_array($roleValue, ['TL','TLL','TLR','TLF','KSL','KSM','KBL','KBO','KSA','DIR','PE','KOM'], true)
+            return in_array($roleValue, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM','KSL','KSM','KBL','KBO','KSA','DIR','PE','KOM'], true)
                 || in_array($level, ['TL','SO','AO'], true); // kalau level TL dipakai
         });
     }

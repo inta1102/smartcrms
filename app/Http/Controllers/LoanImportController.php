@@ -20,6 +20,8 @@ use App\Jobs\RunMonthlyLoanSnapshot;
 use App\Models\LegacySyncRun;
 use Illuminate\Support\Facades\DB;
 use App\Imports\LoanInstallmentsImport; 
+use Illuminate\Support\Facades\Artisan;
+
 
 
 class LoanImportController extends Controller
@@ -74,6 +76,9 @@ class LoanImportController extends Controller
 
         try {
             Excel::import($importer, $file);
+
+            // ✅ snapshot harian OS dibuat SEKALI setelah import selesai
+            \Illuminate\Support\Facades\Artisan::call('kpi:os-daily-snapshot', ['--date' => $posDate]);
 
             $s = $importer->summary();
 
@@ -544,6 +549,8 @@ class LoanImportController extends Controller
 
         try {
             Excel::import($importer, $file);
+            
+            // Artisan::call('kpi:os-daily-snapshot', ['--date' => $posDate]);
 
             $s = $importer->summary();
 
@@ -604,6 +611,25 @@ class LoanImportController extends Controller
 
             return back()->with('error', 'Gagal import installment. Detail ada di log.')->withInput();
         }
+    }
+
+    private function humanizeImportError(\Throwable $e): string
+    {
+        $m = (string) $e->getMessage();
+
+        if (stripos($m, 'Tidak ada data terbaca') !== false) {
+            return 'Header kolom tidak sesuai template (data tidak terbaca). Pastikan header persis sama.';
+        }
+
+        if (stripos($m, 'Unknown column') !== false) {
+            return 'Kolom database tidak ditemukan. Kemungkinan migration/field baru belum ada. Detail: '.$m;
+        }
+
+        if (stripos($m, 'Duplicate entry') !== false) {
+            return 'Data duplikat (unique key). Detail: '.$m;
+        }
+
+        return $m !== '' ? $m : 'Terjadi kesalahan saat import. Silakan cek log.';
     }
 
 }

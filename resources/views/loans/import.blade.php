@@ -168,6 +168,61 @@
                     WAJIB
                 </span>
             </div>
+           
+            {{-- Status import installments terakhir (untuk posisi yang sama) --}}
+            @if(isset($lastInstallment) && $lastInstallment)
+                <div class="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+                    <div class="flex items-center justify-between">
+                    <div class="text-sm font-semibold text-slate-800">
+                        Import Installments Terakhir
+                    </div>
+
+                    @php
+                        $st = (string)($lastInstallment->status ?? '');
+                        $badge = match($st) {
+                            'success' => ['bg' => 'bg-emerald-50', 'ring' => 'ring-emerald-200', 'tx' => 'text-emerald-700', 'label' => 'SUCCESS'],
+                            'running' => ['bg' => 'bg-amber-50',   'ring' => 'ring-amber-200',   'tx' => 'text-amber-700',   'label' => 'RUNNING'],
+                            default   => ['bg' => 'bg-rose-50',    'ring' => 'ring-rose-200',    'tx' => 'text-rose-700',    'label' => 'FAILED'],
+                        };
+                    @endphp
+
+                    <span class="text-[11px] px-2 py-1 rounded-full {{ $badge['bg'] }} {{ $badge['tx'] }} ring-1 {{ $badge['ring'] }}">
+                        {{ $badge['label'] }}
+                    </span>
+                    </div>
+
+                    <div class="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                    <div class="rounded-lg bg-white border border-slate-100 px-3 py-2">
+                        <div class="text-[11px] text-slate-500">Posisi Data</div>
+                        <div class="font-semibold text-slate-800">
+                        {{ \Carbon\Carbon::parse($lastInstallment->position_date)->translatedFormat('d M Y') }}
+                        </div>
+                    </div>
+
+                    <div class="rounded-lg bg-white border border-slate-100 px-3 py-2">
+                        <div class="text-[11px] text-slate-500">Waktu Import</div>
+                        <div class="font-semibold text-slate-800">
+                        {{ optional($lastInstallment->created_at)->translatedFormat('d M Y H:i') ?? '-' }}
+                        </div>
+                    </div>
+
+                    <div class="rounded-lg bg-white border border-slate-100 px-3 py-2 sm:col-span-2">
+                        <div class="text-[11px] text-slate-500">File</div>
+                        <div class="font-semibold text-slate-800">{{ $lastInstallment->file_name ?? '-' }}</div>
+                    </div>
+                    </div>
+
+                    {{-- ✅ tampilkan alasan gagal --}}
+                    @if(($lastInstallment->status ?? '') === 'failed')
+                    <div class="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-3 text-sm text-rose-800">
+                        <div class="font-semibold">Alasan gagal:</div>
+                        <div class="mt-1 whitespace-pre-line">
+                        {{ $lastInstallment->message ?? 'Tidak ada detail error. Cek storage/logs/laravel.log' }}
+                        </div>
+                    </div>
+                    @endif
+                </div>
+            @endif
 
             <form method="POST" action="{{ route('loans.import.process') }}" enctype="multipart/form-data" class="mt-4 space-y-4">
                 @csrf
@@ -535,170 +590,6 @@
                 @endif
             </form>
         </div>
-
-        <!-- {{-- =========================
-            STEP 4 - IMPORT INSTALLMENT
-        ========================= --}}
-        <div class="mt-4 rounded-2xl border border-slate-100 bg-white px-5 py-4" id="step4Card">
-            <div class="flex items-start justify-between">
-                <div>
-                    <div class="text-sm font-semibold text-slate-800">Step 4 — Import Installment</div>
-                    <div class="text-xs text-slate-500">
-                        Import data pembayaran angsuran (pokok/bunga/denda) untuk kebutuhan KPI (Repayment Rate, dll).
-                    </div>
-                    <div class="mt-1 text-[11px] text-slate-600">
-                        Posisi (audit): <b>{{ $posHuman }}</b>
-                    </div>
-                </div>
-
-                @php
-                    // default: boleh jalan setelah Step 1 sukses pada posisi yg sama
-                    $ready4 = $importOkForPos; // kalau mau lebih ketat: && $legacyOkForPos
-                    $badge4 = $ready4
-                        ? 'bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200'
-                        : 'bg-slate-100 text-slate-600 ring-1 ring-slate-200';
-                @endphp
-                <span class="text-[11px] px-2 py-1 rounded-full {{ $badge4 }}">
-                    {{ $ready4 ? 'READY' : 'IMPORT KREDIT DULU' }}
-                </span>
-            </div>
-
-            {{-- INFO: IMPORT TERAKHIR INSTALLMENT --}}
-            <div class="mt-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
-                <div class="flex items-start justify-between gap-3">
-                    <div>
-                        <div class="text-xs font-semibold text-slate-700">Import Terakhir (Installment)</div>
-                        <div class="mt-0.5 text-[11px] text-slate-500">
-                            Untuk audit trail pembayaran.
-                        </div>
-                    </div>
-
-                    @if (!empty($lastInstallment))
-                        @php
-                            $st = strtolower((string)($lastInstallment->status ?? ''));
-                            $b = $st === 'success'
-                                ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
-                                : ($st === 'failed'
-                                    ? 'bg-rose-50 text-rose-700 ring-1 ring-rose-200'
-                                    : 'bg-amber-50 text-amber-800 ring-1 ring-amber-200');
-                        @endphp
-                        <span class="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold {{ $b }}">
-                            {{ strtoupper($st ?: 'TERCATAT') }}
-                        </span>
-                    @else
-                        <span class="inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold bg-slate-100 text-slate-700 ring-1 ring-slate-200">
-                            BELUM PERNAH
-                        </span>
-                    @endif
-                </div>
-
-                @php
-                    $ipos = $lastInstallment->position_date ?? null;
-                    $iat  = $lastInstallment->created_at ?? null;
-
-                    $iposText = $ipos ? \Carbon\Carbon::parse($ipos)->format('d M Y') : '-';
-                    $iatText  = $iat ? \Carbon\Carbon::parse($iat)->format('d M Y H:i') : '-';
-
-                    $ibyName  = $lastInstallment->importer->name
-                        ?? $lastInstallment->created_by_name
-                        ?? $lastInstallment->created_by
-                        ?? null;
-
-                    $ifileName = $lastInstallment->file_name
-                        ?? $lastInstallment->filename
-                        ?? $lastInstallment->original_name
-                        ?? null;
-                @endphp
-
-                <div class="mt-3 grid grid-cols-2 gap-3 text-[11px]">
-                    <div class="rounded-xl border border-slate-100 bg-white px-3 py-2">
-                        <div class="text-slate-500">Posisi Data</div>
-                        <div class="font-semibold text-slate-800">
-                            {{ !empty($lastInstallment) ? $iposText : '-' }}
-                        </div>
-                    </div>
-
-                    <div class="rounded-xl border border-slate-100 bg-white px-3 py-2">
-                        <div class="text-slate-500">Waktu Import</div>
-                        <div class="font-semibold text-slate-800">
-                            {{ !empty($lastInstallment) ? $iatText : '-' }}
-                        </div>
-                    </div>
-
-                    <div class="rounded-xl border border-slate-100 bg-white px-3 py-2 col-span-2">
-                        <div class="text-slate-500">Diimport oleh</div>
-                        <div class="font-semibold text-slate-800">
-                            {{ !empty($lastInstallment) ? ($ibyName ?: '-') : '-' }}
-                        </div>
-                    </div>
-
-                    @if (!empty($lastInstallment) && !empty($ifileName))
-                        <div class="rounded-xl border border-slate-100 bg-white px-3 py-2 col-span-2">
-                            <div class="text-slate-500">File</div>
-                            <div class="font-semibold text-slate-800 break-words">
-                                {{ $ifileName }}
-                            </div>
-                        </div>
-                    @endif
-                </div>
-            </div>
-
-            <form method="POST"
-                action="{{ route('loans.installments.import') }}"
-                enctype="multipart/form-data"
-                class="mt-4 space-y-4">
-                @csrf
-
-                {{-- pakai posisi yg sama biar konsisten audit --}}
-                <input type="hidden" name="position_date" value="{{ $posForStepStr }}"/>
-
-                <div>
-                    <label class="block text-sm font-medium text-slate-700 mb-1">Pilih File Excel Installment</label>
-                    <input
-                        type="file"
-                        name="file_installments"
-                        accept=".xls,.xlsx"
-                        required
-                        class="block w-full text-sm text-slate-700
-                            file:mr-4 file:py-2 file:px-4
-                            file:rounded-md file:border-0
-                            file:text-sm file:font-semibold
-                            file:bg-msa-blue file:text-white
-                            hover:file:bg-blue-900">
-                    <div class="mt-1 text-[11px] text-slate-500">
-                        Kolom kunci: <b>nofas</b> + <b>angske</b> (unique). Tanggal bayar: <b>tglbayar</b>.
-                    </div>
-                </div>
-
-                <div class="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
-                    <label class="inline-flex items-center gap-2 text-sm text-slate-700">
-                        <input type="checkbox" name="reimport" value="1" {{ old('reimport_installment') ? 'checked' : '' }}>
-                        <span class="font-semibold">Re-import</span>
-                        <span class="text-slate-500 text-[12px]">(koreksi posisi yang sama)</span>
-                    </label>
-
-                    <div class="mt-2">
-                        <textarea
-                            name="reimport_reason"
-                            rows="2"
-                            placeholder="Alasan koreksi (wajib jika re-import)"
-                            class="w-full rounded-lg border-slate-300 px-3 py-2 text-sm focus:border-msa-blue focus:ring-msa-blue"
-                        >{{ old('reimport_reason') }}</textarea>
-                        <div class="mt-1 text-[11px] text-slate-500">
-                            Isi alasan koreksi untuk audit.
-                        </div>
-                    </div>
-                </div>
-
-                <button type="submit"
-                        {{ ($ready4 && $posForStepStr) ? '' : 'disabled' }}
-                        class="w-full inline-flex items-center justify-center rounded-lg px-4 py-2.5 text-sm font-semibold
-                        {{ ($ready4 && $posForStepStr) ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-slate-200 text-slate-500 cursor-not-allowed' }}">
-                    Import Angsuran
-                </button>
-            </form>
-        </div> -->
-
     </div>
 </div>
 

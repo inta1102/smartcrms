@@ -23,8 +23,8 @@ class TargetApprovalTlController extends Controller
 
         // TL group: TL/TLL/TLF/TLR
         $isTl = ($role instanceof UserRole)
-            ? in_array($role, [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR], true)
-            : in_array($val, ['TL','TLL','TLF','TLR'], true);
+            ? in_array($role, [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR, UserRole::TLRO, UserRole::TLSO, UserRole::TLFE, UserRole::TLBE, UserRole::TLUM], true)
+            : in_array($val, ['TL','TLL','TLF','TLR','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
 
         abort_unless($isTl, 403);
     }
@@ -49,7 +49,7 @@ class TargetApprovalTlController extends Controller
             ->where('staff_user_id', $proposedByUserId)
             ->where('leader_id', $tlId)
             ->where('is_active', 1)
-            ->whereIn('leader_role', ['TL', 'TLL', 'TLF', 'TLR']) // kalau di DB kamu cuma simpan 'TL', boleh jadi ['TL'] saja
+            ->whereIn('leader_role', ['TL', 'TLL', 'TLF', 'TLR','TLRO','TLSO','TLFE','TLBE','TLUM']) // kalau di DB kamu cuma simpan 'TL', boleh jadi ['TL'] saja
             ->exists();
 
         abort_unless($ok, 403);
@@ -80,7 +80,7 @@ class TargetApprovalTlController extends Controller
             ->orWhereHas('proposer.orgAssignmentsAsStaff', function ($x) use ($tlId) {
                 $x->active()
                     ->where('leader_id', $tlId)
-                    ->whereIn('leader_role', ['TL','TLL','TLF','TLR']);
+                    ->whereIn('leader_role', ['TL','TLL','TLF','TLR','TLRO','TLSO','TLFE','TLBE','TLUM']);
             });
         });
 

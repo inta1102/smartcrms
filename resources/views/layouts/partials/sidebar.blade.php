@@ -27,8 +27,8 @@
 
     // ====== Groups (enum-first, fallback string) ======
     $isTl = ($roleEnum instanceof UserRole)
-        ? in_array($roleEnum, [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR], true)
-        : in_array($roleValue, ['TL','TLL','TLF','TLR'], true);
+        ? in_array($roleEnum, [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR, UserRole::TLRO, UserRole::TLSO, UserRole::TLFE, UserRole::TLBE, UserRole::TLUM], true)
+        : in_array($roleValue, ['TL','TLL','TLF','TLR','TLRO','TLSO','TLFE', 'TLBE', 'TLUM'], true);
 
     // KASI group (catatan: KTI bukan KASI, tapi kamu sebelumnya ikutkan. Aku pisahin biar rapi.)
     $isKasi = ($roleEnum instanceof UserRole)
@@ -538,7 +538,7 @@
             //     'active' => request()->routeIs('kpi.marketing.approvals.*'),
             //     'show'   => $u && in_array(
             //         strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)),
-            //         ['TL','TLL','TLR','KSL','KSR'],
+            //         ['TL','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM','KSL','KSR'],
             //         true
             //     ),
             // ],
@@ -550,7 +550,7 @@
             //         : null,
             //     'active' => request()->routeIs('kpi.so.approvals.*'),
             //     'show'   => $u && in_array(strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)),
-            //                 ['TL','TLL','TLR','KSL','KSR'], true),
+            //                 ['TL','TLL','TLR','KSL','TLRO','TLSO','TLFE','TLBE','TLUM','KSR'], true),
             // ],
 
             // =========================
@@ -565,7 +565,7 @@
                 'active' => request()->routeIs('kpi.marketing.ranking.*'),
                 'show'   => $u && in_array(
                     strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)),
-                    ['AO','BE','FE','RO','SO','TL','TLL','TLR','TLF','KSL','KSO','KSA','KSF','KSD','KSR','KBL'],
+                    ['AO','BE','FE','RO','SO','TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM','KSL','KSO','KSA','KSF','KSD','KSR','KBL'],
                     true
                 ),
             ],

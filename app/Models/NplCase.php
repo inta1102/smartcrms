@@ -213,7 +213,7 @@ class NplCase extends Model
         // ===============================
         // TL / TLL / TLF / TLR
         // ===============================
-        if ($user->hasAnyRole([UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR])) {
+        if ($user->hasAnyRole([UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR, UserRole::TLRO, UserRole::TLSO, UserRole::TLFE, UserRole::TLBE, UserRole::TLUM])) {
             $staffIds = OrgAssignment::query()
                 ->active()
                 ->where('leader_id', (int) $user->id)
@@ -247,7 +247,7 @@ class NplCase extends Model
             }
 
             // level string (bukan enum object)
-            $tlRoleVals = ['TL','TLL','TLF','TLR'];
+            $tlRoleVals = ['TL','TLL','TLF','TLR','TLRO','TLSO','TLFE','TLBE','TLUM'];
             $staffRoleVals = ['AO','BE','FE','SO','RO','SA'];
 
             $tlIds = User::query()

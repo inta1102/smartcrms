@@ -128,6 +128,6 @@ class NplCaseResolutionTargetController extends Controller
 
         if (!$oa) return true; // default aman: butuh TL
 
-        return in_array(strtoupper((string)$oa->leader_role), ['TL', 'TLL', 'TLR'], true);
+        return in_array(strtoupper((string)$oa->leader_role), ['TL', 'TLL', 'TLR','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
     }
 }

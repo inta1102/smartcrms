@@ -26,7 +26,7 @@ class LegalActionProposalPolicy
     public function viewAny(User $user): bool
     {
         return method_exists($user, 'hasAnyRole')
-            && $user->hasAnyRole(['BE','TLL','TLR','KSR','KSL','KBL','KTI','DIR','DIREKSI','KOM']);
+            && $user->hasAnyRole(['BE','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM','KSR','KSL','KBL','KTI','DIR','DIREKSI','KOM']);
     }
 
     public function view(User $user, LegalActionProposal $p): bool
@@ -45,7 +45,7 @@ class LegalActionProposalPolicy
 
     public function approveTl(User $user, LegalActionProposal $p): bool
     {
-        return $user->hasAnyRole(['TL','TLL','TLR'])
+        return $user->hasAnyRole(['TL','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM'])
             && (int)($p->needs_tl_approval ?? 1) === 1
             && $p->status === LegalActionProposal::STATUS_PENDING_TL;
     }
@@ -71,7 +71,7 @@ class LegalActionProposalPolicy
     public function rejectTl(User $user, LegalActionProposal $p): bool
     {
         return method_exists($user, 'hasAnyRole')
-            && $user->hasAnyRole(['TLL','TLR'])
+            && $user->hasAnyRole(['TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM'])
             && ($p->status === LegalActionProposal::STATUS_SUBMITTED);
     }
 

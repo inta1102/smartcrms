@@ -206,7 +206,7 @@ class EwsSummaryService
 
         // TL/Kasi: ambil bawahan dari org_assignments (leader_id = user->id)
         // Pastikan model OrgAssignment ada di project kamu
-        if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['TL','TLL','TLR','KSL','KSR','KSO','KSA'])) {
+        if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['TL','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM','KSL','KSR','KSO','KSA'])) {
             if (!class_exists(\App\Models\OrgAssignment::class)) {
                 return [];
             }
@@ -576,7 +576,7 @@ class EwsSummaryService
         if (method_exists($user, 'hasAnyRole')) {
             if ($user->hasAnyRole(['DIR','KOM','KDK','AUD','MR','KPI','KTI','TI'])) return 'ALL (Pimpinan)';
             if ($user->hasAnyRole(['KBO','KSA','SAD','KSL','KSR','KSO'])) return 'UNIT / BAGIAN';
-            if ($user->hasAnyRole(['TL','TLL','TLR'])) return 'TIM (Bawahan)';
+            if ($user->hasAnyRole(['TL','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM'])) return 'TIM (Bawahan)';
             if ($user->hasAnyRole(['AO','RO','SO','BE','FE','SA'])) return 'PERSONAL (Milik sendiri)';
         }
 

@@ -269,7 +269,7 @@ class ResolutionTargetService
 
         $leaderRole = strtoupper((string) $oa->leader_role);
 
-        $needsTl = in_array($leaderRole, ['TL', 'TLL', 'TLR', 'TLF'], true);
+        $needsTl = in_array($leaderRole, ['TL', 'TLL', 'TLR', 'TLF','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
 
         return [
             'needs_tl_approval' => $needsTl,

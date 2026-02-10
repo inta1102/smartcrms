@@ -20,7 +20,7 @@ class SoTargetApprovalController extends Controller
 
         $meRole = strtoupper(trim((string)($me->roleValue() ?? '')));
 
-        $isTl   = in_array($meRole, ['TL','TLL','TLR','TLF'], true);
+        $isTl   = in_array($meRole, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
         $isKasi = in_array($meRole, ['KSL','KSR','KSO','KSA','KSF','KSD','KBL'], true);
 
         abort_unless($isTl || $isKasi, 403);
@@ -165,7 +165,7 @@ class SoTargetApprovalController extends Controller
     private function isTl($me): bool
     {
         $roleValue = strtoupper(trim((string)($me->roleValue() ?? '')));
-        return in_array($roleValue, ['TL','TLL','TLR','TLF'], true);
+        return in_array($roleValue, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
     }
 
     private function isKasi($me): bool

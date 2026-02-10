@@ -21,7 +21,7 @@ class ApprovalBadgeService
                   ->orWhereHas('proposer.orgAssignmentsAsStaff', function ($x) use ($tlUserId) {
                       $x->active()
                         ->where('leader_id', $tlUserId)
-                        ->whereIn('leader_role', ['TL','TLL','TLF','TLR']); // mapping aman
+                        ->whereIn('leader_role', ['TL','TLL','TLF','TLR','TLRO','TLSO','TLFE','TLBE','TLUM']); // mapping aman
                   });
             })
             ->count();
@@ -40,7 +40,7 @@ class ApprovalBadgeService
                   ->orWhereHas('proposer.orgAssignmentsAsStaff', function ($x) use ($tlUserId) {
                       $x->active()
                         ->where('leader_id', $tlUserId)
-                        ->whereIn('leader_role', ['TL','TLL','TLF','TLR']);
+                        ->whereIn('leader_role', ['TL','TLL','TLF','TLR','TLRO','TLSO','TLFE','TLBE','TLUM']);
                   });
             })
             ->count();
@@ -59,7 +59,7 @@ class ApprovalBadgeService
                   ->orWhereHas('proposer.orgAssignmentsAsStaff', function ($x) use ($tlUserId) {
                       $x->active()
                         ->where('leader_id', $tlUserId)
-                        ->whereIn('leader_role', ['TL','TLL','TLF','TLR']);
+                        ->whereIn('leader_role', ['TL','TLL','TLF','TLR','TLRO','TLSO','TLFE','TLBE','TLUM']);
                   });
             })
             ->count();

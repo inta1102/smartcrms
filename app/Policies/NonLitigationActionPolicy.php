@@ -35,6 +35,11 @@ class NonLitigationActionPolicy
             UserRole::TLL,
             UserRole::TLF,
             UserRole::TLR,
+            UserRole::TLRO,
+            UserRole::TLSO,
+            UserRole::TLFE,
+            UserRole::TLBE,
+            UserRole::TLUM,
         ])) {
             return false;
         }
@@ -124,7 +129,7 @@ class NonLitigationActionPolicy
         // Operasional (AO dkk) boleh buka list miliknya
         return $this->allowRoles($user, [
             UserRole::AO, UserRole::BE, UserRole::FE, UserRole::SO, UserRole::RO, UserRole::SA,
-            UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR,
+            UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR, UserRole::TLRO, UserRole::TLSO, UserRole::TLFE, UserRole::TLBE, UserRole::TLUM,
         ]);
     }
 

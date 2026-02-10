@@ -17,7 +17,7 @@ class SupervisionHomeController extends Controller
         // =========================
         // TL
         // =========================
-        if (in_array($role, [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR], true)) {
+        if (in_array($role, [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR, UserRole::TLRO, UserRole::TLSO, UserRole::TLFE, UserRole::TLBE, UserRole::TLUM], true)) {
             return redirect()->route('supervision.tl');
         }
 

@@ -18,7 +18,7 @@ class MarketingTargetApprovalController extends Controller
 
         $lvl = $this->levelCode($me);
 
-        $isTl   = in_array($lvl, ['TL','TLL','TLR','TLF'], true);
+        $isTl   = in_array($lvl, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
         $isKasi = in_array($lvl, ['KSL','KSO','KSA','KSF','KSD','KSR'], true);
         abort_unless($isTl || $isKasi, 403);
 
@@ -132,7 +132,7 @@ class MarketingTargetApprovalController extends Controller
 
             $lvl = $this->levelCode($me);
 
-            $isTl   = in_array($lvl, ['TL','TLL','TLR','TLF'], true);
+            $isTl   = in_array($lvl, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
             $isKasi = in_array($lvl, ['KSL','KSO','KSA','KSF','KSD','KSR'], true);
 
             if ($isTl) {
@@ -217,7 +217,7 @@ class MarketingTargetApprovalController extends Controller
 
         $base = OrgAssignment::query()->active();
 
-        if (in_array($lvl, ['TL','TLL','TLR','TLF'], true)) {
+        if (in_array($lvl, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM'], true)) {
             return (clone $base)
                 ->where('leader_id', $selfId)
                 ->pluck('user_id')
@@ -237,7 +237,7 @@ class MarketingTargetApprovalController extends Controller
             // ambil yang TL dari directIds
             $tlIds = User::query()
                 ->whereIn('id', $directIds->all())
-                ->whereIn('level', ['TL','TLL','TLR','TLF'])
+                ->whereIn('level', ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM'])
                 ->pluck('id')
                 ->map(fn ($v) => (int) $v);
 

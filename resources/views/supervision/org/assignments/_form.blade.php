@@ -109,7 +109,7 @@
     // ✅ Sesuaikan dengan data kamu: TLL/KSL/KBL/KTI dst.
     // Jika di users.level kamu: TLL=TL, KSL=KASI, KBL=KABAG
     const roleToAllowedUserLevels = {
-        'TL':   ['TLL','TLF','TLR'],
+        'TL':   ['TLL','TLF','TLR','TLRO','TLSO','TLFE','TLBE','TLUM'],
         'KASI': ['KSL','KSR', 'KSF', 'KSO', 'KSA', 'KSD'],
         'KABAG':['KBL','KBF', 'KBO', 'KTI'],
         'PE':   ['PE'],

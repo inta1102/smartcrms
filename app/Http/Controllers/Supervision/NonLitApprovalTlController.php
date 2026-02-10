@@ -14,7 +14,7 @@ class NonLitApprovalTlController extends Controller
     public function __construct()
     {
         $this->middleware('auth');
-        $this->middleware('requireRole:TL,TLL,TLF,TLR');
+        $this->middleware('requireRole:TL,TLL,TLF,TLR,TLRO,TLSO,TLFE,TLBE,TLUM');
     }
 
     public function index(Request $request)
@@ -22,7 +22,7 @@ class NonLitApprovalTlController extends Controller
         $user = auth()->user();
 
         abort_unless(
-            in_array($user->role(), [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR], true),
+            in_array($user->role(), [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR, UserRole::TLRO, UserRole::TLSO, UserRole::TLFE, UserRole::TLBE, UserRole::TLUM], true),
             403
         );
 
@@ -49,7 +49,7 @@ class NonLitApprovalTlController extends Controller
         $user = auth()->user();
 
         abort_unless(
-            in_array($user->role(), [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR], true),
+            in_array($user->role(), [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR, UserRole::TLRO, UserRole::TLSO, UserRole::TLFE, UserRole::TLBE, UserRole::TLUM], true),
             403
         );
 
@@ -70,7 +70,7 @@ class NonLitApprovalTlController extends Controller
         $user = auth()->user();
 
         abort_unless(
-            in_array($user->role(), [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR], true),
+            in_array($user->role(), [UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR, UserRole::TLRO, UserRole::TLSO, UserRole::TLFE, UserRole::TLBE, UserRole::TLUM], true),
             403
         );
 

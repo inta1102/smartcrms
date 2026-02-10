@@ -121,7 +121,7 @@ class User extends Authenticatable
 
     public function isTl(): bool
     {
-        return $this->hasAnyRole([UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR]);
+        return $this->hasAnyRole([UserRole::TL, UserRole::TLL, UserRole::TLF, UserRole::TLR, UserRole::TLRO, UserRole::TLSO, UserRole::TLBE, UserRole::TLFE, UserRole::TLUM]);
     }
 
     public function isKasi(): bool
@@ -229,6 +229,11 @@ class User extends Authenticatable
     {
         return $this->hasAnyRole([
             'TLL',
+            'TLSO',
+            'TLRO',
+            'TLBE',
+            'TLFE',
+            'TLUM',
             'TLR',      // team leader remedial/loan
             'KSL',     // kasi legal (atau role kamu)
             'KSR',
@@ -257,7 +262,7 @@ class User extends Authenticatable
     public function hasLeaderTl(): bool
     {
         $role = strtolower((string) $this->directLeaderRole());
-        return in_array($role, ['tl','tll','tlr'], true);
+        return in_array($role, ['tl','tll','tlr','TLRO','TLFE','TLBE','TLSO','TLUM'], true);
     }
 
     public function directLeaderId(): ?int
