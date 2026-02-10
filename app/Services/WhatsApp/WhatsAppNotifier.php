@@ -58,29 +58,35 @@ class WhatsAppNotifier
         $toName = (string)($meta['to_name'] ?? 'Recipient');
 
         // mapping vars -> parameters.body (key: "1","2",dst)
-        $bodyParams = [];
-        $i = 1;
-        foreach (array_values($vars) as $val) {
-            $bodyParams[] = [
-                'key'   => (string) $i,
-                'value' => (string) $val,   // ✅ FIX: value_text -> value
-            ];
-            $i++;
-        }
+       $bodyParams = [];
+            $i = 1;
+            foreach (array_values($vars) as $val) {
+                $v = (string) $val;
 
-        $parameters = [
-            'body' => $bodyParams,
-        ];
+                $bodyParams[] = [
+                    'key'        => (string) $i,
+                    'value_text' => $v,   // ✅ untuk validator yang minta value_text
+                    'value'      => $v,   // ✅ untuk validator yang minta value
+                ];
+                $i++;
+            }
+
+            $parameters = [
+                'body' => $bodyParams,
+            ];
 
         if (!empty($meta['buttons']) && is_array($meta['buttons'])) {
-            $parameters['buttons'] = array_map(function ($b) {
+           $parameters['buttons'] = array_map(function ($b) {
                 $val = ltrim((string)($b['value'] ?? ''), '/');
+
                 return [
-                    'index' => (string)($b['index'] ?? '0'),
-                    'type'  => strtolower((string)($b['type'] ?? 'url')),
-                    'value' => $val,
+                    'index'      => (string)($b['index'] ?? '0'),
+                    'type'       => strtolower((string)($b['type'] ?? 'url')),
+                    'value'      => $val,
+                    'value_text' => $val, // ✅ fallback kompatibilitas
                 ];
             }, $meta['buttons']);
+
         }
 
         $payload = [
