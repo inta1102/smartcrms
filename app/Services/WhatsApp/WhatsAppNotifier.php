@@ -44,61 +44,63 @@ class WhatsAppNotifier
         $path  = ltrim((string) config('whatsapp.qontak.endpoint_send_template', ''), '/');
         $token = (string) config('whatsapp.qontak.api_token');
 
-        // Ini WAJIB untuk endpoint direct:
-        $channelIntegrationId = (string) config('whatsapp.qontak.channel_id'); // simpan UUID integration di sini
+        // Untuk endpoint direct:
+        $channelIntegrationId = (string) config('whatsapp.qontak.channel_id');
 
         if ($base === '' || $path === '' || $token === '' || $channelIntegrationId === '') {
-            Log::error('Qontak WA config missing', compact('base','path','channelIntegrationId'));
+            Log::error('Qontak WA config missing', compact('base', 'path', 'channelIntegrationId'));
             throw new \RuntimeException('Qontak WA config missing (base_url/endpoint/api_token/channel_id).');
         }
 
         $toNumber = $this->normalizeRecipient($to);
 
-        // untuk "to_name" boleh default (karena kamu tidak kirim nama penerima)
+        // Direct endpoint hanya terima nomor, bukan UUID/group
+        if (preg_match('/[a-zA-Z]/', $toNumber) || str_contains($toNumber, '-')) {
+            throw new \RuntimeException("Qontak direct requires phone number, got: {$toNumber}");
+        }
+
         $toName = (string)($meta['to_name'] ?? 'Recipient');
 
-        // mapping vars -> parameters.body (key: "1","2",dst)
-       $bodyParams = [];
-            $i = 1;
-            foreach (array_values($vars) as $val) {
-                $v = (string) $val;
-
-                $bodyParams[] = [
-                    'key'        => (string) $i,
-                    'value_text' => $v,   // ✅ untuk validator yang minta value_text
-                    'value'      => $v,   // ✅ untuk validator yang minta value
-                ];
-                $i++;
-            }
-
-            $parameters = [
-                'body' => $bodyParams,
+        // parameters.body: value = param name (var1..varN), value_text = real text
+        $bodyParams = [];
+        $i = 1;
+        foreach (array_values($vars) as $val) {
+            $bodyParams[] = [
+                'key'        => (string) $i,
+                'value'      => 'var' . $i,      // 2-16 char, lowercase/number/_
+                'value_text' => (string) $val,   // actual message text
             ];
+            $i++;
+        }
 
+        $parameters = [
+            'body' => $bodyParams,
+        ];
+
+        // parameters.buttons: value = param name, value_text = path
         if (!empty($meta['buttons']) && is_array($meta['buttons'])) {
-           $parameters['buttons'] = array_map(function ($b) {
+            $parameters['buttons'] = array_map(function ($b) {
                 $val = ltrim((string)($b['value'] ?? ''), '/');
+                $idx = (string)($b['index'] ?? '0');
 
                 return [
-                    'index'      => (string)($b['index'] ?? '0'),
+                    'index'      => $idx,
                     'type'       => strtolower((string)($b['type'] ?? 'url')),
-                    'value'      => $val,
-                    'value_text' => $val, // ✅ fallback kompatibilitas
+                    'value'      => 'btn' . $idx, // btn0, btn1 ...
+                    'value_text' => $val,         // relative path
                 ];
             }, $meta['buttons']);
-
         }
 
         $payload = [
-            'to_name'               => $toName,
-            'to_number'             => $toNumber,                 // 62xxx
-            'message_template_id'   => $template,                 // UUID template
-            'channel_integration_id'=> $channelIntegrationId,     // UUID integration/channel
-            'language'              => ['code' => config('whatsapp.defaults.language', 'id')],
-            'parameters'            => $parameters,
+            'to_name'                => $toName,
+            'to_number'              => $toNumber,
+            'message_template_id'    => $template,
+            'channel_integration_id' => $channelIntegrationId,
+            'language'               => ['code' => config('whatsapp.defaults.language', 'id')],
+            'parameters'             => $parameters,
         ];
 
-        // meta tambahan vendor (kalau perlu)
         if (!empty($meta['extra']) && is_array($meta['extra'])) {
             $payload = array_replace_recursive($payload, $meta['extra']);
         }
@@ -107,6 +109,7 @@ class WhatsAppNotifier
 
         $resp = Http::withToken($token)
             ->acceptJson()
+            ->asJson()
             ->post($url, $payload);
 
         if (!$resp->successful()) {
@@ -116,6 +119,7 @@ class WhatsAppNotifier
                 'body'    => $resp->body(),
                 'payload' => $payload,
             ]);
+
             throw new \RuntimeException('Qontak WA send failed: '.$resp->status().' '.$resp->body());
         }
     }
