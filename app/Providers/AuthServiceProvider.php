@@ -118,5 +118,14 @@ class AuthServiceProvider extends ServiceProvider
                 'KSR', 'KTI', 'DIR', 'KSL', 'KOM','KBL',
             ]);
         });
+
+        Gate::define('viewTlOsDashboard', function ($user) {
+            $roleValue = method_exists($user, 'roleValue') ? strtoupper(trim((string)$user->roleValue())) : '';
+            $level = strtoupper(trim((string)($user->level instanceof \BackedEnum ? $user->level->value : $user->level)));
+
+            // TL family + management boleh
+            return in_array($roleValue, ['TL','TLL','TLR','TLF','KSL','KSM','KBL','KBO','KSA','DIR','PE','KOM'], true)
+                || in_array($level, ['TL','SO','AO'], true); // kalau level TL dipakai
+        });
     }
 }

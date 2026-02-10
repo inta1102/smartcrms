@@ -41,9 +41,13 @@ public function index(Request $request)
                 't.id as target_id',
                 't.target_os_disbursement',
                 't.target_noa_disbursement',
-                't.target_rr',                // ✅ ambil beneran dari target
+                't.target_rr',
                 't.target_activity',
+
                 'm.os_disbursement',
+                'm.os_disbursement_raw',   // ✅ add
+                'm.os_adjustment',         // ✅ add
+
                 'm.noa_disbursement',
                 'm.rr_pct',
                 'm.activity_actual',

@@ -4,14 +4,21 @@ namespace App\Services\Kpi;
 
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use App\Models\Kpi\KpiSoCommunityInput;
 
 class SoKpiMonthlyService
 {
     /**
      * SO KPI:
      * - OS/NOA = disbursement bulan period
-     * - RR = OS current (ft_pokok=0 & ft_bunga=0) / total OS
-     *   hanya untuk account yang disburse dalam window 3 bulan (winStart..period)
+     * - RR (COHORT) = OS current (ft_pokok=0 & ft_bunga=0) / total OS
+     *   ✅ hanya untuk rekening yang DISBURSE mulai 1 Jan 2026 s/d period KPI (kumulatif)
+     *   ✅ khusus KPI Jan 2026: RR dipastikan 100% (business rule)
+     *
+     * Input manual (KBL):
+     * - Handling Komunitas (handling_actual) -> dipetakan ke activity_actual
+     * - OS Adjustment (os_adjustment) -> mengurangi OS disbursement (raw) sebelum scoring
      *
      * Rule sumber data RR:
      * - Kalau period = bulan berjalan => ambil dari loan_accounts pada position_date terakhir
@@ -21,7 +28,9 @@ class SoKpiMonthlyService
     {
         $period     = Carbon::parse($periodYmd)->startOfMonth()->toDateString(); // Y-m-01
         $periodEnd  = Carbon::parse($period)->endOfMonth()->toDateString();
-        $winStart   = Carbon::parse($period)->subMonths(2)->startOfMonth()->toDateString();
+
+        // ✅ RR cohort start (sesuai request user)
+        $rrCohortStart = '2026-01-01';
 
         $isCurrentMonth = Carbon::parse($period)->equalTo(now()->startOfMonth());
 
@@ -52,6 +61,12 @@ class SoKpiMonthlyService
 
         $users = $usersQ->get();
 
+        // ✅ Input manual KBL (handling + OS adjustment)
+        $adjRows = KpiSoCommunityInput::query()
+            ->where('period', $period)
+            ->get()
+            ->keyBy('user_id');
+
         // Disbursement agg by ao_code (normalized)
         $disbAgg = DB::table('loan_disbursements')
             ->selectRaw("
@@ -70,14 +85,22 @@ class SoKpiMonthlyService
 
         $count = 0;
 
+        // cache kolom optional supaya tidak berulang cek schema tiap loop
+        $hasOsAdjCol  = Schema::hasColumn('kpi_so_monthlies', 'os_adjustment');
+        $hasOsRawCol  = Schema::hasColumn('kpi_so_monthlies', 'os_disbursement_raw');
+
         DB::transaction(function () use (
             $users,
             $targets,
             $disbAgg,
+            $adjRows,
             $period,
-            $winStart,
+            $periodEnd,
+            $rrCohortStart,
             $isCurrentMonth,
             $positionDate,
+            $hasOsAdjCol,
+            $hasOsRawCol,
             &$count
         ) {
             foreach ($users as $u) {
@@ -86,31 +109,61 @@ class SoKpiMonthlyService
                     continue;
                 }
 
-                // disbursement (bulan period)
+                // disbursement (bulan period) - RAW
                 $d = DB::query()->fromSub($disbAgg, 'd')->where('d.ao_code', $aoCode)->first();
-                $osDisb  = (int) ($d->os_disbursement ?? 0);
+                $osRaw   = (int) ($d->os_disbursement ?? 0);
                 $noaDisb = (int) ($d->noa_disbursement ?? 0);
 
-                // account_no yang disburse di window 3 bulan
-                $accountNos = DB::table('loan_disbursements')
-                    ->whereRaw("LPAD(TRIM(ao_code),6,'0') = ?", [$aoCode])
-                    ->whereBetween('period', [$winStart, $period])
-                    ->pluck('account_no')
-                    ->map(fn($v) => trim((string)$v))
-                    ->filter(fn($v) => $v !== '')
-                    ->unique()
-                    ->values()
-                    ->all();
+                // ✅ ambil adjustment & handling manual (KBL)
+                $adj = $adjRows->get($u->id);
+                $osAdj = (int) ($adj->os_adjustment ?? 0);
 
-                // ====== RR (OS-based) ======
+                $handlingManual = $adj ? (int)($adj->handling_actual ?? 0) : null; // null jika tidak ada row
+
+                // OS NETTO untuk scoring (tidak boleh negatif)
+                $osNet = $osRaw - $osAdj;
+                if ($osNet < 0) $osNet = 0;
+
+                // ==========================================================
+                // ✅ RR (COHORT): account yang disburse mulai 2026-01-01 s/d period KPI
+                // ==========================================================
                 $rrOsTotal   = 0;
                 $rrOsCurrent = 0;
                 $rrPct       = 0.0;
 
-                if (!empty($accountNos)) {
-                    if ($isCurrentMonth) {
-                        if (!empty($positionDate)) {
-                            $rr = DB::table('loan_accounts')
+                // kalau period sebelum cohort start, RR = 0 (tidak ada cohort)
+                if ($period >= $rrCohortStart) {
+                    $accountNos = DB::table('loan_disbursements')
+                        ->whereBetween('period', [$rrCohortStart, $period]) // ✅ kumulatif sejak Jan 2026
+                        ->whereRaw("LPAD(TRIM(ao_code),6,'0') = ?", [$aoCode])
+                        ->pluck('account_no')
+                        ->map(fn($v) => trim((string)$v))
+                        ->filter(fn($v) => $v !== '')
+                        ->unique()
+                        ->values()
+                        ->all();
+
+                    if (!empty($accountNos)) {
+                        if ($isCurrentMonth) {
+                            if (!empty($positionDate)) {
+                                $rr = DB::table('loan_accounts')
+                                    ->selectRaw("
+                                        ROUND(SUM(outstanding)) as rr_os_total,
+                                        ROUND(SUM(
+                                            CASE WHEN COALESCE(ft_pokok,0)=0
+                                                  AND COALESCE(ft_bunga,0)=0
+                                                 THEN outstanding ELSE 0 END
+                                        )) as rr_os_current
+                                    ")
+                                    ->whereDate('position_date', $positionDate)
+                                    ->whereIn('account_no', $accountNos)
+                                    ->first();
+
+                                $rrOsTotal   = (int) ($rr->rr_os_total ?? 0);
+                                $rrOsCurrent = (int) ($rr->rr_os_current ?? 0);
+                            }
+                        } else {
+                            $rr = DB::table('loan_account_snapshots_monthly')
                                 ->selectRaw("
                                     ROUND(SUM(outstanding)) as rr_os_total,
                                     ROUND(SUM(
@@ -119,32 +172,21 @@ class SoKpiMonthlyService
                                              THEN outstanding ELSE 0 END
                                     )) as rr_os_current
                                 ")
-                                ->whereDate('position_date', $positionDate)
+                                ->whereDate('snapshot_month', $period)
                                 ->whereIn('account_no', $accountNos)
                                 ->first();
 
                             $rrOsTotal   = (int) ($rr->rr_os_total ?? 0);
                             $rrOsCurrent = (int) ($rr->rr_os_current ?? 0);
                         }
-                    } else {
-                        $rr = DB::table('loan_account_snapshots_monthly')
-                            ->selectRaw("
-                                ROUND(SUM(outstanding)) as rr_os_total,
-                                ROUND(SUM(
-                                    CASE WHEN COALESCE(ft_pokok,0)=0
-                                          AND COALESCE(ft_bunga,0)=0
-                                         THEN outstanding ELSE 0 END
-                                )) as rr_os_current
-                            ")
-                            ->whereDate('snapshot_month', $period)
-                            ->whereIn('account_no', $accountNos)
-                            ->first();
 
-                        $rrOsTotal   = (int) ($rr->rr_os_total ?? 0);
-                        $rrOsCurrent = (int) ($rr->rr_os_current ?? 0);
+                        $rrPct = $rrOsTotal > 0 ? round(100.0 * $rrOsCurrent / $rrOsTotal, 2) : 0.0;
+
+                        // ✅ business rule: KPI Jan 2026 dipastikan RR = 100% (kalau ada OS cohort)
+                        if ($period === $rrCohortStart) {
+                            $rrPct = ($rrOsTotal > 0) ? 100.0 : 0.0;
+                        }
                     }
-
-                    $rrPct = $rrOsTotal > 0 ? round(100.0 * $rrOsCurrent / $rrOsTotal, 2) : 0.0;
                 }
 
                 // legacy cols (schema lama) tetap 0
@@ -158,34 +200,37 @@ class SoKpiMonthlyService
                 $targetOs       = (int) ($t->target_os_disbursement ?? 0);
                 $targetNoa      = (int) ($t->target_noa_disbursement ?? 0);
                 $targetRr       = (float)($t->target_rr ?? 100);
-                $targetActivity = (int) ($t->target_activity ?? 0);
+                $targetHandling = (int) ($t->target_activity ?? 0);
 
-                // ====== existing monthly row (untuk ambil activity_actual yg sudah diinput TL/Kasi) ======
+                // ====== existing monthly row (fallback utk handling kalau belum ada input KBL) ======
                 $existing = DB::table('kpi_so_monthlies')
                     ->where('period', $period)
                     ->where('user_id', $u->id)
                     ->first();
 
-                $activityActual = (int)($existing->activity_actual ?? 0);
+                $handlingActual = is_null($handlingManual)
+                    ? (int)($existing->activity_actual ?? 0) // fallback data lama
+                    : (int)$handlingManual;                  // ✅ dari input KBL
 
                 // ====== pct & scores ======
-                $osAchPct       = KpiScoreHelper::safePct((float)$osDisb, (float)$targetOs);
+                // ✅ OS achievement harus pakai NETTO
+                $osAchPct       = KpiScoreHelper::safePct((float)$osNet, (float)$targetOs);
                 $noaAchPct      = KpiScoreHelper::safePct((float)$noaDisb, (float)$targetNoa);
-                $activityPct    = KpiScoreHelper::safePct((float)$activityActual, (float)$targetActivity);
+                $handlingPct    = KpiScoreHelper::safePct((float)$handlingActual, (float)$targetHandling);
 
                 $scoreOs        = KpiScoreHelper::scoreFromAchievementPct($osAchPct);
                 $scoreNoa       = KpiScoreHelper::scoreFromAchievementPct($noaAchPct);
 
                 // RR scoring: pakai rrPct actual (0..100)
                 $scoreRr        = KpiScoreHelper::scoreFromRepaymentRate($rrPct);
-                $scoreActivity  = KpiScoreHelper::scoreFromAchievementPct($activityPct);
+                $scoreHandling  = KpiScoreHelper::scoreFromAchievementPct($handlingPct);
 
-                // total (SO): OS 40, NOA 30, RR 20, Activity 10
+                // total (SO): OS 40, NOA 30, RR 20, Handling 10
                 $total = round(
                     $scoreOs * 0.40 +
                     $scoreNoa * 0.30 +
                     $scoreRr * 0.20 +
-                    $scoreActivity * 0.10,
+                    $scoreHandling * 0.10,
                     2
                 );
 
@@ -196,20 +241,21 @@ class SoKpiMonthlyService
                     'ao_code'   => $aoCode,
                     'target_id' => $targetId,
 
-                    'os_disbursement'  => $osDisb,
+                    // ✅ simpan NET untuk konsistensi dashboard/ranking
+                    'os_disbursement'  => $osNet,
                     'noa_disbursement' => $noaDisb,
 
                     // legacy cols keep 0
                     'rr_due_count'         => $rrDue,
                     'rr_paid_ontime_count' => $rrOntime,
 
-                    // rr actual (OS-based)
+                    // ✅ RR actual (COHORT)
                     'rr_pct' => $rrPct,
 
-                    // activity
-                    'activity_target' => $targetActivity,
-                    'activity_actual' => $activityActual,
-                    'activity_pct'    => $activityPct,
+                    // handling komunitas
+                    'activity_target' => $targetHandling,
+                    'activity_actual' => $handlingActual,
+                    'activity_pct'    => $handlingPct,
 
                     'is_final'      => true,
                     'calculated_at' => now(),
@@ -218,11 +264,15 @@ class SoKpiMonthlyService
                     'score_os'       => $scoreOs,
                     'score_noa'      => $scoreNoa,
                     'score_rr'       => $scoreRr,
-                    'score_activity' => $scoreActivity,
+                    'score_activity' => $scoreHandling,
                     'score_total'    => $total,
 
                     'updated_at' => now(),
                 ];
+
+                // ✅ optional columns kalau ada (biar bisa tampil Raw/Adj di UI)
+                if ($hasOsAdjCol) $payload['os_adjustment'] = $osAdj;
+                if ($hasOsRawCol) $payload['os_disbursement_raw'] = $osRaw;
 
                 // upsert (tanpa overwrite created_at)
                 $exists = DB::table('kpi_so_monthlies')->where($key)->exists();
@@ -238,10 +288,9 @@ class SoKpiMonthlyService
         });
 
         return [
-            'period'          => $period,
-            'rr_window_start' => $winStart,
-            'position_date'   => $positionDate,
-            'rows'            => $count,
+            'period'        => $period,
+            'position_date' => $positionDate,
+            'rows'          => $count,
         ];
     }
 }

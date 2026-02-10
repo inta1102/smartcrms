@@ -29,6 +29,7 @@
       <a href="{{ $isSo
             ? route('kpi.so.targets.create', ['period' => $periodYmd])
             : route('kpi.marketing.targets.create', ['period' => $periodYmd])
+            
         }}"
         class="rounded-xl bg-slate-900 px-4 py-2 text-white text-sm font-semibold hover:bg-slate-800">
         + Buat Target

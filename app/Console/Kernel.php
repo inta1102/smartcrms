@@ -27,6 +27,7 @@ class Kernel extends ConsoleKernel
         \App\Console\Commands\ImportDisbursementsCsv::class,
         \App\Console\Commands\KpiAoBuild::class,
         \App\Console\Commands\KpiSoBuild::class,
+        \App\Console\Commands\KpiOsDailySnapshot::class,
     ];
 
     protected function schedule(Schedule $schedule): void
@@ -87,6 +88,12 @@ class Kernel extends ConsoleKernel
             ->everyMinute()
             ->withoutOverlapping()
             ->runInBackground();
+
+            // ambil position_date terbaru otomatis
+        $schedule->command('kpi:os-daily-snapshot')
+            ->dailyAt('23:30')
+            ->withoutOverlapping()
+            ->onOneServer();
     }
 
     /**

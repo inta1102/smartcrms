@@ -8,18 +8,16 @@
   $periodYm = $periodYm ?? request('period', $period->format('Y-m'));
   $roleSel  = $role ?? request('role', 'SO');
 
-  // Pastikan periodYm selalu tersedia dari controller atau fallback dari request
-  $periodYm = $periodYm ?? request('period', $period->format('Y-m'));
-  $roleSel  = $role ?? request('role', 'SO');
-
   // ✅ period date (Y-m-01) buat parameter route
   $periodYmd = $periodYm . '-01';
 
   // ✅ tombol "Buat Target" harus ngarah sesuai role
-  $createTargetUrl = $roleSel === 'SO'
-      ? route('kpi.so.targets.create', ['period' => $periodYmd])
-      : route('kpi.marketing.targets.create', ['period' => $periodYmd]); // AO/marketing
+  // $createTargetUrl = $roleSel === 'SO'
+  //    ? route('kpi.so.targets.index', ['period' => $periodYmd])
+  //    : route('kpi.marketing.targets.create', ['period' => $periodYmd]); // AO/marketing
 
+  // ✅ akses input komunitas hanya KBL (sesuai request terbaru)
+  $canInputSoCommunity = $roleSel === 'SO' && auth()->user()?->hasAnyRole(['KBL']);
 @endphp
 
 <div class="max-w-6xl mx-auto p-4">
@@ -52,48 +50,56 @@
       </form>
 
       {{-- ✅ ACTIONS (POST/LINK) - JANGAN di dalam form GET --}}
-        <div class="flex gap-2">
-            <a href="{{ $createTargetUrl }}"
+      <div class="flex gap-2">
+
+        @if($roleSel === 'SO' && auth()->user()?->hasAnyRole(['KBL']))
+          <a href="{{ route('kpi.so.targets.index', ['period' => $periodYm]) }}"
             class="rounded-xl bg-slate-900 px-4 py-2 text-white text-sm font-semibold hover:bg-slate-800">
-            + Buat Target {{ $roleSel }}
-            </a>
+            + Buat Target SO
+          </a>
+        @endif
 
-            {{-- ✅ Input Handling (khusus SO & role tertentu) --}}
-            @if($roleSel === 'SO' && auth()->user()?->hasAnyRole(['TLL','TLR','KSR','KSL','KBL']))
-                <a href="{{ route('kpi.so.handling.index', ['period' => $periodYm . '-01']) }}"
-                class="rounded-xl bg-indigo-600 px-4 py-2 text-white text-sm font-semibold hover:bg-indigo-700">
-                ✍️ Input Handling
-                </a>
-            @endif
+        {{-- ✅ Input Community Handling + OS Adjustment (KBL only, SO only) --}}
+        @if($canInputSoCommunity)
+          <a href="{{ route('kpi.so.community_input.index', ['period' => $periodYmd]) }}"
+             class="rounded-xl bg-indigo-600 px-4 py-2 text-white text-sm font-semibold hover:bg-indigo-700">
+            ✍️ Input Komunitas & Adjustment
+          </a>
+        @endif
 
-            {{-- Recalc hanya untuk yang punya permission --}}
-            @can('recalcMarketingKpi')
-                {{-- Recalc AO --}}
-                <form method="POST"
-                    action="{{ route('kpi.recalc.ao') }}"
-                    onsubmit="return confirm('Recalc KPI AO untuk periode ini?')">
-                @csrf
-                <input type="hidden" name="period" value="{{ $periodYm }}">
-                <input type="hidden" name="role" value="{{ $roleSel }}">
-                <button class="rounded-xl bg-amber-600 px-4 py-2 text-white text-sm font-semibold hover:bg-amber-700">
-                    🔄 Recalc AO
-                </button>
-                </form>
+        {{-- Recalc hanya untuk yang punya permission --}}
+        @can('recalcMarketingKpi')
 
-                {{-- Recalc SO --}}
-                <form method="POST"
-                    action="{{ route('kpi.recalc.so') }}"
-                    onsubmit="return confirm('Recalc KPI SO untuk periode ini?')">
-                @csrf
-                <input type="hidden" name="period" value="{{ $periodYm }}">
-                <input type="hidden" name="role" value="{{ $roleSel }}">
-                <button class="rounded-xl bg-sky-600 px-4 py-2 text-white text-sm font-semibold hover:bg-sky-700">
-                    🔄 Recalc SO
-                </button>
-                </form>
-            @endcan
+          @if($roleSel === 'AO')
+            {{-- Recalc AO --}}
+            <form method="POST"
+                  action="{{ route('kpi.recalc.ao') }}"
+                  onsubmit="return confirm('Recalc KPI AO untuk periode ini?')">
+              @csrf
+              <input type="hidden" name="period" value="{{ $periodYm }}">
+              <input type="hidden" name="role" value="{{ $roleSel }}">
+              <button class="rounded-xl bg-amber-600 px-4 py-2 text-white text-sm font-semibold hover:bg-amber-700">
+                🔄 Recalc AO
+              </button>
+            </form>
 
-        </div>
+          @elseif($roleSel === 'SO')
+            {{-- Recalc SO --}}
+            <form method="POST"
+                  action="{{ route('kpi.recalc.so') }}"
+                  onsubmit="return confirm('Recalc KPI SO untuk periode ini?')">
+              @csrf
+              <input type="hidden" name="period" value="{{ $periodYm }}">
+              <input type="hidden" name="role" value="{{ $roleSel }}">
+              <button class="rounded-xl bg-sky-600 px-4 py-2 text-white text-sm font-semibold hover:bg-sky-700">
+                🔄 Recalc SO
+              </button>
+            </form>
+          @endif
+
+        @endcan
+
+      </div>
 
     </div>
   </div>
@@ -106,6 +112,15 @@
 
     <div class="space-y-6">
       @foreach($items as $it)
+        @php
+          // ✅ Support tampilan Raw/Adj jika kolom tersedia di hasil query (service sudah conditional write)
+          $osRaw = $it->os_disbursement_raw ?? null;
+          $osAdj = $it->os_adjustment ?? null;
+
+          $hasOsMeta = !is_null($osRaw) || !is_null($osAdj);
+          $osAdjVal  = (int)($osAdj ?? 0);
+        @endphp
+
         <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
           <div class="px-5 py-4 border-b border-slate-200 flex items-start justify-between gap-3">
             <div>
@@ -142,9 +157,37 @@
               <tbody class="divide-y divide-slate-200">
                 @if($roleSel==='SO')
                   <tr>
-                    <td class="px-3 py-2 font-semibold">Target OS Realisasi</td>
-                    <td class="px-3 py-2 text-right">Rp {{ number_format((int)($it->target_os_disbursement ?? 0),0,',','.') }}</td>
-                    <td class="px-3 py-2 text-right">Rp {{ number_format((int)($it->os_disbursement ?? 0),0,',','.') }}</td>
+                    <td class="px-3 py-2 font-semibold">
+                      Target OS Realisasi
+                      @if(($it->os_adjustment ?? 0) > 0)
+                        <span class="ml-1 inline-block rounded bg-amber-100 text-amber-800 text-xs px-2 py-0.5">
+                          adjusted
+                        </span>
+                      @endif
+                    </td>
+
+
+                    <td class="px-3 py-2 text-right">
+                      Rp {{ number_format((int)($it->target_os_disbursement ?? 0),0,',','.') }}
+                    </td>
+
+                    <td class="px-3 py-2 text-right">
+                      {{-- ✅ Actual OS yang tampil = NET (service sudah simpan os_disbursement = net) --}}
+                      Rp {{ number_format((int)($it->os_disbursement ?? 0),0,',','.') }}
+
+                      {{-- ✅ info raw & adjustment (jika tersedia) --}}
+                      @if($hasOsMeta && $osAdjVal > 0)
+                        <div class="text-xs text-slate-500 mt-1">
+                          Total realisasi: Rp {{ number_format((int)($osRaw ?? 0),0,',','.') }} <br>
+                          Dikurangi penyesuaian: Rp {{ number_format((int)($osAdjVal),0,',','.') }} <br>
+                          <span class="italic text-slate-400">
+                            (yang dihitung sebagai kinerja SO: Rp {{ number_format((int)($it->os_disbursement ?? 0),0,',','.') }})
+                          </span>
+                        </div>
+                      @endif
+
+                    </td>
+
                     <td class="px-3 py-2 text-right">{{ number_format((float)($it->ach_os ?? 0),2) }}%</td>
                     <td class="px-3 py-2 text-center font-bold">{{ (int)($it->score_os ?? 0) }}</td>
                     <td class="px-3 py-2 text-right">{{ (int)round($weights['os']*100) }}%</td>

@@ -73,6 +73,7 @@ use App\Http\Controllers\Kpi\SoHandlingController;
 use App\Http\Controllers\Kpi\SoTargetController;
 
 use App\Http\Controllers\Kpi\KpiTargetRouterController;
+// use App\Http\Controllers\Kpi\KpiMarketingAoController;
 
 
 Route::model('action', LegalAction::class);
@@ -545,9 +546,9 @@ Route::middleware('auth')->group(function () {
 
     
     // routes/web.php
-    Route::get('/kpi/marketing/ao/{user}', 
-        [KpiMarketingAoController::class, 'show']
-    )->name('kpi.marketing.ao.show');
+    // Route::get('/kpi/marketing/ao/{user}', 
+    //     [KpiMarketingAoController::class, 'show']
+    // )->name('kpi.marketing.ao.show');
 
     Route::get('/kpi/marketing/sheet', [MarketingKpiSheetController::class, 'index'])
         ->name('kpi.marketing.sheet');
@@ -558,10 +559,25 @@ Route::middleware('auth')->group(function () {
 
 });    
 
+use App\Http\Controllers\Kpi\SoCommunityInputController;
+
+Route::middleware(['auth', 'role:KBL'])->group(function () {
+    Route::get('/kpi/so/community-input', [SoCommunityInputController::class, 'index'])
+        ->name('kpi.so.community_input.index');
+
+    Route::post('/kpi/so/community-input', [SoCommunityInputController::class, 'store'])
+        ->name('kpi.so.community_input.store');
+});
 
 Route::middleware(['auth'])->prefix('kpi/so')->name('kpi.so.')->group(function () {
-    Route::get('/handling', [SoHandlingController::class, 'index'])->name('handling.index');
-    Route::post('/handling/save', [SoHandlingController::class, 'save'])->name('handling.save');
+    // ✅ Target SO: hanya KBL
+    Route::middleware('role:KBL')->group(function () {
+        Route::get('targets', [\App\Http\Controllers\Kpi\SoKpiTargetController::class, 'index'])
+            ->name('targets.index');
+
+        Route::post('targets', [\App\Http\Controllers\Kpi\SoKpiTargetController::class, 'store'])
+            ->name('targets.store');
+    });
 });
 
 Route::prefix('kpi/so')->name('kpi.so.')->middleware('auth')->group(function () {
@@ -585,6 +601,13 @@ Route::prefix('kpi/so')->name('kpi.so.')->middleware('auth')->group(function () 
         ->name('approvals.reject');
 });
 
+use App\Http\Controllers\Kpi\TlOsDailyDashboardController;
+
+Route::prefix('kpi/tl')->name('kpi.tl.')->middleware(['auth'])->group(function () {
+    Route::get('os-daily', [TlOsDailyDashboardController::class, 'index'])
+        ->middleware('can:viewTlOsDashboard')
+        ->name('os_daily.index');
+});
 
 // =========================
 // LEGAL PROPOSALS (USULAN)
