@@ -303,7 +303,7 @@ class RoOsDailyDashboardController extends Controller
         }
 
         // catatan kejujuran data
-        $why[] = "Catatan: penyebab OS naik/turun per rekening (harian) belum bisa diuraikan akurat kalau loan_accounts hanya menyimpan posisi terakhir. Kalau mau analisis sebab OS harian (rekening mana naik/turun), kita perlu snapshot harian per rekening.";
+        // $why[] = "Catatan: penyebab OS naik/turun per rekening (harian) belum bisa diuraikan akurat kalau loan_accounts hanya menyimpan posisi terakhir. Kalau mau analisis sebab OS harian (rekening mana naik/turun), kita perlu snapshot harian per rekening.";
 
         return compact('good','bad','why');
     }
