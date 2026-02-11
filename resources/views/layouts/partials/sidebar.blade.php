@@ -347,6 +347,21 @@
             ],
             
             [
+                'label'  => 'Kinerja RO',
+                'icon'   => '📅',
+                'href'   => route('kpi.tl.os-daily'),
+                'active' => $isRkhActive,
+                'show'   => $u && $u->hasAnyRole(['TLRO']),
+            ],
+            [
+                'label'  => 'Kinerja RO',
+                'icon'   => '📅',
+                'href'   => route('kpi.ro.os-daily'),
+                'active' => $isRkhActive,
+                'show'   => $u && $u->hasAnyRole(['RO']),
+            ],
+
+            [
                 'label'  => 'NPL Cases',
                 'icon'   => '📁',
                 'href'   => route('cases.index'),
