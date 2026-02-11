@@ -67,12 +67,12 @@
                            placeholder="Nomor SHM (opsional)">
                 </div>
 
-                <div>
+                <!-- <div>
                     <label class="text-xs font-semibold text-slate-600">Nama Notaris</label>
                     <input type="text" name="notary_name" value="{{ old('notary_name') }}"
                            class="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none"
                            placeholder="Notaris (opsional)">
-                </div>
+                </div> -->
 
                 <div class="sm:col-span-2">
                     <label class="text-xs font-semibold text-slate-600">Catatan</label>

@@ -19,31 +19,35 @@ class RkhWriter
             );
 
             // bersihin detail lama kalau kamu ingin store sebagai "replace all"
-            // (opsi aman untuk UI tabel)
             $header->details()->delete();
 
             foreach ($items as $row) {
+                // normalize account_no (optional)
+                $accountNo = isset($row['account_no']) ? trim((string)$row['account_no']) : null;
+                if ($accountNo === '') $accountNo = null;
+
                 /** @var RkhDetail $detail */
                 $detail = $header->details()->create([
-                    'jam_mulai' => $row['jam_mulai'],
-                    'jam_selesai' => $row['jam_selesai'],
-                    'nasabah_id' => $row['nasabah_id'] ?? null,
-                    'nama_nasabah' => $row['nama_nasabah'] ?? null,
-                    'kolektibilitas' => $row['kolektibilitas'] ?? null,
-                    'jenis_kegiatan' => $row['jenis_kegiatan'],
+                    'jam_mulai'       => $row['jam_mulai'],
+                    'jam_selesai'     => $row['jam_selesai'],
+                    'nasabah_id'      => $row['nasabah_id'] ?? null,
+                    'account_no'      => $accountNo,                 // ✅ tambahan
+                    'nama_nasabah'    => $row['nama_nasabah'] ?? null,
+                    'kolektibilitas'  => $row['kolektibilitas'] ?? null,
+                    'jenis_kegiatan'  => $row['jenis_kegiatan'],
                     'tujuan_kegiatan' => $row['tujuan_kegiatan'],
-                    'area' => $row['area'] ?? null,
-                    'catatan' => $row['catatan'] ?? null,
+                    'area'            => $row['area'] ?? null,
+                    'catatan'         => $row['catatan'] ?? null,
                 ]);
 
                 // networking (wajib jika pengembangan_jaringan, sudah divalidasi request)
                 if (($row['jenis_kegiatan'] ?? '') === 'pengembangan_jaringan') {
                     $net = (array)($row['networking'] ?? []);
                     $detail->networking()->create([
-                        'nama_relasi' => (string)($net['nama_relasi'] ?? ''),
+                        'nama_relasi'  => (string)($net['nama_relasi'] ?? ''),
                         'jenis_relasi' => (string)($net['jenis_relasi'] ?? 'lainnya'),
-                        'potensi' => $net['potensi'] ?? null,
-                        'follow_up' => $net['follow_up'] ?? null,
+                        'potensi'      => $net['potensi'] ?? null,
+                        'follow_up'    => $net['follow_up'] ?? null,
                     ]);
                 }
             }
@@ -70,25 +74,30 @@ class RkhWriter
             $header->details()->delete();
 
             foreach ($items as $row) {
+                // normalize account_no (optional)
+                $accountNo = isset($row['account_no']) ? trim((string)$row['account_no']) : null;
+                if ($accountNo === '') $accountNo = null;
+
                 $detail = $header->details()->create([
-                    'jam_mulai' => $row['jam_mulai'],
-                    'jam_selesai' => $row['jam_selesai'],
-                    'nasabah_id' => $row['nasabah_id'] ?? null,
-                    'nama_nasabah' => $row['nama_nasabah'] ?? null,
-                    'kolektibilitas' => $row['kolektibilitas'] ?? null,
-                    'jenis_kegiatan' => $row['jenis_kegiatan'],
+                    'jam_mulai'       => $row['jam_mulai'],
+                    'jam_selesai'     => $row['jam_selesai'],
+                    'nasabah_id'      => $row['nasabah_id'] ?? null,
+                    'account_no'      => $accountNo,                 // ✅ tambahan
+                    'nama_nasabah'    => $row['nama_nasabah'] ?? null,
+                    'kolektibilitas'  => $row['kolektibilitas'] ?? null,
+                    'jenis_kegiatan'  => $row['jenis_kegiatan'],
                     'tujuan_kegiatan' => $row['tujuan_kegiatan'],
-                    'area' => $row['area'] ?? null,
-                    'catatan' => $row['catatan'] ?? null,
+                    'area'            => $row['area'] ?? null,
+                    'catatan'         => $row['catatan'] ?? null,
                 ]);
 
                 if (($row['jenis_kegiatan'] ?? '') === 'pengembangan_jaringan') {
                     $net = (array)($row['networking'] ?? []);
                     $detail->networking()->create([
-                        'nama_relasi' => (string)($net['nama_relasi'] ?? ''),
+                        'nama_relasi'  => (string)($net['nama_relasi'] ?? ''),
                         'jenis_relasi' => (string)($net['jenis_relasi'] ?? 'lainnya'),
-                        'potensi' => $net['potensi'] ?? null,
-                        'follow_up' => $net['follow_up'] ?? null,
+                        'potensi'      => $net['potensi'] ?? null,
+                        'follow_up'    => $net['follow_up'] ?? null,
                     ]);
                 }
             }

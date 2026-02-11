@@ -131,7 +131,7 @@ class ShmCheckRequestController extends Controller
                 'debtor_phone' => $data['debtor_phone'] ?? null,
                 'collateral_address' => $data['collateral_address'] ?? null,
                 'certificate_no' => $data['certificate_no'] ?? null,
-                'notary_name' => $data['notary_name'] ?? null,
+                // 'notary_name' => $data['notary_name'] ?? null,
                 'is_jogja' => (bool)($data['is_jogja'] ?? false),
 
                 'status' => ShmCheckRequest::STATUS_SUBMITTED,

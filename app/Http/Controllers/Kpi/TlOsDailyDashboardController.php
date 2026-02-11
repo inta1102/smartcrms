@@ -15,18 +15,17 @@ class TlOsDailyDashboardController extends Controller
         $me = auth()->user();
         abort_unless($me, 403);
 
-        // range default: last 30 days dari data yang ada
+        // ===== range default: last 30 days dari data yang ada =====
         $latest = DB::table('kpi_os_daily_aos')->max('position_date');
         $latest = $latest ? Carbon::parse($latest) : now();
 
         $to   = $request->query('to') ? Carbon::parse($request->query('to')) : $latest;
         $from = $request->query('from') ? Carbon::parse($request->query('from')) : $to->copy()->subDays(29);
 
-        // pakai date saja (Y-m-d)
         $from = $from->startOfDay();
         $to   = $to->endOfDay();
 
-        // ====== ambil bawahan leader (TL/Wisnu) ======
+        // ===== ambil staff bawahan TL =====
         $staff = $this->subordinateStaffForLeader((int) $me->id);
 
         // fallback: kalau tidak ada bawahan, pakai TL sendiri jika punya ao_code
@@ -42,9 +41,26 @@ class TlOsDailyDashboardController extends Controller
             }
         }
 
+        // ===== AO filter (optional) =====
+        $aoFilter = trim((string) $request->query('ao', ''));
+        $aoFilter = $aoFilter !== '' ? str_pad($aoFilter, 6, '0', STR_PAD_LEFT) : '';
+
+        // ao options (dropdown)
+        $aoOptions = $staff->map(function ($u) {
+            return [
+                'ao_code' => $u->ao_code,
+                'label'   => "{$u->name} ({$u->level}) - {$u->ao_code}",
+            ];
+        })->values()->all();
+
+        // staff scope by filter
+        if ($aoFilter !== '') {
+            $staff = $staff->filter(fn($u) => $u->ao_code === $aoFilter)->values();
+        }
+
         $aoCodes = $staff->pluck('ao_code')->unique()->values()->all();
 
-        // ====== labels tanggal lengkap (biar tanggal bolong tetap ada) ======
+        // ===== labels tanggal lengkap (biar tanggal bolong tetap ada) =====
         $labels = [];
         $cursor = $from->copy()->startOfDay();
         $end    = $to->copy()->startOfDay();
@@ -53,14 +69,14 @@ class TlOsDailyDashboardController extends Controller
             $cursor->addDay();
         }
 
-        // ====== ambil data per hari per ao_code (multi series) ======
-        // NOTE: pakai SUM untuk safety kalau ada duplikasi row ao_code+date
+        // ===== ambil data harian per ao_code =====
         $rows = DB::table('kpi_os_daily_aos')
             ->selectRaw("
-                position_date as d,
+                DATE(position_date) as d,
                 LPAD(TRIM(ao_code),6,'0') as ao_code,
                 ROUND(SUM(os_total)) as os_total,
-                ROUND(SUM(noa_total)) as noa_total
+                ROUND(SUM(os_l0)) as os_l0,
+                ROUND(SUM(os_lt)) as os_lt
             ")
             ->whereBetween('position_date', [$from->toDateString(), $to->toDateString()])
             ->when(!empty($aoCodes), fn ($q) => $q->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $aoCodes))
@@ -68,117 +84,144 @@ class TlOsDailyDashboardController extends Controller
             ->orderBy('d')
             ->get();
 
-        // map[ao_code][date] = os_total
+        // map[ao_code][date] = ['os_total'=>..., 'os_l0'=>..., 'os_lt'=>...]
         $map = [];
         foreach ($rows as $r) {
-            $map[$r->ao_code][$r->d] = (int) $r->os_total;
+            $map[$r->ao_code][$r->d] = [
+                'os_total' => (int)($r->os_total ?? 0),
+                'os_l0'    => (int)($r->os_l0 ?? 0),
+                'os_lt'    => (int)($r->os_lt ?? 0),
+            ];
         }
 
-        // ====== summary card (TOTAL: latest vs prev day, across all staff) ======
-        $latestOs = 0;
-        $prevOs   = 0;
-        $delta    = 0;
-
+        // ===== summary total (latest vs prev) across staff =====
         $latestDate = count($labels) ? $labels[count($labels) - 1] : null;
         $prevDate   = count($labels) >= 2 ? $labels[count($labels) - 2] : null;
 
+        $latestOs = 0;
+        $prevOs   = 0;
+
         if ($latestDate) {
             foreach ($aoCodes as $ao) {
-                $latestOs += (int) ($map[$ao][$latestDate] ?? 0);
-                if ($prevDate) {
-                    $prevOs += (int) ($map[$ao][$prevDate] ?? 0);
-                }
+                $latestOs += (int)($map[$ao][$latestDate]['os_total'] ?? 0);
+                if ($prevDate) $prevOs += (int)($map[$ao][$prevDate]['os_total'] ?? 0);
             }
-            $delta = $latestOs - $prevOs;
         }
+        $delta = $latestOs - $prevOs;
 
-        // ====== inject OS terakhir ke staff (buat UI card: tampil OS bukan ao_code) ======
+        // ===== inject OS terakhir ke staff untuk sort legend lebih enak =====
         $staff = $staff->map(function ($u) use ($map, $latestDate) {
-            $u->os_latest = $latestDate ? (int) ($map[$u->ao_code][$latestDate] ?? 0) : 0;
+            $u->os_latest = $latestDate ? (int)($map[$u->ao_code][$latestDate]['os_total'] ?? 0) : 0;
             return $u;
-        })
-        ->sortByDesc('os_latest')
-        ->values();
+        })->sortByDesc('os_latest')->values();
 
-        // refresh aoCodes mengikuti urutan staff (biar dataset/card consistent)
+        // refresh aoCodes mengikuti urutan staff
         $aoCodes = $staff->pluck('ao_code')->unique()->values()->all();
 
-        // ====== datasets per staff (1 garis per orang/ao_code) ======
-        // missing date: null (bukan 0) supaya chart putus, tidak misleading
-        $datasets = $staff->map(function ($u) use ($labels, $map) {
-            $data = [];
+        // ===== builder dataset per metric =====
+        $datasetsByMetric = [
+            'os_total' => [],
+            'os_l0'    => [],
+            'os_lt'    => [],
+            'rr'       => [],
+            'pct_lt'   => [],
+        ];
+
+        foreach ($staff as $u) {
+            $seriesTotal = [];
+            $seriesL0    = [];
+            $seriesLT    = [];
+            $seriesRR    = [];
+            $seriesPctLT = [];
+
             foreach ($labels as $d) {
-                $data[] = $map[$u->ao_code][$d] ?? null;
+                $osTotal = $map[$u->ao_code][$d]['os_total'] ?? null;
+                $osL0    = $map[$u->ao_code][$d]['os_l0'] ?? null;
+                $osLT    = $map[$u->ao_code][$d]['os_lt'] ?? null;
+
+                // kalau tidak ada snapshot di hari itu: null (biar putus)
+                if ($osTotal === null && $osL0 === null && $osLT === null) {
+                    $seriesTotal[] = null;
+                    $seriesL0[]    = null;
+                    $seriesLT[]    = null;
+                    $seriesRR[]    = null;
+                    $seriesPctLT[] = null;
+                    continue;
+                }
+
+                $seriesTotal[] = (int)($osTotal ?? 0);
+                $seriesL0[]    = (int)($osL0 ?? 0);
+                $seriesLT[]    = (int)($osLT ?? 0);
+
+                $den = (int)($osTotal ?? 0);
+                $rr = $den > 0 ? ((int)($osL0 ?? 0) / $den) * 100 : null;
+                $pctLt = $den > 0 ? ((int)($osLT ?? 0) / $den) * 100 : null;
+
+                $seriesRR[]    = $rr === null ? null : round($rr, 2);
+                $seriesPctLT[] = $pctLt === null ? null : round($pctLt, 2);
             }
 
-            return [
-                'key'   => $u->ao_code, // buat toggling
-                'label' => "{$u->name} ({$u->level})", // lebih bersih (AO code nanti di card aja)
-                'data'  => $data,
-            ];
-        })->values()->all();
+            $label = "{$u->name} ({$u->level})";
 
-        // ====== Debitur jatuh tempo bulan ini (scope TL) ======
-        $now = now();
+            $datasetsByMetric['os_total'][] = ['key' => $u->ao_code, 'label' => $label, 'data' => $seriesTotal];
+            $datasetsByMetric['os_l0'][]    = ['key' => $u->ao_code, 'label' => $label, 'data' => $seriesL0];
+            $datasetsByMetric['os_lt'][]    = ['key' => $u->ao_code, 'label' => $label, 'data' => $seriesLT];
+            $datasetsByMetric['rr'][]       = ['key' => $u->ao_code, 'label' => $label, 'data' => $seriesRR];
+            $datasetsByMetric['pct_lt'][]   = ['key' => $u->ao_code, 'label' => $label, 'data' => $seriesPctLT];
+        }
+
+        // ===== posisi terakhir loan_accounts untuk tabel bawah =====
+        $latestPosDate = $latestDate ? Carbon::parse($latestDate)->toDateString() : now()->toDateString();
+
+        // 1) JT bulan ini
+        $now = Carbon::parse($latestPosDate);
         $monthStart = $now->copy()->startOfMonth()->toDateString();
         $monthEnd   = $now->copy()->endOfMonth()->toDateString();
 
         $dueThisMonth = DB::table('loan_accounts as la')
             ->select([
                 'la.account_no',
-                'la.customer_name',      // sesuaikan kolom
-                'la.ao_code',
-                'la.outstanding',          // sesuaikan kolom OS di loan_accounts
+                'la.customer_name',
+                DB::raw("LPAD(TRIM(la.ao_code),6,'0') as ao_code"),
+                DB::raw("ROUND(la.outstanding) as outstanding"),
                 'la.maturity_date',
-                'la.kolek',             // optional
-                'la.dpd',               // optional
+                'la.kolek',
+                'la.dpd',
             ])
             ->whereNotNull('la.maturity_date')
             ->whereBetween('la.maturity_date', [$monthStart, $monthEnd])
-            ->when(!empty($aoCodes), function ($q) use ($aoCodes) {
-                $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes);
-            })
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
             ->orderBy('la.maturity_date')
             ->orderByDesc('la.outstanding')
-            ->limit(200) // biar aman, bisa paginate nanti
+            ->limit(300)
             ->get();
 
+        // 2) LT posisi terakhir
+        $ltLatest = DB::table('loan_accounts as la')
+            ->select([
+                'la.account_no',
+                'la.customer_name',
+                DB::raw("LPAD(TRIM(la.ao_code),6,'0') as ao_code"),
+                DB::raw("ROUND(la.outstanding) as os"),
+                'la.ft_pokok',
+                'la.ft_bunga',
+                'la.dpd',
+                'la.kolek',
+            ])
+            ->whereDate('la.position_date', $latestPosDate)
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
+            ->where(function ($q) {
+                $q->where('la.ft_pokok', 1)->orWhere('la.ft_bunga', 1);
+            })
+            ->orderByDesc('la.outstanding')
+            ->limit(300)
+            ->get();
 
-        // ====== top AO pada latestDate (OS terbesar) ======
-        $topAo = [];
-        if ($latestDate && !empty($aoCodes)) {
-            $topAo = DB::table('kpi_os_daily_aos as d')
-                ->leftJoin('users as u', DB::raw("LPAD(TRIM(u.ao_code),6,'0')"), '=', DB::raw("LPAD(TRIM(d.ao_code),6,'0')"))
-                ->select([
-                    DB::raw("LPAD(TRIM(d.ao_code),6,'0') as ao_code"),
-                    'u.name',
-                    DB::raw("ROUND(SUM(d.os_total)) as os_total"),
-                    DB::raw("ROUND(SUM(d.noa_total)) as noa_total"),
-                ])
-                ->whereDate('d.position_date', $latestDate)
-                ->whereIn(DB::raw("LPAD(TRIM(d.ao_code),6,'0')"), $aoCodes)
-                ->groupBy('ao_code', 'u.name')
-                ->orderByDesc('os_total')
-                ->limit(15)
-                ->get();
-        }
-
-        // =========================
-        // Debitur "Migrasi Tunggakan":
-        // bulan lalu ft_pokok=0 & ft_bunga=0 -> posisi terakhir jadi >0
-        // =========================
-        $latestPosDate = $latestDate ? Carbon::parse($latestDate)->toDateString() : now()->toDateString();
-
-        // bulan ini (untuk label section)
-        $monthStart = Carbon::parse($latestPosDate)->startOfMonth()->toDateString();
-        $monthEnd   = Carbon::parse($latestPosDate)->endOfMonth()->toDateString();
-
-        // baseline bulan lalu = snapshot_month = startOfMonth(prev)
+        // 3) L0 -> LT bulan ini (pakai snapshot_monthly bulan lalu vs posisi terakhir)
         $prevSnapMonth = Carbon::parse($latestPosDate)->subMonth()->startOfMonth()->toDateString();
-
-        $perPage = (int) $request->query('per_page', 10);
-        if ($perPage <= 0) $perPage = 10;
-        if ($perPage > 200) $perPage = 200; // safety
+        $perPage = (int) $request->query('per_page', 25);
+        if ($perPage <= 0) $perPage = 25;
+        if ($perPage > 200) $perPage = 200;
 
         $migrasiTunggakan = DB::table('loan_account_snapshots_monthly as m')
             ->join('loan_accounts as la', 'la.account_no', '=', 'm.account_no')
@@ -193,54 +236,120 @@ class TlOsDailyDashboardController extends Controller
                 'la.kolek',
             ])
             ->whereDate('m.snapshot_month', $prevSnapMonth)
+            ->whereDate('la.position_date', $latestPosDate)
             ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
             ->where('m.ft_pokok', 0)
             ->where('m.ft_bunga', 0)
             ->where(function ($q) {
-                $q->where('la.ft_pokok', '>', 0)
-                ->orWhere('la.ft_bunga', '>', 0);
+                $q->where('la.ft_pokok', '>', 0)->orWhere('la.ft_bunga', '>', 0);
             })
-            ->whereDate('la.position_date', $latestPosDate)
             ->orderByDesc('os')
             ->paginate($perPage)
-            ->appends($request->query()); // penting: keep from/to/per_page
+            ->appends($request->query());
 
+        // 4) JT angsuran minggu ini
+        $weekStartC = Carbon::parse($latestPosDate)->startOfWeek(Carbon::MONDAY);
+        $weekEndC   = Carbon::parse($latestPosDate)->endOfWeek(Carbon::SUNDAY);
+
+        $weekStart = $weekStartC->toDateString();
+        $weekEnd   = $weekEndC->toDateString();
+
+        // due_date = YYYY-MM- + installment_day (dibaca pada bulan posisi terakhir)
+        $ym = Carbon::parse($latestPosDate)->format('Y-m');
+
+        // bikin expression due_date (MySQL)
+        $dueDateExpr = "STR_TO_DATE(CONCAT('$ym','-',LPAD(la.installment_day,2,'0')),'%Y-%m-%d')";
+
+        $jtAngsuran = DB::table('loan_accounts as la')
+            ->select([
+                'la.account_no',
+                'la.customer_name',
+                DB::raw("LPAD(TRIM(la.ao_code),6,'0') as ao_code"),
+                DB::raw("ROUND(la.outstanding) as os"),
+                'la.installment_day',
+                'la.ft_pokok',
+                'la.ft_bunga',
+                'la.dpd',
+                'la.kolek',
+                DB::raw("$dueDateExpr as due_date"),
+            ])
+            ->whereDate('la.position_date', $latestPosDate)
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
+            ->whereNotNull('la.installment_day')
+            ->where('la.installment_day', '>=', 1)
+            ->where('la.installment_day', '<=', 31)
+            // ✅ FILTER MINGGU INI YANG BENAR
+            ->whereBetween(DB::raw($dueDateExpr), [$weekStart, $weekEnd])
+            ->orderBy(DB::raw($dueDateExpr))
+            ->orderByDesc('la.outstanding')
+            ->limit(300)
+            ->get();
+
+        // 5) OS >= 500jt
+        $bigThreshold = 500000000;
+
+        $osBig = DB::table('loan_accounts as la')
+            ->select([
+                'la.account_no',
+                'la.customer_name',
+                DB::raw("LPAD(TRIM(la.ao_code),6,'0') as ao_code"),
+                DB::raw("ROUND(la.outstanding) as os"),
+                'la.ft_pokok',
+                'la.ft_bunga',
+                'la.dpd',
+                'la.kolek',
+            ])
+            ->whereDate('la.position_date', $latestPosDate)
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
+            ->where('la.outstanding', '>=', $bigThreshold)
+            ->orderByDesc('la.outstanding')
+            ->limit(300)
+            ->get();
 
         return view('kpi.tl.os_daily', [
             'from'     => $from->toDateString(),
             'to'       => $to->toDateString(),
+
             'labels'   => $labels,
-            'datasets' => $datasets,
+            'datasetsByMetric' => $datasetsByMetric,
 
             'latestOs' => $latestOs,
             'prevOs'   => $prevOs,
             'delta'    => $delta,
 
-            'topAo'    => $topAo,
             'staff'    => $staff,
             'aoCount'  => count($aoCodes),
 
-            // opsional kalau kamu mau tampilkan di view
             'latestDate' => $latestDate,
             'prevDate'   => $prevDate,
+            'latestPosDate' => $latestPosDate,
+
+            'aoOptions' => $aoOptions,
+            'aoFilter'  => $aoFilter,
+
+            // tables
             'dueThisMonth' => $dueThisMonth,
-            'dueMonthLabel' => now()->translatedFormat('F Y'),
+            'dueMonthLabel' => Carbon::parse($latestPosDate)->translatedFormat('F Y'),
+
+            'ltLatest' => $ltLatest,
 
             'migrasiTunggakan' => $migrasiTunggakan,
             'prevSnapMonth'    => $prevSnapMonth,
-            'latestPosDate'    => $latestPosDate,
+
+            'weekStart' => $weekStart,
+            'weekEnd'   => $weekEnd,
+            'jtAngsuran' => $jtAngsuran,
+
+            'bigThreshold' => $bigThreshold,
+            'osBig' => $osBig,
         ]);
     }
 
-    /**
-     * Ambil staff bawahan leader dari org_assignments aktif,
-     * hasil: collection of {id,name,level,ao_code}
-     */
     private function subordinateStaffForLeader(int $leaderUserId)
     {
         $subIds = OrgAssignment::query()
             ->active()
-            ->where('leader_id', $leaderUserId) // sesuai struktur tabelmu
+            ->where('leader_id', $leaderUserId)
             ->pluck('user_id')
             ->unique()
             ->values()

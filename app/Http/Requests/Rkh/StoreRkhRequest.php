@@ -23,6 +23,10 @@ class StoreRkhRequest extends FormRequest
             'items.*.jam_selesai' => ['required', 'string'],
 
             'items.*.nasabah_id' => ['nullable', 'integer'],
+
+            // ✅ NEW: account_no opsional (kosong = prospect)
+            'items.*.account_no' => ['nullable', 'string', 'max:255'],
+
             'items.*.nama_nasabah' => ['nullable', 'string', 'max:190'],
             'items.*.kolektibilitas' => ['nullable', Rule::in(['L0','LT'])],
 
@@ -56,6 +60,19 @@ class StoreRkhRequest extends FormRequest
                 $tujuan = (string)($row['tujuan_kegiatan'] ?? '');
 
                 if ($jenis === '' || $tujuan === '') continue;
+
+                // 0) normalize account_no (optional) - kalau spasi doang dianggap kosong
+                if (array_key_exists('account_no', $row)) {
+                    $acc = trim((string)($row['account_no'] ?? ''));
+                    if ($acc === '') {
+                        // biarkan kosong (prospect)
+                    } else {
+                        // OPTIONAL: kalau mau super ketat numeric only, buka komentar di bawah
+                        // if (!ctype_digit($acc)) {
+                        //     $v->errors()->add("items.$i.account_no", "Account No harus angka (tanpa spasi/tanda).");
+                        // }
+                    }
+                }
 
                 // 1) tujuan harus valid sesuai jenis (master_tujuan_kegiatan)
                 $okTujuan = DB::table('master_tujuan_kegiatan')

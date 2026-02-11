@@ -37,8 +37,11 @@
         return [
           'jam_mulai' => substr($d->jam_mulai,0,5),
           'jam_selesai' => substr($d->jam_selesai,0,5),
+
           'nasabah_id' => $d->nasabah_id,
+          'account_no' => $d->account_no, // ✅ tambah ini
           'nama_nasabah' => $d->nama_nasabah,
+
           'kolektibilitas' => $d->kolektibilitas,
           'jenis_kegiatan' => $d->jenis_kegiatan,
           'tujuan_kegiatan' => $d->tujuan_kegiatan,
@@ -52,6 +55,7 @@
           ] : null,
         ];
       })->values()->toArray();
+
     }
   @endphp
 
@@ -77,6 +81,7 @@
             <th class="text-left p-2">Jam Mulai</th>
             <th class="text-left p-2">Jam Selesai</th>
             <th class="text-left p-2">Nama Nasabah</th>
+            <th class="text-left p-2">Account No</th>
             <th class="text-left p-2">Kolek</th>
             <th class="text-left p-2">Jenis</th>
             <th class="text-left p-2">Tujuan</th>
@@ -115,162 +120,99 @@
 </template>
 
 <script>
-(function(){
-  const tbody = document.getElementById('tbody');   // desktop
-  const cards = document.getElementById('cards');   // mobile
+document.addEventListener('DOMContentLoaded', () => {
 
-  const rowTpl  = document.getElementById('rowTpl')?.innerHTML || '';
-  const cardTpl = document.getElementById('cardTpl')?.innerHTML || '';
+  const tbody = document.getElementById('tbody');
+  const cards = document.getElementById('cards');
 
-  const btnAddRow = document.getElementById('btnAddRow');
   const tujuanMap = window.__TUJUAN_BY_JENIS__ || {};
 
-  function countRows(){
-    const n1 = tbody ? tbody.querySelectorAll('tr[data-row]').length : 0;
-    const n2 = cards ? cards.querySelectorAll('[data-card]').length : 0;
-    return Math.max(n1, n2);
+  // normalize: trim, lowercase, ubah spasi/dash ke underscore, buang karakter aneh
+  function normalizeKey(v){
+    return String(v ?? '')
+      .trim()
+      .toLowerCase()
+      .replace(/[\s\-]+/g, '_')         // spasi/dash -> underscore
+      .replace(/[^a-z0-9_]/g, '');      // buang selain alnum + underscore
+  }
+
+  function pickListByKey(map, key){
+    const k = normalizeKey(key);
+    if (!k) return [];
+    return map[k] || [];
   }
 
   function setTujuanOptions(scopeEl, jenisCode, currentValue = '') {
     const tujuanSelect = scopeEl.querySelector('select[data-tujuan]');
     if (!tujuanSelect) return;
 
-    const list = tujuanMap[jenisCode] || [];
+    const key  = normalizeKey(jenisCode);
+    const list = pickListByKey(tujuanMap, key);
+
+    // 🔥 debug paling penting
+    console.log('[TUJUAN] rawJenis=', jenisCode, 'normJenis=', key, 'list_len=', list.length, 'current=', currentValue);
 
     tujuanSelect.innerHTML = '';
-    const opt0 = document.createElement('option');
-    opt0.value = '';
-    opt0.textContent = 'Pilih';
-    tujuanSelect.appendChild(opt0);
+    tujuanSelect.appendChild(new Option('Pilih', ''));
 
     list.forEach(it => {
-      const o = document.createElement('option');
-      o.value = it.code;
-      o.textContent = it.label;
-      if (currentValue && currentValue === it.code) o.selected = true;
-      tujuanSelect.appendChild(o);
+      const code  = String(it.code ?? '');
+      const label = String(it.label ?? code);
+      const opt = new Option(label, code);
+      if (currentValue && String(currentValue) === code) opt.selected = true;
+      tujuanSelect.appendChild(opt);
     });
 
-    if (currentValue && !list.find(x => x.code === currentValue)) {
-      const o = document.createElement('option');
-      o.value = currentValue;
-      o.textContent = currentValue + ' (custom)';
-      o.selected = true;
-      tujuanSelect.appendChild(o);
+    // kalau currentValue tidak ada di list, tetap tampilkan (agar tidak "hilang" saat edit)
+    const cur = String(currentValue ?? '');
+    if (cur && !list.find(x => String(x.code ?? '') === cur)) {
+      const opt = new Option(`${cur} (custom)`, cur);
+      opt.selected = true;
+      tujuanSelect.appendChild(opt);
     }
+
+    // reset data-current supaya value aktual dipakai
+    tujuanSelect.removeAttribute('data-current');
   }
 
   function toggleNetworking(scopeEl, jenisCode) {
     const netBox = scopeEl.querySelector('[data-networking-box]');
     if (!netBox) return;
-    netBox.style.display = (jenisCode === 'pengembangan_jaringan') ? 'block' : 'none';
+
+    const k = normalizeKey(jenisCode);
+    netBox.style.display = (k === 'pengembangan_jaringan') ? 'block' : 'none';
   }
 
   function wireScope(scopeEl) {
     const jenisSel  = scopeEl.querySelector('select[data-jenis]');
     const tujuanSel = scopeEl.querySelector('select[data-tujuan]');
 
-    const jenisCode = (jenisSel?.value || '');
-    const tujuanVal = (tujuanSel?.getAttribute('data-current') || tujuanSel?.value || '');
+    if (!jenisSel)  console.warn('[WIRE] jenisSel not found in scope', scopeEl);
+    if (!tujuanSel) console.warn('[WIRE] tujuanSel not found in scope', scopeEl);
+    if (!jenisSel || !tujuanSel) return;
 
-    setTujuanOptions(scopeEl, jenisCode, tujuanVal);
-    toggleNetworking(scopeEl, jenisCode);
+    const jenisRaw = jenisSel.value || '';
+    const tujuanRaw = tujuanSel.getAttribute('data-current') || tujuanSel.value || '';
 
-    jenisSel?.addEventListener('change', function(){
-      setTujuanOptions(scopeEl, this.value, '');
-      toggleNetworking(scopeEl, this.value);
-    });
+    setTujuanOptions(scopeEl, jenisRaw, tujuanRaw);
+    toggleNetworking(scopeEl, jenisRaw);
 
-    // mobile jam preview
-    const jm = scopeEl.querySelector('[data-jam-mulai]');
-    const js = scopeEl.querySelector('[data-jam-selesai]');
-    const prev = scopeEl.querySelector('[data-preview-jam]');
-    if (jm && js && prev) {
-      const refresh = () => prev.textContent = `${jm.value || '--:--'} - ${js.value || '--:--'}`;
-      jm.addEventListener('change', refresh);
-      js.addEventListener('change', refresh);
-      refresh();
+    // re-bind change (hindari double bind kalau wireScope kepanggil lagi)
+    if (!jenisSel.dataset.wired) {
+      jenisSel.dataset.wired = '1';
+      jenisSel.addEventListener('change', function(){
+        setTujuanOptions(scopeEl, this.value, '');
+        toggleNetworking(scopeEl, this.value);
+      });
     }
   }
 
-  function appendHtml(container, html) {
-    if (!container || !html) return null;
-    const temp = document.createElement('div');
-    temp.innerHTML = html.trim();
-    const el = temp.firstElementChild;
-    container.appendChild(el);
-    return el;
-  }
+  console.log('tujuanMap_keys_sample:', Object.keys(tujuanMap).slice(0, 20));
+  console.log('tujuanMap_isEmpty:', Object.keys(tujuanMap).length === 0);
 
-  function addRow(prefill = {}) {
-    const idx = countRows();
-
-    const rowEl  = appendHtml(tbody, rowTpl.replaceAll('__INDEX__', idx));
-    const cardEl = appendHtml(cards, cardTpl.replaceAll('__INDEX__', idx));
-
-    function fill(scopeEl) {
-      if (!scopeEl) return;
-
-      if (prefill.jam_mulai) scopeEl.querySelector(`[name="items[${idx}][jam_mulai]"]`)?.value = prefill.jam_mulai;
-      if (prefill.jam_selesai) scopeEl.querySelector(`[name="items[${idx}][jam_selesai]"]`)?.value = prefill.jam_selesai;
-
-      if (prefill.nama_nasabah) scopeEl.querySelector(`[name="items[${idx}][nama_nasabah]"]`)?.value = prefill.nama_nasabah;
-      if (prefill.kolektibilitas) scopeEl.querySelector(`[name="items[${idx}][kolektibilitas]"]`)?.value = prefill.kolektibilitas;
-      if (prefill.area) scopeEl.querySelector(`[name="items[${idx}][area]"]`)?.value = prefill.area;
-      if (prefill.catatan) scopeEl.querySelector(`[name="items[${idx}][catatan]"]`)?.value = prefill.catatan;
-
-      if (prefill.jenis_kegiatan) scopeEl.querySelector(`[name="items[${idx}][jenis_kegiatan]"]`)?.value = prefill.jenis_kegiatan;
-
-      const tujuanSel = scopeEl.querySelector('select[data-tujuan]');
-      if (tujuanSel && prefill.tujuan_kegiatan) {
-        tujuanSel.setAttribute('data-current', prefill.tujuan_kegiatan);
-      }
-
-      wireScope(scopeEl);
-    }
-
-    fill(rowEl);
-    fill(cardEl);
-  }
-
-  // init existing scopes
   (tbody?.querySelectorAll('tr[data-row]') || []).forEach(wireScope);
   (cards?.querySelectorAll('[data-card]') || []).forEach(wireScope);
 
-  btnAddRow?.addEventListener('click', () => addRow());
-
-  function removeAtIndex(idx) {
-    tbody?.querySelectorAll('tr[data-row]')[idx]?.remove();
-    cards?.querySelectorAll('[data-card]')[idx]?.remove();
-  }
-
-    function refreshCardNumbers(){
-    (cards?.querySelectorAll('[data-card]') || []).forEach((card, idx) => {
-        const el = card.querySelector('[data-no]');
-        if (el) el.textContent = `Kegiatan #${idx+1}`;
-    });
-    }
-
-  document.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-remove]');
-    if (!btn) return;
-
-    const row = btn.closest('tr[data-row]');
-    if (row && tbody) {
-      const list = Array.from(tbody.querySelectorAll('tr[data-row]'));
-      const idx = list.indexOf(row);
-      if (idx >= 0) removeAtIndex(idx);
-      return;
-    }
-
-    const card = btn.closest('[data-card]');
-    if (card && cards) {
-      const list = Array.from(cards.querySelectorAll('[data-card]'));
-      const idx = list.indexOf(card);
-      if (idx >= 0) removeAtIndex(idx);
-      return;
-    }
-  });
-})();
+});
 </script>
 @endsection

@@ -11,6 +11,8 @@ use App\Services\CaseScheduler;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Models\VisitSchedule;
+
 
 class VisitController extends Controller
 {
@@ -267,4 +269,42 @@ class VisitController extends Controller
         $qs = $agendaId ? ('?agenda=' . $agendaId) : '';
         return redirect()->to(route('visits.start', $schedule) . $qs);
     }
+
+
+
+    public function createFromVisitSchedule(VisitSchedule $visitSchedule)
+    {
+        $visitSchedule->load(['rkhDetail.header', 'rkhDetail.networking']);
+
+        $detail = $visitSchedule->rkhDetail;
+        if (!$detail) abort(404);
+
+        $rkh = $detail->header; // ini RkhHeader
+        if (!$rkh) abort(500, 'RKH header null (cek relasi header() & FK).');
+
+        // siapkan data untuk view LKH versi RKH
+        return view('visits.rkh.create', [
+            'visitSchedule' => $visitSchedule,
+            'detail'        => $detail,
+            'rkh'           => $rkh,
+        ]);
+    }
+
+    public function storeFromVisitSchedule(Request $request, VisitSchedule $visitSchedule)
+    {
+        // simpan LKH / Visit sesuai schema kamu
+        // contoh minimal:
+        // Visit::create([... 'visit_schedule_id' => $visitSchedule->id, ...]);
+
+        // update status schedule kalau perlu
+        $visitSchedule->update([
+            'status' => 'done', // atau 'visited' sesuai enum kamu
+            'started_at' => now(), // kalau kamu isi di sini
+            'ended_at' => now(),
+        ]);
+
+        return redirect()->route('rkh.show', $visitSchedule->rkhDetail->rkh_id)
+            ->with('success', 'LKH berhasil disimpan.');
+    }
+
 }

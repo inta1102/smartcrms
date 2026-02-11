@@ -50,15 +50,18 @@ class AuthController extends Controller
             $routeName = $this->landingRouteFor($user);
 
             // ✅ untuk BE & Executive, kita paksa landing page (abaikan intended)
-            if (in_array($routeName, ['legal-actions.index', 'executive.targets.index','cases.index'], true)) {
+            if (in_array($routeName, [
+                'legal-actions.index',
+                'executive.targets.index',
+                'cases.index',
+                'kpi.tl.os-daily',
+            ], true)) {
                 return redirect()->route($routeName);
             }
 
             // default: tetap hormati intended
             return redirect()->intended(route($routeName));
         }
-
-
         return back()->withErrors([
             'login' => 'Nama/email atau password salah.',
         ])->onlyInput('login');
@@ -76,21 +79,33 @@ class AuthController extends Controller
 
     protected function landingRouteFor(User $user): string
     {
-        // 1) Executive dulu (paling “tinggi”)
-        if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['DIR', 'KOM'])) {
+        $role = strtoupper(trim((string)($user->roleValue() ?? $user->level ?? '')));
+
+        // 1) Executive dulu
+        if ((method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['DIR', 'KOM'])) || in_array($role, ['DIR','KOM'], true)) {
             return 'executive.targets.index';
         }
 
         // 2) BE khusus legal
-        if (method_exists($user, 'hasRole') && $user->hasRole('BE')) {
+        if ((method_exists($user, 'hasRole') && $user->hasRole('BE')) || $role === 'BE') {
             return 'legal-actions.index';
         }
 
-        // 3) AO dan staff Remedial 
-        if (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['AO', 'SO', 'SA', 'FE', 'RO'])) {
+        // ✅ TLRO landing ke dashboard TL RO
+        if (method_exists($user, 'hasRole') && $user->hasRole('TLRO')) {
+            return 'kpi.tl.os-daily';
+        }
+
+        // ✅ RO landing ke dashboard RO
+        if (method_exists($user, 'hasRole') && $user->hasRole('RO')) {
+            return 'kpi.ro.os-daily';
+        }
+
+        // 4) AO/SO/SA/FE => Cases
+        if ((method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['AO', 'SO', 'SA', 'FE'])) || in_array($role, ['AO','SO','SA','FE'], true)) {
             return 'cases.index';
         }
-        // default umum
+
         return 'dashboard';
     }
 

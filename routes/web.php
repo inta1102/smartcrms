@@ -80,6 +80,9 @@ use App\Http\Controllers\Kpi\TlOsDailyDashboardController;
 
 use App\Http\Controllers\LkhRecapController;
 use App\Http\Controllers\RkhController;
+    
+use App\Http\Controllers\RkhVisitController;
+use App\Http\Controllers\Kpi\RoOsDailyDashboardController;
 
 
 
@@ -228,10 +231,22 @@ Route::middleware('auth')->group(function () {
         Route::post('/{schedule}/sp-log', [WarningLetterController::class, 'store'])->name('sp.store');
     });
 
-    Route::prefix('visits')->name('visits.')->group(function () {
-        Route::get('/{schedule}/start', [VisitController::class, 'create'])->name('start');
-        Route::post('/{schedule}',      [VisitController::class, 'store'])->name('store');
-    });
+    // Route::prefix('visits')->name('visits.')->group(function () {
+    //     Route::get('/{schedule}/start', [VisitController::class, 'create'])->name('start');
+    //     Route::post('/{schedule}',      [VisitController::class, 'store'])->name('store');
+    // });
+
+    Route::get('/visit-schedules/{visitSchedule}/start', [VisitController::class, 'createFromVisitSchedule'])
+        ->name('visitSchedules.start');
+
+        
+    Route::post('/visit-schedules/{visitSchedule}', [VisitController::class, 'storeFromVisitSchedule'])
+        ->name('visitSchedules.store');
+
+
+    // routes/web.php
+    Route::get('visits/{schedule:id}/start', [VisitController::class, 'create'])->name('visits.start');
+    Route::post('visits/{schedule:id}', [VisitController::class, 'store'])->name('visits.store');
 
     // Create Legal Action from NPL Case
     Route::prefix('npl-cases/{case}/legal-actions')->name('npl.legal-actions.')->group(function () {
@@ -573,7 +588,15 @@ Route::middleware('auth')->group(function () {
     Route::put('/rkh/{rkh}', [RkhController::class, 'update'])->name('rkh.update');
 
     Route::post('/rkh/{rkh}/submit', [RkhController::class, 'submit'])->name('rkh.submit');
-    
+
+    Route::prefix('rkh')->name('rkh.')->group(function () {
+        // start form visit RKH (prospect/non-NPL) by rkh_detail
+        Route::get('/details/{detail}/visit-start', [RkhVisitController::class, 'create'])->name('details.visit.start');
+        Route::post('/details/{detail}/visit', [RkhVisitController::class, 'store'])->name('details.visit.store');
+
+        // link account_no + promote history visit RKH ke timeline penanganan
+        Route::post('/details/{detail}/link-account', [RkhVisitController::class, 'linkAccount'])->name('details.linkAccount');
+    });
 
 });    
 
@@ -619,13 +642,13 @@ Route::prefix('kpi/so')->name('kpi.so.')->middleware('auth')->group(function () 
         ->name('approvals.reject');
 });
 
+// TL RO (scope bawahan)
+    Route::get('/kpi/tl/os-daily', [TlOsDailyDashboardController::class, 'index'])
+        ->name('kpi.tl.os-daily');
 
-
-Route::prefix('kpi/tl')->name('kpi.tl.')->middleware(['auth'])->group(function () {
-    Route::get('os-daily', [TlOsDailyDashboardController::class, 'index'])
-        ->middleware('can:viewTlOsDashboard')
-        ->name('os_daily.index');
-});
+    // RO (scope diri sendiri)
+    Route::get('/kpi/ro/os-daily', [RoOsDailyDashboardController::class, 'index'])
+        ->name('kpi.ro.os-daily');
 
 // =========================
 // LEGAL PROPOSALS (USULAN)
@@ -770,3 +793,10 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/lkh-report/{lkh}/edit', [LkhController::class, 'edit'])->name('lkh.edit');
     Route::put('/lkh-report/{lkh}', [LkhController::class, 'update'])->name('lkh.update');
 });
+
+// routes/web.php
+Route::get('/rkh/details/{detail}/visit-start', [\App\Http\Controllers\RkhVisitBridgeController::class, 'start'])
+    ->name('rkh.details.visitStart');
+
+Route::get('/visits/loan/{loan}/start', [VisitController::class, 'startFromLoan'])->name('visits.loan.start');
+

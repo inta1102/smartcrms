@@ -3,8 +3,6 @@
 namespace App\Http\Requests\Rkh;
 
 use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
-use Illuminate\Support\Facades\DB;
 
 class UpdateRkhRequest extends FormRequest
 {

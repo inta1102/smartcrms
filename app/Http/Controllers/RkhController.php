@@ -10,6 +10,9 @@ use App\Models\RkhHeader;
 use App\Services\Rkh\RkhTimeValidator;
 use App\Services\Rkh\RkhWriter;
 use Illuminate\Http\Request;
+use App\Services\Rkh\RkhSmartReminderService;
+use App\Services\Rkh\RkhMasterService;
+use Illuminate\Support\Facades\Log;
 
 class RkhController extends Controller
 {
@@ -23,16 +26,29 @@ class RkhController extends Controller
         return view('rkh.index', compact('items'));
     }
 
-    public function create()
-    {
-        $jenis = MasterJenisKegiatan::query()
-            ->where('is_active', 1)
-            ->orderBy('sort')
-            ->get(['code','label']);
+    public function create(
+        RkhMasterService $master,
+        RkhSmartReminderService $reminderSvc
+    ){
+        $u = auth()->user();
 
-        $tujuanByJenis = $this->buildTujuanMap();
+        $jenis = $master->jenis();
+        $tujuanByJenis = $master->tujuanByJenis();
 
-        return view('rkh.create', compact('jenis', 'tujuanByJenis'));
+        $smartReminder = [];
+
+        try {
+            $smartReminder = $reminderSvc->forViewer($u, null, 50);
+        } catch (\Throwable $e) {
+            Log::error('[SMART_REMINDER] forUser failed', [
+                'user_id' => $u?->id,
+                'msg' => $e->getMessage(),
+                'trace' => substr($e->getTraceAsString(), 0, 2000),
+            ]);
+            $smartReminder = [];
+        }
+
+        return view('rkh.create', compact('jenis','tujuanByJenis','smartReminder'));
     }
 
     public function store(StoreRkhRequest $request, RkhTimeValidator $tv, RkhWriter $writer)
@@ -44,7 +60,7 @@ class RkhController extends Controller
         // validasi overlap + gap + jam kerja
         $check = $tv->validate($items, [
             'gap_tolerance_minutes' => 30,
-            'max_gap_minutes' => 120,     // set null kalau kamu mau bebas gap
+            'max_gap_minutes' => 120,
             'require_no_overlap' => true,
             'work_start' => '08:00',
             'work_end' => '16:30',
@@ -104,6 +120,7 @@ class RkhController extends Controller
 
         $items = (array) $request->input('items', []);
 
+        // ✅ account_no ikut di $items, tidak masuk ke config validator waktu
         $check = $tv->validate($items, [
             'gap_tolerance_minutes' => 30,
             'max_gap_minutes' => 120,
@@ -116,6 +133,7 @@ class RkhController extends Controller
             return back()->withInput()->withErrors(['items' => $check['errors']]);
         }
 
+        // ✅ writer yang bertugas menyimpan semua field items termasuk account_no
         $writer->update($rkh, $items, $check['meta']);
 
         return redirect()->route('rkh.show', $rkh->id)
@@ -149,7 +167,6 @@ class RkhController extends Controller
             ->orderBy('sort')
             ->get(['jenis_code','code','label']);
 
-        // bentuk: ['penagihan' => [ ['code'=>'x','label'=>'y'], ... ], ...]
         $map = [];
         foreach ($tujuan as $t) {
             $map[$t->jenis_code][] = [
