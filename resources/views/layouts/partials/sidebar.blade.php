@@ -308,6 +308,22 @@
     $badge = (int) $badgeApprovalTarget;
     $over  = (int) $badgeApprovalTargetOverSla;
 
+    // ====== Role checks utk RKH RO (enum-first, fallback string) ======
+    $isRO = ($roleEnum instanceof UserRole)
+        ? ($roleEnum === UserRole::RO)
+        : ($roleValue === 'RO');
+
+    $isTLRO = ($roleEnum instanceof UserRole)
+        ? ($roleEnum === UserRole::TLRO)
+        : ($roleValue === 'TLRO');
+
+    $canRkh = ($u && ($isRO || $isTLRO));
+
+    // active checker
+    $isRkhActive = $is('rkh.*') || $is('lkh.*') || $is('lkh.recap.*');
+    $isLkhActive = $is('lkh.*') || $is('lkh.recap.*');
+
+
     // ====== Menus ======
     $menus = [
 
@@ -320,6 +336,16 @@
                 'active' => $is($dashboardRouteName),
                 'show'   => true,
             ],
+
+            // ✅ RKH RO (RO/TLRO)
+            [
+                'label'  => 'RKH RO',
+                'icon'   => '📅',
+                'href'   => route('rkh.index'),
+                'active' => $isRkhActive,
+                'show'   => $canRkh,
+            ],
+            
             [
                 'label'  => 'NPL Cases',
                 'icon'   => '📁',

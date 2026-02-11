@@ -73,7 +73,14 @@ use App\Http\Controllers\Kpi\SoHandlingController;
 use App\Http\Controllers\Kpi\SoTargetController;
 
 use App\Http\Controllers\Kpi\KpiTargetRouterController;
-// use App\Http\Controllers\Kpi\KpiMarketingAoController;
+use App\Http\Controllers\LkhController;
+use App\Http\Controllers\Kpi\SoCommunityInputController;
+use App\Http\Controllers\NplCaseAssessmentController;
+use App\Http\Controllers\Kpi\TlOsDailyDashboardController;
+
+use App\Http\Controllers\LkhRecapController;
+use App\Http\Controllers\RkhController;
+
 
 
 Route::model('action', LegalAction::class);
@@ -544,22 +551,33 @@ Route::middleware('auth')->group(function () {
     Route::get('/kpi/marketing/targets/{target}/achievement', [MarketingKpiAchievementController::class, 'show'])
         ->name('kpi.marketing.targets.achievement');
 
-    
-    // routes/web.php
-    // Route::get('/kpi/marketing/ao/{user}', 
-    //     [KpiMarketingAoController::class, 'show']
-    // )->name('kpi.marketing.ao.show');
-
     Route::get('/kpi/marketing/sheet', [MarketingKpiSheetController::class, 'index'])
         ->name('kpi.marketing.sheet');
 
     Route::post('/kpi/recalc/ao', [KpiRecalcController::class, 'recalcAo'])->name('kpi.recalc.ao');
     Route::post('/kpi/recalc/so', [KpiRecalcController::class, 'recalcSo'])->name('kpi.recalc.so');
 
+        // ===============================
+        // RKH LKH
+        // ===============================
+
+    Route::get('/rkh/{rkh}/lkh-recap', [LkhRecapController::class, 'show'])
+        ->name('lkh.recap.show');
+
+    Route::get('/rkh', [RkhController::class, 'index'])->name('rkh.index');
+    Route::get('/rkh/create', [RkhController::class, 'create'])->name('rkh.create');
+    Route::post('/rkh', [RkhController::class, 'store'])->name('rkh.store');
+
+    Route::get('/rkh/{rkh}', [RkhController::class, 'show'])->name('rkh.show');
+    Route::get('/rkh/{rkh}/edit', [RkhController::class, 'edit'])->name('rkh.edit');
+    Route::put('/rkh/{rkh}', [RkhController::class, 'update'])->name('rkh.update');
+
+    Route::post('/rkh/{rkh}/submit', [RkhController::class, 'submit'])->name('rkh.submit');
+    
 
 });    
 
-use App\Http\Controllers\Kpi\SoCommunityInputController;
+
 
 Route::middleware(['auth', 'role:KBL'])->group(function () {
     Route::get('/kpi/so/community-input', [SoCommunityInputController::class, 'index'])
@@ -601,7 +619,7 @@ Route::prefix('kpi/so')->name('kpi.so.')->middleware('auth')->group(function () 
         ->name('approvals.reject');
 });
 
-use App\Http\Controllers\Kpi\TlOsDailyDashboardController;
+
 
 Route::prefix('kpi/tl')->name('kpi.tl.')->middleware(['auth'])->group(function () {
     Route::get('os-daily', [TlOsDailyDashboardController::class, 'index'])
@@ -731,7 +749,7 @@ Route::middleware(['auth'])
 
     });
 
-    use App\Http\Controllers\NplCaseAssessmentController;
+    
 
 Route::middleware(['auth'])->group(function () {
     Route::post('/cases/{case}/assessment', [NplCaseAssessmentController::class, 'store'])
@@ -740,3 +758,15 @@ Route::middleware(['auth'])->group(function () {
 
 Route::get('/kpi/targets', [\App\Http\Controllers\Kpi\KpiTargetRouterController::class, 'index'])
     ->name('kpi.targets');
+
+    
+
+Route::middleware(['auth'])->group(function () {
+    // create LKH by detail
+    Route::get('/lkh/{detail}/create', [LkhController::class, 'create'])->name('lkh.create');
+    Route::post('/lkh/{detail}', [LkhController::class, 'store'])->name('lkh.store');
+
+    // edit/update existing LKH
+    Route::get('/lkh-report/{lkh}/edit', [LkhController::class, 'edit'])->name('lkh.edit');
+    Route::put('/lkh-report/{lkh}', [LkhController::class, 'update'])->name('lkh.update');
+});
