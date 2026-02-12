@@ -59,10 +59,10 @@ class NplCasePolicy
         if ($this->allowRoles($user, $this->rolesKasi())) return true;
         if ($this->allowRoles($user, $this->rolesKabagPe())) return true;
 
-        // BE (Legal) tidak boleh isi assessment (sesuai rule "inti case")
-        if ($this->allowRoles($user, [UserRole::BE])) return false;
+        // BE (Legal)  boleh isi assessment (sesuai rule "inti case")
+        if ($this->allowRoles($user, [UserRole::BE])) return true;
 
-        // AO/SO/FE/RO/SA: boleh kalau dia owner/scope
+        // AO/SO/FE/RO/SA/BE: boleh kalau dia owner/scope
         return $this->isOwnerFieldStaff($user, $case);
     }
 

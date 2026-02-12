@@ -3,6 +3,11 @@
 @section('title', 'Dashboard RO - OS Harian')
 
 @section('content')
+@php
+  $meAo = str_pad(trim((string)(auth()->user()?->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
+  if ($meAo === '000000') $meAo = '';
+@endphp
+
 <div class="max-w-6xl mx-auto p-3 sm:p-4 space-y-4 sm:space-y-5">
 
   {{-- Header --}}
@@ -31,7 +36,7 @@
     </form>
   </div>
 
-  {{-- Summary (mobile friendly) --}}
+  {{-- Summary --}}
   <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
       <div class="text-[11px] sm:text-xs text-slate-500">Latest OS</div>
@@ -69,7 +74,7 @@
     </div>
   </div>
 
-  {{-- Insight box --}}
+  {{-- Insight --}}
   <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
     <div class="font-extrabold text-slate-900 text-sm sm:text-base">🧠 Catatan Kinerja (Auto Insight)</div>
 
@@ -109,7 +114,7 @@
     </div>
   </div>
 
-  {{-- Grafik 5 garis --}}
+  {{-- Grafik --}}
   <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 space-y-3 sm:space-y-4">
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
       <div>
@@ -120,7 +125,6 @@
       </div>
 
       <div class="w-full sm:w-auto flex flex-col sm:flex-row gap-2 sm:gap-2 sm:items-center sm:justify-end">
-        {{-- Mode toggle --}}
         <div class="rounded-xl border border-slate-200 p-1 bg-slate-50 flex items-center gap-1 w-full sm:w-auto">
           <button type="button" id="btnModeValue"
                   class="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200">
@@ -132,7 +136,6 @@
           </button>
         </div>
 
-        {{-- Mobile: show all lines --}}
         <div class="sm:hidden">
           <button type="button" id="btnShowAllLines"
                   class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800">
@@ -147,7 +150,6 @@
 
     <div class="w-full">
       <div class="relative w-full overflow-x-auto">
-        {{-- Tinggi chart: mobile lebih tinggi biar lega --}}
         <div class="relative min-w-[680px] sm:min-w-0 h-[320px] sm:h-[280px]">
           <canvas id="roChart" class="absolute inset-0 w-full h-full"></canvas>
         </div>
@@ -182,10 +184,20 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">OS</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">DPD</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Aksi</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-200">
           @forelse(($dueThisMonth ?? []) as $r)
+            @php
+              $plannedToday = (int)($r->planned_today ?? 0) === 1;
+              $planVisitDateRaw = $r->plan_visit_date ?? null;
+              $planVisit = !empty($planVisitDateRaw) ? \Carbon\Carbon::parse($planVisitDateRaw)->format('d/m/Y') : '-';
+              $acc = (string)($r->account_no ?? '');
+              $locked = (string)($r->plan_status ?? '') === 'done';
+            @endphp
             <tr>
               <td class="px-3 py-2 whitespace-nowrap">{{ \Carbon\Carbon::parse($r->maturity_date)->format('d/m/Y') }}</td>
               <td class="px-3 py-2 font-mono whitespace-nowrap">{{ $r->account_no ?? '-' }}</td>
@@ -193,10 +205,36 @@
               <td class="px-3 py-2 text-right whitespace-nowrap">Rp {{ number_format((int)($r->outstanding ?? 0),0,',','.') }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ $r->kolek ?? '-' }}</td>
+
+              <td class="px-3 py-2 text-center">
+                <label class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 border border-slate-200 bg-white">
+                  <input type="checkbox"
+                         class="ro-plan-checkbox h-4 w-4"
+                         data-account="{{ $acc }}"
+                         data-ao="{{ $meAo }}"
+                         {{ $plannedToday ? 'checked' : '' }}
+                         {{ $locked ? 'disabled' : '' }}>
+                  <span class="text-sm {{ $locked ? 'text-slate-400' : 'text-slate-700' }}">
+                    {{ $locked ? 'Done' : ($plannedToday ? 'Ya' : 'Tidak') }}
+                  </span>
+                </label>
+              </td>
+
+              <td class="px-3 py-2 whitespace-nowrap">
+                <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
+              </td>
+
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                <a href="{{ route('ro_visits.create', ['account_no' => $acc, 'back' => request()->fullUrl()]) }}"
+                  class="text-xs font-semibold underline text-slate-700">
+                  Isi LKH
+                </a>
+              </td>
+
             </tr>
           @empty
             <tr>
-              <td colspan="6" class="px-3 py-6 text-center text-slate-500">Tidak ada JT bulan ini.</td>
+              <td colspan="8" class="px-3 py-6 text-center text-slate-500">Tidak ada JT bulan ini.</td>
             </tr>
           @endforelse
         </tbody>
@@ -226,10 +264,20 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">FT Bunga</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">DPD</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Aksi</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-slate-200">
           @forelse(($ltLatest ?? []) as $r)
+            @php
+              $plannedToday = (int)($r->planned_today ?? 0) === 1;
+              $planVisitDateRaw = $r->plan_visit_date ?? null;
+              $planVisit = !empty($planVisitDateRaw) ? \Carbon\Carbon::parse($planVisitDateRaw)->format('d/m/Y') : '-';
+              $acc = (string)($r->account_no ?? '');
+              $locked = (string)($r->plan_status ?? '') === 'done';
+            @endphp
             <tr>
               <td class="px-3 py-2 font-mono whitespace-nowrap">{{ $r->account_no ?? '-' }}</td>
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
@@ -238,10 +286,36 @@
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ $r->kolek ?? '-' }}</td>
+
+              <td class="px-3 py-2 text-center">
+                <label class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 border border-slate-200 bg-white">
+                  <input type="checkbox"
+                         class="ro-plan-checkbox h-4 w-4"
+                         data-account="{{ $acc }}"
+                         data-ao="{{ $meAo }}"
+                         {{ $plannedToday ? 'checked' : '' }}
+                         {{ $locked ? 'disabled' : '' }}>
+                  <span class="text-sm {{ $locked ? 'text-slate-400' : 'text-slate-700' }}">
+                    {{ $locked ? 'Done' : ($plannedToday ? 'Ya' : 'Tidak') }}
+                  </span>
+                </label>
+              </td>
+
+              <td class="px-3 py-2 whitespace-nowrap">
+                <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
+              </td>
+
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                <a href="{{ route('ro_visits.create', ['account_no' => $acc, 'back' => request()->fullUrl()]) }}"
+                  class="text-xs font-semibold underline text-slate-700">
+                  Isi LKH
+                </a>
+              </td>
+
             </tr>
           @empty
             <tr>
-              <td colspan="7" class="px-3 py-6 text-center text-slate-500">Tidak ada LT pada posisi terakhir.</td>
+              <td colspan="9" class="px-3 py-6 text-center text-slate-500">Tidak ada LT pada posisi terakhir.</td>
             </tr>
           @endforelse
         </tbody>
@@ -277,19 +351,22 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">FT Bunga</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">DPD</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Aksi</th>
           </tr>
         </thead>
 
         <tbody class="divide-y divide-slate-200">
-          @php
-            $pos = !empty($latestPosDate) ? \Carbon\Carbon::parse($latestPosDate) : now();
-          @endphp
-
           @forelse(($jtAngsuran ?? []) as $r)
             @php
-              $day = (int)($r->installment_day ?? 0);
-              $day = $day > 0 ? min(max($day, 1), $pos->daysInMonth) : null;
-              $due = $day ? $pos->copy()->day($day) : null;
+              $due = !empty($r->due_date) ? \Carbon\Carbon::parse($r->due_date) : null;
+
+              $plannedToday = (int)($r->planned_today ?? 0) === 1;
+              $planVisitDateRaw = $r->plan_visit_date ?? null;
+              $planVisit = !empty($planVisitDateRaw) ? \Carbon\Carbon::parse($planVisitDateRaw)->format('d/m/Y') : '-';
+              $acc = (string)($r->account_no ?? '');
+              $locked = (string)($r->plan_status ?? '') === 'done';
             @endphp
             <tr>
               <td class="px-3 py-2 whitespace-nowrap">{{ $due ? $due->format('d/m/Y') : '-' }}</td>
@@ -300,10 +377,36 @@
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ $r->kolek ?? '-' }}</td>
+
+              <td class="px-3 py-2 text-center">
+                <label class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 border border-slate-200 bg-white">
+                  <input type="checkbox"
+                         class="ro-plan-checkbox h-4 w-4"
+                         data-account="{{ $acc }}"
+                         data-ao="{{ $meAo }}"
+                         {{ $plannedToday ? 'checked' : '' }}
+                         {{ $locked ? 'disabled' : '' }}>
+                  <span class="text-sm {{ $locked ? 'text-slate-400' : 'text-slate-700' }}">
+                    {{ $locked ? 'Done' : ($plannedToday ? 'Ya' : 'Tidak') }}
+                  </span>
+                </label>
+              </td>
+
+              <td class="px-3 py-2 whitespace-nowrap">
+                <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
+              </td>
+
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                <a href="{{ route('ro_visits.create', ['account_no' => $acc, 'back' => request()->fullUrl()]) }}"
+                  class="text-xs font-semibold underline text-slate-700">
+                  Isi LKH
+                </a>
+              </td>
+
             </tr>
           @empty
             <tr>
-              <td colspan="8" class="px-3 py-6 text-center text-slate-500">Tidak ada JT angsuran minggu ini.</td>
+              <td colspan="10" class="px-3 py-6 text-center text-slate-500">Tidak ada JT angsuran minggu ini.</td>
             </tr>
           @endforelse
         </tbody>
@@ -312,7 +415,7 @@
   </div>
 
   {{-- ===========================
-      4) OS > 500jt
+      4) OS >= 500jt
       =========================== --}}
   <div class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
     <div class="p-3 sm:p-4 border-b border-slate-200">
@@ -333,11 +436,21 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">FT Bunga</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">DPD</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Aksi</th>
           </tr>
         </thead>
 
         <tbody class="divide-y divide-slate-200">
           @forelse(($osBig ?? []) as $r)
+            @php
+              $plannedToday = (int)($r->planned_today ?? 0) === 1;
+              $planVisitDateRaw = $r->plan_visit_date ?? null;
+              $planVisit = !empty($planVisitDateRaw) ? \Carbon\Carbon::parse($planVisitDateRaw)->format('d/m/Y') : '-';
+              $acc = (string)($r->account_no ?? '');
+              $locked = (string)($r->plan_status ?? '') === 'done';
+            @endphp
             <tr>
               <td class="px-3 py-2 font-mono whitespace-nowrap">{{ $r->account_no ?? '-' }}</td>
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
@@ -346,10 +459,36 @@
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ $r->kolek ?? '-' }}</td>
+
+              <td class="px-3 py-2 text-center">
+                <label class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 border border-slate-200 bg-white">
+                  <input type="checkbox"
+                         class="ro-plan-checkbox h-4 w-4"
+                         data-account="{{ $acc }}"
+                         data-ao="{{ $meAo }}"
+                         {{ $plannedToday ? 'checked' : '' }}
+                         {{ $locked ? 'disabled' : '' }}>
+                  <span class="text-sm {{ $locked ? 'text-slate-400' : 'text-slate-700' }}">
+                    {{ $locked ? 'Done' : ($plannedToday ? 'Ya' : 'Tidak') }}
+                  </span>
+                </label>
+              </td>
+
+              <td class="px-3 py-2 whitespace-nowrap">
+                <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
+              </td>
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                <a href="{{ route('ro_visits.create', ['account_no' => $acc, 'back' => request()->fullUrl()]) }}"
+                  class="text-xs font-semibold underline text-slate-700">
+                  Isi LKH
+                </a>
+
+              </td>
+
             </tr>
           @empty
             <tr>
-              <td colspan="7" class="px-3 py-6 text-center text-slate-500">Tidak ada OS ≥ 500 juta.</td>
+              <td colspan="9" class="px-3 py-6 text-center text-slate-500">Tidak ada OS ≥ 500 juta.</td>
             </tr>
           @endforelse
         </tbody>
@@ -365,7 +504,6 @@
   const series = @json($series);
 
   const isNil = v => v === null || typeof v === 'undefined';
-
   function toGrowth(arr){
     const out = [];
     for (let i=0;i<arr.length;i++){
@@ -379,13 +517,10 @@
 
   function fmtRp(v){ return 'Rp ' + Number(v||0).toLocaleString('id-ID'); }
   function fmtPct(v){ return Number(v||0).toLocaleString('id-ID',{maximumFractionDigits:2}) + '%'; }
+  function isMobile(){ return window.matchMedia('(max-width: 640px)').matches; }
 
-  function isMobile() {
-    return window.matchMedia('(max-width: 640px)').matches;
-  }
-
-  let mode = 'value'; // value|growth
-  let showAllLines = false; // mobile default: ringkas
+  let mode = 'value';
+  let showAllLines = false;
 
   const ctx = document.getElementById('roChart').getContext('2d');
 
@@ -400,12 +535,7 @@
         legend:{
           display:true,
           position:'bottom',
-          labels:{
-            boxWidth:10,
-            boxHeight:10,
-            usePointStyle:true,
-            pointStyle:'line'
-          }
+          labels:{ boxWidth:10, boxHeight:10, usePointStyle:true, pointStyle:'line' }
         },
         tooltip:{
           callbacks:{
@@ -425,8 +555,7 @@
           position:'left',
           ticks:{
             callback:(v)=>{
-              // biar ga kepanjangan di HP
-              if (isMobile()) return 'Rp ' + Number(v).toLocaleString('id-ID');
+              if (isMobile()) return '';
               return 'Rp ' + Number(v).toLocaleString('id-ID');
             }
           }
@@ -435,7 +564,9 @@
           type:'linear',
           position:'right',
           grid:{ drawOnChartArea:false },
-          ticks:{ callback:(v)=>Number(v).toLocaleString('id-ID',{maximumFractionDigits:2})+'%' }
+          ticks:{
+            callback:(v)=> Number(v).toLocaleString('id-ID',{maximumFractionDigits:2})+'%'
+          }
         }
       }
     }
@@ -443,19 +574,9 @@
 
   function applyMobileDatasetRules(datasets){
     if (!isMobile()) return datasets;
-
-    if (showAllLines) {
-      return datasets.map(ds => ({ ...ds, hidden:false }));
-    }
-
-    // ringkas: tampilkan 3 garis utama (Rp) saja biar kebaca
-    // urutan: OS Total, OS L0, OS LT, RR, %LT
+    if (showAllLines) return datasets.map(ds => ({ ...ds, hidden:false }));
     const maxLines = 3;
-
-    return datasets.map((ds, idx) => ({
-      ...ds,
-      hidden: idx >= maxLines
-    }));
+    return datasets.map((ds, idx) => ({ ...ds, hidden: idx >= maxLines }));
   }
 
   function rebuild(){
@@ -467,9 +588,7 @@
       { label:'RR (%L0)', data:s('rr'),       yAxisID:'yPct',tension:0.2, spanGaps:false, borderWidth:2, pointRadius:0 },
       { label:'%LT',      data:s('pct_lt'),   yAxisID:'yPct',tension:0.2, spanGaps:false, borderWidth:2, pointRadius:0 },
     ];
-
     dss = applyMobileDatasetRules(dss);
-
     chart.data.datasets = dss;
     chart.update();
   }
@@ -490,44 +609,106 @@
   function repaintShowAllButton(){
     const btn = document.getElementById('btnShowAllLines');
     if (!btn) return;
-
     btn.textContent = showAllLines ? 'Tampilkan ringkas' : 'Tampilkan semua garis';
     btn.className = showAllLines
       ? 'w-full rounded-xl border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-semibold text-white'
       : 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800';
   }
 
-  btnValue?.addEventListener('click', ()=>{
-    mode='value';
-    paint();
-    rebuild();
-  });
+  btnValue?.addEventListener('click', ()=>{ mode='value'; paint(); rebuild(); });
+  btnGrowth?.addEventListener('click', ()=>{ mode='growth'; paint(); rebuild(); });
+  document.getElementById('btnShowAllLines')?.addEventListener('click', ()=>{ showAllLines=!showAllLines; repaintShowAllButton(); rebuild(); });
 
-  btnGrowth?.addEventListener('click', ()=>{
-    mode='growth';
-    paint();
-    rebuild();
-  });
-
-  document.getElementById('btnShowAllLines')?.addEventListener('click', ()=>{
-    showAllLines = !showAllLines;
-    repaintShowAllButton();
-    rebuild();
-  });
-
-  // auto rebuild saat resize/orientation change
   let resizeT = null;
   window.addEventListener('resize', ()=>{
     clearTimeout(resizeT);
-    resizeT = setTimeout(()=>{
-      // kalau pindah ke desktop, jangan pakai hide rules
-      repaintShowAllButton();
-      rebuild();
-    }, 200);
+    resizeT = setTimeout(()=>{ repaintShowAllButton(); rebuild(); }, 200);
   });
 
   paint();
   repaintShowAllButton();
   rebuild();
+
+  // =========================
+  // ✅ Checkbox Plan Visit (AJAX)
+  // =========================
+  const toggleUrl = @json(route('ro_visits.toggle'));
+  const csrf = @json(csrf_token());
+
+  function setPlanUi(accountNo, checked, locked, planDateYmd, status) {
+    document.querySelectorAll(`.ro-plan-checkbox[data-account="${CSS.escape(accountNo)}"]`).forEach(el => {
+      el.checked = !!checked;
+      el.disabled = !!locked;
+      const label = el.closest('label')?.querySelector('span');
+      if (label) {
+        if (locked || status === 'done') label.textContent = 'Done';
+        else label.textContent = checked ? 'Ya' : 'Tidak';
+      }
+    });
+
+    const planText = planDateYmd ? (() => {
+      const d = new Date(planDateYmd + 'T00:00:00');
+      const dd = String(d.getDate()).padStart(2,'0');
+      const mm = String(d.getMonth()+1).padStart(2,'0');
+      const yy = d.getFullYear();
+      return `${dd}/${mm}/${yy}`;
+    })() : '-';
+
+    document.querySelectorAll(`.ro-plan-date[data-account="${CSS.escape(accountNo)}"]`).forEach(el => {
+      el.textContent = planText;
+    });
+  }
+
+  async function postToggle(accountNo, aoCode, checked) {
+    const res = await fetch(toggleUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': csrf,
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        account_no: accountNo,
+        ao_code: aoCode || null,
+        checked: !!checked,
+        source: 'dashboard',
+      }),
+    });
+
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(txt || 'Request failed');
+    }
+    return await res.json();
+  }
+
+  document.querySelectorAll('.ro-plan-checkbox').forEach(cb => {
+    cb.addEventListener('change', async (e) => {
+      const el = e.target;
+      const accountNo = el.getAttribute('data-account') || '';
+      const aoCode = el.getAttribute('data-ao') || '';
+      const checked = el.checked;
+
+      const label = el.closest('label')?.querySelector('span');
+      if (label) label.textContent = checked ? 'Ya' : 'Tidak';
+
+      el.disabled = true;
+
+      try {
+        const json = await postToggle(accountNo, aoCode, checked);
+
+        // ✅ penting: enable lagi kalau tidak locked
+        setPlanUi(accountNo, json.checked, json.locked, json.plan_date, json.status);
+        if (!json.locked) {
+          document.querySelectorAll(`.ro-plan-checkbox[data-account="${CSS.escape(accountNo)}"]`).forEach(x => x.disabled = false);
+        }
+      } catch (err) {
+        el.checked = !checked;
+        if (label) label.textContent = (!checked) ? 'Ya' : 'Tidak';
+        el.disabled = false;
+        alert('Gagal update plan visit. Coba refresh halaman.\n\n' + (err?.message || err));
+      }
+    });
+  });
 </script>
 @endsection

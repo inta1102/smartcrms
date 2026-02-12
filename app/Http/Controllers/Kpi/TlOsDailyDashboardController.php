@@ -170,42 +170,58 @@ class TlOsDailyDashboardController extends Controller
             $datasetsByMetric['rr'][]       = ['key' => $u->ao_code, 'label' => $label, 'data' => $seriesRR];
             $datasetsByMetric['pct_lt'][]   = ['key' => $u->ao_code, 'label' => $label, 'data' => $seriesPctLT];
         }
+            $subUserIds = $staff->pluck('id')->map(fn($v) => (int)$v)->values()->all();
 
-        $today = now()->toDateString();
+            $today = now()->toDateString();
 
         /**
          * =========================================================
-         * VISIT META (Last visit + Visit Today) - no N+1
+         * VISIT META (Last visit + Planned Today) - no N+1
+         * Scope planned_today: hanya milik user login (TL)
          * =========================================================
          */
 
-        // Last visit per account (account_no => last_visit_date)
-        $lastVisitMap = \App\Models\RoVisit::query()
+        // 1) Last visit per account (GLOBAL) => account_no => last_visit_date
+        $lastVisitMap = RoVisit::query()
             ->selectRaw('account_no, MAX(visit_date) as last_visit_date')
             ->groupBy('account_no')
-            ->pluck('last_visit_date', 'account_no')   // [account_no => last_visit_date]
+            ->pluck('last_visit_date', 'account_no')
             ->toArray();
 
-        // Visit hari ini? (set account_no)
-        $visitTodaySet = \App\Models\RoVisit::query()
+        // 2) Planned/done today oleh staff bawahan TL (hari ini)
+        //    hasil: account_no => row (contoh row: {account_no, visit_date, status, planner_user_id})
+        $plannedTodayMap = RoVisit::query()
+            ->select(['account_no', 'status', 'visit_date', 'user_id'])
             ->whereDate('visit_date', $today)
-            ->pluck('account_no')
-            ->flip()                                   // jadikan set
-            ->toArray();                               // [account_no => index]
+            ->when(!empty($subUserIds), fn($q) => $q->whereIn('user_id', $subUserIds))
+            ->get()
+            // kalau satu account diplan oleh >1 orang (harusnya jarang), ambil salah satu (first)
+            ->groupBy('account_no')
+            ->map(fn($rows) => $rows->first());
 
-        // helper inject meta ke rows (Collection)
-        $attachVisitMeta = function ($rows) use ($lastVisitMap, $visitTodaySet, $today) {
-            // $rows bisa Collection hasil ->get() / paginator items
-            return collect($rows)->map(function ($r) use ($lastVisitMap, $visitTodaySet, $today) {
+        // helper inject meta ke rows (Collection / array)
+        $attachVisitMeta = function ($rows) use ($lastVisitMap, $plannedTodayMap) {
+            return collect($rows)->map(function ($r) use ($lastVisitMap, $plannedTodayMap) {
                 $acc = (string)($r->account_no ?? '');
 
-                $last = $lastVisitMap[$acc] ?? null;
-                $isToday = $acc !== '' && array_key_exists($acc, $visitTodaySet);
+                // last visit global
+                $r->last_visit_date = $acc !== '' ? ($lastVisitMap[$acc] ?? null) : null;
 
-                // inject fields (biar blade tinggal pakai)
-                $r->last_visit_date = $last;                 // date|string|null
-                $r->visit_today     = $isToday ? 1 : 0;      // int 0/1
-                $r->plan_visit_date = $isToday ? $today : null;
+                // planned today by user login
+                $row = ($acc !== '' && $plannedTodayMap->has($acc)) ? $plannedTodayMap->get($acc) : null;
+
+                $r->planned_today    = $row ? 1 : 0;
+                $r->plan_visit_date  = $row ? (string)($row->visit_date ?? null) : null;
+                $r->plan_status      = $row ? (string)($row->status ?? 'planned') : null;
+
+                // ✅ opsional: siapa yg plan (user_id RO) — nanti gampang kalau TL mau lihat nama RO
+                $r->planned_by_user_id = $row ? (int)($row->user_id ?? 0) : null;
+
+                $r->planned_today   = $row ? 1 : 0;                       // ✅ dipakai blade
+                $r->plan_visit_date = $row ? (string)$row->visit_date : null; // ✅ dipakai blade
+
+                // opsional: kalau mau info status di UI (planned/done) buat lock label
+                $r->plan_status     = $row ? (string)($row->status ?? 'planned') : null;
 
                 return $r;
             });

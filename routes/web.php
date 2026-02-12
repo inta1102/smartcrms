@@ -84,6 +84,7 @@ use App\Http\Controllers\RkhController;
 use App\Http\Controllers\RkhVisitController;
 use App\Http\Controllers\Kpi\RoOsDailyDashboardController;
 
+use App\Http\Controllers\RoVisitController;
 
 
 Route::model('action', LegalAction::class);
@@ -598,9 +599,14 @@ Route::middleware('auth')->group(function () {
         Route::post('/details/{detail}/link-account', [RkhVisitController::class, 'linkAccount'])->name('details.linkAccount');
     });
 
+    
 });    
 
-
+Route::middleware(['auth'])->prefix('ro-visits')->name('ro_visits.')->group(function () {
+        Route::post('/toggle', [RoVisitController::class, 'toggle'])->name('toggle'); // checklist
+        Route::get('/visit',   [RoVisitController::class, 'create'])->name('create'); // form LKH
+        Route::post('/visit',  [RoVisitController::class, 'store'])->name('store');   // submit LKH
+    });
 
 Route::middleware(['auth', 'role:KBL'])->group(function () {
     Route::get('/kpi/so/community-input', [SoCommunityInputController::class, 'index'])
@@ -641,6 +647,9 @@ Route::prefix('kpi/so')->name('kpi.so.')->middleware('auth')->group(function () 
     Route::post('approvals/{target}/reject', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'reject'])
         ->name('approvals.reject');
 });
+
+
+    
 
 // TL RO (scope bawahan)
     Route::get('/kpi/tl/os-daily', [TlOsDailyDashboardController::class, 'index'])

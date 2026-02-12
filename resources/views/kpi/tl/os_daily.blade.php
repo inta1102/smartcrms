@@ -10,8 +10,17 @@
     <div>
       <h1 class="text-2xl font-extrabold text-slate-900">📈 Dashboard TL RO – OS Harian</h1>
       <p class="text-sm text-slate-500">
-        Scope: {{ $aoCount }} staff. Data snapshot harian (kpi_os_daily_aos). Posisi terakhir: <b>{{ $latestPosDate ?? '-' }}</b>.
+        Scope: {{ $aoCount }} staff. Data snapshot harian (kpi_os_daily_aos).
+        Posisi terakhir: <b>{{ $latestPosDate ?? '-' }}</b>.
       </p>
+      <div class="mt-2 flex flex-wrap gap-2 text-xs">
+        <span class="px-3 py-1 rounded-xl bg-slate-50 border border-slate-200">
+          <span class="text-slate-500">Mode:</span> <b class="text-slate-900">Supervisi TL</b>
+        </span>
+        <span class="px-3 py-1 rounded-xl bg-slate-50 border border-slate-200">
+          <span class="text-slate-500">Fokus:</span> <b class="text-slate-900">JT, LT, Migrasi, JT Angsuran, OS Besar</b>
+        </span>
+      </div>
     </div>
 
     <form method="GET" class="flex items-end gap-2 flex-wrap">
@@ -140,6 +149,7 @@
             Growth (Δ H vs H-1)
           </button>
         </div>
+
         {{-- Mobile: toggle show all lines --}}
         <div class="w-full sm:hidden">
           <button type="button" id="btnShowAllLines"
@@ -155,17 +165,58 @@
 
     {{-- Chart wrapper (mobile-friendly) --}}
     <div class="w-full">
-      {{-- legend akan lebih enak kalau chart bisa “nafas” --}}
       <div class="relative w-full h-[260px] sm:h-[360px] md:h-[420px]">
         <canvas id="osChart" class="w-full h-full"></canvas>
       </div>
 
-      {{-- Catatan kecil buat user HP --}}
       <div class="mt-2 text-[11px] text-slate-500 sm:hidden">
         Tips: geser layar ke samping untuk melihat detail legend & garis.
       </div>
     </div>
   </div>
+
+  @php
+    // ===== Helpers Supervisi (Blade side) =====
+    $fmtDate = function($v){
+      return !empty($v) ? \Carbon\Carbon::parse($v)->format('d/m/Y') : '-';
+    };
+
+    $visitAgeDays = function($lastVisit){
+      if (empty($lastVisit)) return null;
+      try {
+        return \Carbon\Carbon::parse($lastVisit)->diffInDays(now());
+      } catch (\Throwable $e) {
+        return null;
+      }
+    };
+
+    $riskBadge = function($dpd, $kolek, $isLt = false){
+      $dpd = (int)($dpd ?? 0);
+      $kolek = (string)($kolek ?? '');
+      $kolekNum = is_numeric($kolek) ? (int)$kolek : null;
+
+      // LT selalu jadi prioritas
+      if ($isLt) {
+        return '<span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">LT</span>';
+      }
+
+      // heuristik sederhana: DPD tinggi / kolek tinggi
+      if ($dpd >= 30 || ($kolekNum !== null && $kolekNum >= 3)) {
+        return '<span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">High</span>';
+      }
+      if ($dpd >= 8 || ($kolekNum !== null && $kolekNum === 2)) {
+        return '<span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-amber-50 text-amber-700 border border-amber-200">Medium</span>';
+      }
+      return '<span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Low</span>';
+    };
+  @endphp
+
+  {{-- ===========================
+      TABLE STYLE NOTE:
+      - Kolom supervisi diseragamkan:
+        Last Visit | Umur (hari) | Plan (button) | Plan Date
+      - Plan status: Done / Plan / Unplan
+      =========================== --}}
 
   {{-- ===========================
       1) JT bulan ini
@@ -190,9 +241,10 @@
             <th class="text-right px-3 py-2">DPD</th>
             <th class="text-right px-3 py-2">Kolek</th>
 
-            {{-- NEW --}}
+            <th class="text-left px-3 py-2 whitespace-nowrap">Risk</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
-            <th class="text-center px-3 py-2 whitespace-nowrap">Visit Hari Ini</th>
+            <th class="text-right px-3 py-2 whitespace-nowrap">Umur Visit</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
           </tr>
         </thead>
@@ -200,34 +252,73 @@
         <tbody class="divide-y divide-slate-200">
           @forelse(($dueThisMonth ?? []) as $r)
             @php
-              $lastVisit = !empty($r->last_visit_date) ? \Carbon\Carbon::parse($r->last_visit_date)->format('d/m/Y') : '-';
-              $isToday   = !empty($r->visit_today) && (int)$r->visit_today === 1;
-              $planVisit = !empty($r->plan_visit_date) ? \Carbon\Carbon::parse($r->plan_visit_date)->format('d/m/Y') : '-';
+              $lastVisitRaw = $r->last_visit_date ?? null;
+              $lastVisit = $fmtDate($lastVisitRaw);
+              $age = $visitAgeDays($lastVisitRaw);
+
+              $planned = (int)($r->planned_today ?? $r->visit_today ?? 0) === 1;
+              $status  = (string)($r->plan_status ?? '');
+              $isDone  = $planned && $status === 'done';
+
+              $planVisitDateRaw = $r->plan_visit_date ?? null;
+              $planVisit = $fmtDate($planVisitDateRaw);
+
+              $acc = (string)($r->account_no ?? '');
+              $ao  = (string)($r->ao_code ?? '');
+              $os  = (int)($r->outstanding ?? 0);
+
+              // Row emphasis (supervisi): OS besar atau DPD tinggi
+              $rowEmphasis = ($os >= (int)($bigThreshold ?? 500000000) || (int)($r->dpd ?? 0) >= 8)
+                ? 'bg-amber-50/30'
+                : '';
             @endphp
-            <tr>
+            <tr class="{{ $rowEmphasis }}">
               <td class="px-3 py-2 whitespace-nowrap">
-                {{ \Carbon\Carbon::parse($r->maturity_date)->format('d/m/Y') }}
+                {{ !empty($r->maturity_date) ? \Carbon\Carbon::parse($r->maturity_date)->format('d/m/Y') : '-' }}
               </td>
               <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td>
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
               <td class="px-3 py-2 font-mono">{{ $r->ao_code ?? '-' }}</td>
-              <td class="px-3 py-2 text-right">Rp {{ number_format((int)($r->outstanding ?? 0),0,',','.') }}</td>
+              <td class="px-3 py-2 text-right">Rp {{ number_format($os,0,',','.') }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ $r->kolek ?? '-' }}</td>
 
-              {{-- NEW --}}
+              <td class="px-3 py-2 whitespace-nowrap">{!! $riskBadge($r->dpd ?? 0, $r->kolek ?? '-', false) !!}</td>
+
               <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
-              <td class="px-3 py-2 text-center">
-                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
-                  {{ $isToday ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-50 text-slate-600 border border-slate-200' }}">
-                  {{ $isToday ? 'Ya' : 'Tidak' }}
-                </span>
+              <td class="px-3 py-2 text-right whitespace-nowrap">
+                @if($age === null)
+                  <span class="text-slate-400">-</span>
+                @else
+                  <span class="{{ $age >= 14 ? 'text-rose-700 font-semibold' : ($age >= 7 ? 'text-amber-700 font-semibold' : 'text-slate-700') }}">
+                    {{ $age }} hari
+                  </span>
+                @endif
               </td>
-              <td class="px-3 py-2 whitespace-nowrap">{{ $planVisit }}</td>
+
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                @if($isDone)
+                  <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
+                    bg-emerald-50 text-emerald-700 border border-emerald-200">Done</span>
+                @else
+                  <button type="button"
+                    class="btnPlanVisit inline-flex items-center rounded-full px-3 py-2 text-xs font-semibold border
+                      {{ $planned ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-800 border-slate-200' }}"
+                    data-acc="{{ $acc }}"
+                    data-ao="{{ $ao }}"
+                    data-checked="{{ $planned ? '1' : '0' }}">
+                    {{ $planned ? 'Unplan' : 'Plan' }}
+                  </button>
+                @endif
+              </td>
+
+              <td class="px-3 py-2 whitespace-nowrap">
+                <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
+              </td>
             </tr>
           @empty
             <tr>
-              <td colspan="10" class="px-3 py-6 text-center text-slate-500">
+              <td colspan="12" class="px-3 py-6 text-center text-slate-500">
                 Belum ada data jatuh tempo bulan ini.
               </td>
             </tr>
@@ -261,9 +352,10 @@
             <th class="text-right px-3 py-2">DPD</th>
             <th class="text-right px-3 py-2">Kolek</th>
 
-            {{-- NEW --}}
+            <th class="text-left px-3 py-2 whitespace-nowrap">Risk</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
-            <th class="text-center px-3 py-2 whitespace-nowrap">Visit Hari Ini</th>
+            <th class="text-right px-3 py-2 whitespace-nowrap">Umur Visit</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
           </tr>
         </thead>
@@ -271,33 +363,67 @@
         <tbody class="divide-y divide-slate-200">
           @forelse(($ltLatest ?? []) as $r)
             @php
-              $lastVisit = !empty($r->last_visit_date) ? \Carbon\Carbon::parse($r->last_visit_date)->format('d/m/Y') : '-';
-              $isToday   = !empty($r->visit_today) && (int)$r->visit_today === 1;
-              $planVisit = !empty($r->plan_visit_date) ? \Carbon\Carbon::parse($r->plan_visit_date)->format('d/m/Y') : '-';
+              $lastVisitRaw = $r->last_visit_date ?? null;
+              $lastVisit = $fmtDate($lastVisitRaw);
+              $age = $visitAgeDays($lastVisitRaw);
+
+              $planned = (int)($r->planned_today ?? $r->visit_today ?? 0) === 1;
+              $status  = (string)($r->plan_status ?? '');
+              $isDone  = $planned && $status === 'done';
+
+              $planVisitDateRaw = $r->plan_visit_date ?? null;
+              $planVisit = $fmtDate($planVisitDateRaw);
+
+              $acc = (string)($r->account_no ?? '');
+              $ao  = (string)($r->ao_code ?? '');
+              $os  = (int)($r->os ?? 0);
             @endphp
-            <tr>
+            <tr class="bg-rose-50/20">
               <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td>
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
               <td class="px-3 py-2 font-mono">{{ $r->ao_code ?? '-' }}</td>
-              <td class="px-3 py-2 text-right">Rp {{ number_format((int)($r->os ?? 0),0,',','.') }}</td>
+              <td class="px-3 py-2 text-right">Rp {{ number_format($os,0,',','.') }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_pokok ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ $r->kolek ?? '-' }}</td>
 
-              {{-- NEW --}}
+              <td class="px-3 py-2 whitespace-nowrap">{!! $riskBadge($r->dpd ?? 0, $r->kolek ?? '-', true) !!}</td>
+
               <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
-              <td class="px-3 py-2 text-center">
-                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
-                  {{ $isToday ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-50 text-slate-600 border border-slate-200' }}">
-                  {{ $isToday ? 'Ya' : 'Tidak' }}
-                </span>
+              <td class="px-3 py-2 text-right whitespace-nowrap">
+                @if($age === null)
+                  <span class="text-slate-400">-</span>
+                @else
+                  <span class="{{ $age >= 14 ? 'text-rose-700 font-semibold' : ($age >= 7 ? 'text-amber-700 font-semibold' : 'text-slate-700') }}">
+                    {{ $age }} hari
+                  </span>
+                @endif
               </td>
-              <td class="px-3 py-2 whitespace-nowrap">{{ $planVisit }}</td>
+
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                @if($isDone)
+                  <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
+                    bg-emerald-50 text-emerald-700 border border-emerald-200">Done</span>
+                @else
+                  <button type="button"
+                    class="btnPlanVisit inline-flex items-center rounded-full px-3 py-2 text-xs font-semibold border
+                      {{ $planned ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-800 border border-slate-200' }}"
+                    data-acc="{{ $acc }}"
+                    data-ao="{{ $ao }}"
+                    data-checked="{{ $planned ? '1' : '0' }}">
+                    {{ $planned ? 'Unplan' : 'Plan' }}
+                  </button>
+                @endif
+              </td>
+
+              <td class="px-3 py-2 whitespace-nowrap">
+                <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
+              </td>
             </tr>
           @empty
             <tr>
-              <td colspan="11" class="px-3 py-6 text-center text-slate-500">
+              <td colspan="13" class="px-3 py-6 text-center text-slate-500">
                 Tidak ada data LT untuk posisi terakhir.
               </td>
             </tr>
@@ -335,9 +461,10 @@
             <th class="text-right px-3 py-2">DPD</th>
             <th class="text-right px-3 py-2">Kolek</th>
 
-            {{-- NEW --}}
+            <th class="text-left px-3 py-2 whitespace-nowrap">Risk</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
-            <th class="text-center px-3 py-2 whitespace-nowrap">Visit Hari Ini</th>
+            <th class="text-right px-3 py-2 whitespace-nowrap">Umur Visit</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
           </tr>
         </thead>
@@ -345,33 +472,67 @@
         <tbody class="divide-y divide-slate-200">
           @forelse($migrasiTunggakan as $r)
             @php
-              $lastVisit = !empty($r->last_visit_date) ? \Carbon\Carbon::parse($r->last_visit_date)->format('d/m/Y') : '-';
-              $isToday   = !empty($r->visit_today) && (int)$r->visit_today === 1;
-              $planVisit = !empty($r->plan_visit_date) ? \Carbon\Carbon::parse($r->plan_visit_date)->format('d/m/Y') : '-';
+              $lastVisitRaw = $r->last_visit_date ?? null;
+              $lastVisit = $fmtDate($lastVisitRaw);
+              $age = $visitAgeDays($lastVisitRaw);
+
+              $planned = (int)($r->planned_today ?? $r->visit_today ?? 0) === 1;
+              $status  = (string)($r->plan_status ?? '');
+              $isDone  = $planned && $status === 'done';
+
+              $planVisitDateRaw = $r->plan_visit_date ?? null;
+              $planVisit = $fmtDate($planVisitDateRaw);
+
+              $acc = (string)($r->account_no ?? '');
+              $ao  = (string)($r->ao_code ?? '');
+              $os  = (int)($r->os ?? 0);
             @endphp
             <tr>
               <td class="px-3 py-2 font-mono">{{ $r->account_no }}</td>
               <td class="px-3 py-2">{{ $r->customer_name }}</td>
               <td class="px-3 py-2 font-mono">{{ $r->ao_code }}</td>
-              <td class="px-3 py-2 text-right">Rp {{ number_format((int)$r->os,0,',','.') }}</td>
+              <td class="px-3 py-2 text-right">Rp {{ number_format($os,0,',','.') }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_pokok ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->kolek ?? 0) }}</td>
 
-              {{-- NEW --}}
+              <td class="px-3 py-2 whitespace-nowrap">{!! $riskBadge($r->dpd ?? 0, $r->kolek ?? '-', false) !!}</td>
+
               <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
-              <td class="px-3 py-2 text-center">
-                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
-                  {{ $isToday ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-50 text-slate-600 border border-slate-200' }}">
-                  {{ $isToday ? 'Ya' : 'Tidak' }}
-                </span>
+              <td class="px-3 py-2 text-right whitespace-nowrap">
+                @if($age === null)
+                  <span class="text-slate-400">-</span>
+                @else
+                  <span class="{{ $age >= 14 ? 'text-rose-700 font-semibold' : ($age >= 7 ? 'text-amber-700 font-semibold' : 'text-slate-700') }}">
+                    {{ $age }} hari
+                  </span>
+                @endif
               </td>
-              <td class="px-3 py-2 whitespace-nowrap">{{ $planVisit }}</td>
+
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                @if($isDone)
+                  <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
+                    bg-emerald-50 text-emerald-700 border border-emerald-200">Done</span>
+                @else
+                  <button type="button"
+                    class="btnPlanVisit inline-flex items-center rounded-full px-3 py-2 text-xs font-semibold border
+                      {{ $planned ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-800 border border-slate-200' }}"
+                    data-acc="{{ $acc }}"
+                    data-ao="{{ $ao }}"
+                    data-checked="{{ $planned ? '1' : '0' }}">
+                    {{ $planned ? 'Unplan' : 'Plan' }}
+                  </button>
+                @endif
+              </td>
+
+              <td class="px-3 py-2 whitespace-nowrap">
+                <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
+              </td>
             </tr>
           @empty
             <tr>
-              <td colspan="11" class="px-3 py-6 text-center text-slate-500">
+              <td colspan="13" class="px-3 py-6 text-center text-slate-500">
                 Belum ada data L0 → LT untuk periode ini.
               </td>
             </tr>
@@ -415,25 +576,31 @@
             <th class="text-right px-3 py-2">DPD</th>
             <th class="text-right px-3 py-2">Kolek</th>
 
-            {{-- NEW --}}
+            <th class="text-left px-3 py-2 whitespace-nowrap">Risk</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
-            <th class="text-center px-3 py-2 whitespace-nowrap">Visit Hari Ini</th>
+            <th class="text-right px-3 py-2 whitespace-nowrap">Umur Visit</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
           </tr>
         </thead>
 
         <tbody class="divide-y divide-slate-200">
-          @php $pos = !empty($latestPosDate) ? \Carbon\Carbon::parse($latestPosDate) : now(); @endphp
-
           @forelse(($jtAngsuran ?? []) as $r)
             @php
-              $day = (int)($r->installment_day ?? 0);
-              $day = $day > 0 ? min(max($day, 1), $pos->daysInMonth) : null;
-              $due = $day ? $pos->copy()->day($day) : null;
+              $lastVisitRaw = $r->last_visit_date ?? null;
+              $lastVisit = $fmtDate($lastVisitRaw);
+              $age = $visitAgeDays($lastVisitRaw);
 
-              $lastVisit = !empty($r->last_visit_date) ? \Carbon\Carbon::parse($r->last_visit_date)->format('d/m/Y') : '-';
-              $isToday   = !empty($r->visit_today) && (int)$r->visit_today === 1;
-              $planVisit = !empty($r->plan_visit_date) ? \Carbon\Carbon::parse($r->plan_visit_date)->format('d/m/Y') : '-';
+              $planned = (int)($r->planned_today ?? $r->visit_today ?? 0) === 1;
+              $status  = (string)($r->plan_status ?? '');
+              $isDone  = $planned && $status === 'done';
+
+              $planVisitDateRaw = $r->plan_visit_date ?? null;
+              $planVisit = $fmtDate($planVisitDateRaw);
+
+              $acc = (string)($r->account_no ?? '');
+              $ao  = (string)($r->ao_code ?? '');
+              $os  = (int)($r->os ?? 0);
             @endphp
             <tr>
               <td class="px-3 py-2 whitespace-nowrap">
@@ -442,25 +609,48 @@
               <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td>
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
               <td class="px-3 py-2 font-mono">{{ $r->ao_code ?? '-' }}</td>
-              <td class="px-3 py-2 text-right">Rp {{ number_format((int)($r->os ?? 0),0,',','.') }}</td>
+              <td class="px-3 py-2 text-right">Rp {{ number_format($os,0,',','.') }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_pokok ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->kolek ?? 0) }}</td>
 
-              {{-- NEW --}}
+              <td class="px-3 py-2 whitespace-nowrap">{!! $riskBadge($r->dpd ?? 0, $r->kolek ?? '-', false) !!}</td>
+
               <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
-              <td class="px-3 py-2 text-center">
-                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
-                  {{ $isToday ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-50 text-slate-600 border border-slate-200' }}">
-                  {{ $isToday ? 'Ya' : 'Tidak' }}
-                </span>
+              <td class="px-3 py-2 text-right whitespace-nowrap">
+                @if($age === null)
+                  <span class="text-slate-400">-</span>
+                @else
+                  <span class="{{ $age >= 14 ? 'text-rose-700 font-semibold' : ($age >= 7 ? 'text-amber-700 font-semibold' : 'text-slate-700') }}">
+                    {{ $age }} hari
+                  </span>
+                @endif
               </td>
-              <td class="px-3 py-2 whitespace-nowrap">{{ $planVisit }}</td>
+
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                @if($isDone)
+                  <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
+                    bg-emerald-50 text-emerald-700 border border-emerald-200">Done</span>
+                @else
+                  <button type="button"
+                    class="btnPlanVisit inline-flex items-center rounded-full px-3 py-2 text-xs font-semibold border
+                      {{ $planned ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-800 border border-slate-200' }}"
+                    data-acc="{{ $acc }}"
+                    data-ao="{{ $ao }}"
+                    data-checked="{{ $planned ? '1' : '0' }}">
+                    {{ $planned ? 'Unplan' : 'Plan' }}
+                  </button>
+                @endif
+              </td>
+
+              <td class="px-3 py-2 whitespace-nowrap">
+                <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
+              </td>
             </tr>
           @empty
             <tr>
-              <td colspan="12" class="px-3 py-6 text-center text-slate-500">
+              <td colspan="14" class="px-3 py-6 text-center text-slate-500">
                 Tidak ada JT angsuran minggu ini.
               </td>
             </tr>
@@ -471,7 +661,7 @@
   </div>
 
   {{-- ===========================
-      5) OS > 500jt
+      5) OS > threshold
       =========================== --}}
   <div class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
     <div class="p-4 border-b border-slate-200">
@@ -494,9 +684,10 @@
             <th class="text-right px-3 py-2">DPD</th>
             <th class="text-right px-3 py-2">Kolek</th>
 
-            {{-- NEW --}}
+            <th class="text-left px-3 py-2 whitespace-nowrap">Risk</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
-            <th class="text-center px-3 py-2 whitespace-nowrap">Visit Hari Ini</th>
+            <th class="text-right px-3 py-2 whitespace-nowrap">Umur Visit</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
           </tr>
         </thead>
@@ -504,33 +695,67 @@
         <tbody class="divide-y divide-slate-200">
           @forelse(($osBig ?? []) as $r)
             @php
-              $lastVisit = !empty($r->last_visit_date) ? \Carbon\Carbon::parse($r->last_visit_date)->format('d/m/Y') : '-';
-              $isToday   = !empty($r->visit_today) && (int)$r->visit_today === 1;
-              $planVisit = !empty($r->plan_visit_date) ? \Carbon\Carbon::parse($r->plan_visit_date)->format('d/m/Y') : '-';
+              $lastVisitRaw = $r->last_visit_date ?? null;
+              $lastVisit = $fmtDate($lastVisitRaw);
+              $age = $visitAgeDays($lastVisitRaw);
+
+              $planned = (int)($r->planned_today ?? $r->visit_today ?? 0) === 1;
+              $status  = (string)($r->plan_status ?? '');
+              $isDone  = $planned && $status === 'done';
+
+              $planVisitDateRaw = $r->plan_visit_date ?? null;
+              $planVisit = $fmtDate($planVisitDateRaw);
+
+              $acc = (string)($r->account_no ?? '');
+              $ao  = (string)($r->ao_code ?? '');
+              $os  = (int)($r->os ?? 0);
             @endphp
-            <tr>
+            <tr class="bg-slate-50/40">
               <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td>
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
               <td class="px-3 py-2 font-mono">{{ $r->ao_code ?? '-' }}</td>
-              <td class="px-3 py-2 text-right">Rp {{ number_format((int)($r->os ?? 0),0,',','.') }}</td>
+              <td class="px-3 py-2 text-right font-semibold text-slate-900">Rp {{ number_format($os,0,',','.') }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_pokok ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->kolek ?? 0) }}</td>
 
-              {{-- NEW --}}
+              <td class="px-3 py-2 whitespace-nowrap">{!! $riskBadge($r->dpd ?? 0, $r->kolek ?? '-', false) !!}</td>
+
               <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
-              <td class="px-3 py-2 text-center">
-                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
-                  {{ $isToday ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-50 text-slate-600 border border-slate-200' }}">
-                  {{ $isToday ? 'Ya' : 'Tidak' }}
-                </span>
+              <td class="px-3 py-2 text-right whitespace-nowrap">
+                @if($age === null)
+                  <span class="text-slate-400">-</span>
+                @else
+                  <span class="{{ $age >= 14 ? 'text-rose-700 font-semibold' : ($age >= 7 ? 'text-amber-700 font-semibold' : 'text-slate-700') }}">
+                    {{ $age }} hari
+                  </span>
+                @endif
               </td>
-              <td class="px-3 py-2 whitespace-nowrap">{{ $planVisit }}</td>
+
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                @if($isDone)
+                  <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
+                    bg-emerald-50 text-emerald-700 border border-emerald-200">Done</span>
+                @else
+                  <button type="button"
+                    class="btnPlanVisit inline-flex items-center rounded-full px-3 py-2 text-xs font-semibold border
+                      {{ $planned ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-800 border border-slate-200' }}"
+                    data-acc="{{ $acc }}"
+                    data-ao="{{ $ao }}"
+                    data-checked="{{ $planned ? '1' : '0' }}">
+                    {{ $planned ? 'Unplan' : 'Plan' }}
+                  </button>
+                @endif
+              </td>
+
+              <td class="px-3 py-2 whitespace-nowrap">
+                <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
+              </td>
             </tr>
           @empty
             <tr>
-              <td colspan="11" class="px-3 py-6 text-center text-slate-500">
+              <td colspan="13" class="px-3 py-6 text-center text-slate-500">
                 Tidak ada OS besar pada posisi terakhir.
               </td>
             </tr>
@@ -538,8 +763,6 @@
         </tbody>
       </table>
     </div>
-  </div>
-
   </div>
 
 </div>
@@ -577,39 +800,45 @@
   // ===== State =====
   let metric = 'os_total';
   let mode = 'value'; // value|growth
-  let showAllLines = false; // ✅ default: ringkas di HP
+  let showAllLines = false; // default ringkas di HP
 
+  const isMobile = () => window.matchMedia('(max-width: 639px)').matches;
 
   function getRawDatasets() {
     return (datasetsByMetric && datasetsByMetric[metric]) ? datasetsByMetric[metric] : [];
   }
 
-    function buildDatasets() {
-      const raw = getRawDatasets();
+  function applyMobileDatasetRules(datasets) {
+    if (!isMobile()) return datasets;
+    if (showAllLines) return datasets.map(ds => ({ ...ds, hidden: false }));
 
-      let ds = raw.map((ds) => {
-        const base = ds.data || [];
-        const data = (mode === 'growth') ? toGrowthSeries(base) : base;
+    const maxLines = isPercentMetric(metric) ? 2 : 3;
+    return datasets.map((ds, idx) => ({ ...ds, hidden: idx >= maxLines }));
+  }
 
-        return {
-          label: ds.label || 'Series',
-          data,
-          spanGaps: false,
-          tension: 0.2,
-          pointRadius: 0,
-          pointHoverRadius: isMobile() ? 3 : 4,
-          borderWidth: isMobile() ? 2 : 2,
-        };
-      });
+  function buildDatasets() {
+    const raw = getRawDatasets();
 
-      // ✅ apply mobile simplification
-      ds = applyMobileDatasetRules(ds);
+    let ds = raw.map((ds) => {
+      const base = ds.data || [];
+      const data = (mode === 'growth') ? toGrowthSeries(base) : base;
 
-      return ds;
-    }
+      return {
+        label: ds.label || 'Series',
+        data,
+        spanGaps: false,
+        tension: 0.2,
+        pointRadius: 0,
+        pointHoverRadius: isMobile() ? 3 : 4,
+        borderWidth: 2,
+      };
+    });
+
+    ds = applyMobileDatasetRules(ds);
+    return ds;
+  }
 
   function updateKpiStrip() {
-    // KPI selalu pakai value (bukan growth)
     const os = lastNonNull((datasetsByMetric?.os_total?.[0]?.data) || []);
     const l0 = lastNonNull((datasetsByMetric?.os_l0?.[0]?.data) || []);
     const lt = lastNonNull((datasetsByMetric?.os_lt?.[0]?.data) || []);
@@ -623,65 +852,34 @@
     document.getElementById('kpiLatestPctLT').textContent = isNil(pctlt) ? '-' : fmtPct(pctlt);
   }
 
-  const isMobile = () => window.matchMedia('(max-width: 639px)').matches; // <sm
-  const isTablet = () => window.matchMedia('(max-width: 1023px)').matches; // <lg
-
-  // Pada HP: default tampil lebih "sedikit garis" biar kebaca
-  function applyMobileDatasetRules(datasets) {
-    if (!isMobile()) return datasets;
-
-    // kalau showAllLines ON → jangan hide
-    if (showAllLines) {
-      return datasets.map(ds => ({ ...ds, hidden: false }));
-    }
-
-    // default ringkas
-    const maxLines = isPercentMetric(metric) ? 2 : 3;
-
-    return datasets.map((ds, idx) => ({
-      ...ds,
-      hidden: idx >= maxLines, // sisanya hidden
-    }));
-  }
-
   // ===== Init Chart =====
   const canvas = document.getElementById('osChart');
-  if (!canvas) {
-    console.error('Canvas #osChart not found. Pastikan tidak dikomentari.');
-  }
-
   const chart = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: { labels, datasets: buildDatasets() },
-        options: {
+    options: {
       responsive: true,
-      maintainAspectRatio: false, // ✅ penting supaya ngikut tinggi container
+      maintainAspectRatio: false,
       resizeDelay: 150,
       interaction: { mode: 'index', intersect: false },
-
       plugins: {
         legend: {
           display: true,
-          position: isMobile() ? 'bottom' : 'bottom',
+          position: 'bottom',
           labels: {
-            // bikin legend ringkas di HP
             boxWidth: isMobile() ? 10 : 12,
             boxHeight: isMobile() ? 10 : 12,
             usePointStyle: true,
             pointStyle: 'line',
             padding: isMobile() ? 10 : 14,
-            font: {
-              size: isMobile() ? 10 : 12
-            }
+            font: { size: isMobile() ? 10 : 12 }
           }
         },
-
         tooltip: {
           callbacks: {
             label: function(ctx){
               const v = ctx.raw;
               if (isNil(v)) return `${ctx.dataset.label}: (no data)`;
-
               const pct = isPercentMetric(metric);
               if (mode === 'growth') {
                 const sign = Number(v) >= 0 ? '+' : '';
@@ -692,7 +890,6 @@
           }
         }
       },
-
       scales: {
         x: {
           ticks: {
@@ -702,15 +899,13 @@
             minRotation: isMobile() ? 45 : 0,
             font: { size: isMobile() ? 10 : 11 }
           },
-          grid: {
-            display: !isMobile()
-          }
+          grid: { display: !isMobile() }
         },
-
         y: {
           ticks: {
             font: { size: isMobile() ? 10 : 11 },
             callback: (v) => {
+              if (isMobile()) return '';
               const pct = isPercentMetric(metric);
               if (mode === 'growth') {
                 const sign = Number(v) >= 0 ? '+' : '';
@@ -742,8 +937,6 @@
     if (!btn) return;
 
     btn.textContent = showAllLines ? 'Tampilkan ringkas' : 'Tampilkan semua garis';
-
-    // sedikit beda style biar terasa aktif
     btn.className = showAllLines
       ? 'w-full rounded-xl border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-semibold text-white'
       : 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800';
@@ -789,42 +982,117 @@
   document.querySelectorAll('[data-metric]')?.forEach(btn => {
     btn.addEventListener('click', () => {
       metric = btn.getAttribute('data-metric');
-
-      if (isMobile()) {
-        showAllLines = false;        // reset ke ringkas
-        repaintShowAllButton();
-      }
-
+      if (isMobile()) { showAllLines = false; repaintShowAllButton(); }
       repaintMetricButtons();
       refreshChart();
     });
   });
 
-
   document.getElementById('btnShowAllLines')?.addEventListener('click', () => {
     showAllLines = !showAllLines;
     repaintShowAllButton();
-
-    // refresh chart agar hidden rules diterapkan ulang
     refreshChart();
   });
 
-  // ===== first paint =====
-  
   repaintMetricButtons();
   repaintModeButtons();
   repaintShowAllButton();
   updateKpiStrip();
 
-  // ✅ handle resize/rotate biar chart tidak “nge-freeze” ukuran
   let __resizeTimer = null;
   window.addEventListener('resize', () => {
     clearTimeout(__resizeTimer);
-    __resizeTimer = setTimeout(() => {
-      refreshChart();
-    }, 200);
+    __resizeTimer = setTimeout(() => refreshChart(), 200);
   });
 
+  // =========================
+  // ✅ Plan Visit (AJAX) - Consistent Button
+  // =========================
+  const toggleUrl = @json(route('ro_visits.toggle'));
+  const csrf = @json(csrf_token());
+
+  function formatPlanDate(planDateYmd) {
+    if (!planDateYmd) return '-';
+    const d = new Date(planDateYmd + 'T00:00:00');
+    const dd = String(d.getDate()).padStart(2,'0');
+    const mm = String(d.getMonth()+1).padStart(2,'0');
+    const yy = d.getFullYear();
+    return `${dd}/${mm}/${yy}`;
+  }
+
+  function setPlanUi(accountNo, checked, locked, planDateYmd) {
+    // update semua button plan utk account yg sama
+    document.querySelectorAll(`.btnPlanVisit[data-acc="${CSS.escape(accountNo)}"]`).forEach(btn => {
+      btn.dataset.checked = checked ? '1' : '0';
+      btn.disabled = !!locked;
+
+      if (checked) {
+        btn.textContent = 'Unplan';
+        btn.className = 'btnPlanVisit inline-flex items-center rounded-full px-3 py-2 text-xs font-semibold border bg-slate-900 text-white border-slate-900';
+      } else {
+        btn.textContent = 'Plan';
+        btn.className = 'btnPlanVisit inline-flex items-center rounded-full px-3 py-2 text-xs font-semibold border bg-white text-slate-800 border-slate-200';
+      }
+
+      if (locked) {
+        btn.className += ' opacity-60 cursor-not-allowed';
+      }
+    });
+
+    const planText = formatPlanDate(planDateYmd);
+    document.querySelectorAll(`.ro-plan-date[data-account="${CSS.escape(accountNo)}"]`).forEach(el => {
+      el.textContent = planText;
+    });
+  }
+
+  async function postToggle(accountNo, aoCode, checked) {
+    const res = await fetch(toggleUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRF-TOKEN': csrf,
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify({
+        account_no: accountNo,
+        ao_code: aoCode || null,
+        checked: !!checked,
+        source: 'dashboard',
+      }),
+    });
+
+    if (!res.ok) {
+      const txt = await res.text();
+      throw new Error(txt || 'Request failed');
+    }
+    return await res.json();
+  }
+
+  function bindPlanButtons() {
+    document.querySelectorAll('.btnPlanVisit').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const accountNo = btn.getAttribute('data-acc') || '';
+        const aoCode = btn.getAttribute('data-ao') || '';
+        const currentlyChecked = (btn.dataset.checked === '1');
+        const nextChecked = !currentlyChecked;
+
+        // optimistic UI
+        btn.disabled = true;
+
+        try {
+          const json = await postToggle(accountNo, aoCode, nextChecked);
+          // response expected: { checked: bool, locked: bool, plan_date: "YYYY-MM-DD"|null }
+          setPlanUi(accountNo, json.checked, json.locked, json.plan_date);
+        } catch (err) {
+          // rollback UI
+          btn.disabled = false;
+          alert('Gagal update plan visit. Coba refresh halaman.\n\n' + (err?.message || err));
+        }
+      });
+    });
+  }
+
+  bindPlanButtons();
 </script>
 
 @endsection
