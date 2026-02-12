@@ -7,6 +7,7 @@ use App\Models\OrgAssignment;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Models\RoVisit;
 
 class TlOsDailyDashboardController extends Controller
 {
@@ -170,6 +171,46 @@ class TlOsDailyDashboardController extends Controller
             $datasetsByMetric['pct_lt'][]   = ['key' => $u->ao_code, 'label' => $label, 'data' => $seriesPctLT];
         }
 
+        $today = now()->toDateString();
+
+        /**
+         * =========================================================
+         * VISIT META (Last visit + Visit Today) - no N+1
+         * =========================================================
+         */
+
+        // Last visit per account (account_no => last_visit_date)
+        $lastVisitMap = \App\Models\RoVisit::query()
+            ->selectRaw('account_no, MAX(visit_date) as last_visit_date')
+            ->groupBy('account_no')
+            ->pluck('last_visit_date', 'account_no')   // [account_no => last_visit_date]
+            ->toArray();
+
+        // Visit hari ini? (set account_no)
+        $visitTodaySet = \App\Models\RoVisit::query()
+            ->whereDate('visit_date', $today)
+            ->pluck('account_no')
+            ->flip()                                   // jadikan set
+            ->toArray();                               // [account_no => index]
+
+        // helper inject meta ke rows (Collection)
+        $attachVisitMeta = function ($rows) use ($lastVisitMap, $visitTodaySet, $today) {
+            // $rows bisa Collection hasil ->get() / paginator items
+            return collect($rows)->map(function ($r) use ($lastVisitMap, $visitTodaySet, $today) {
+                $acc = (string)($r->account_no ?? '');
+
+                $last = $lastVisitMap[$acc] ?? null;
+                $isToday = $acc !== '' && array_key_exists($acc, $visitTodaySet);
+
+                // inject fields (biar blade tinggal pakai)
+                $r->last_visit_date = $last;                 // date|string|null
+                $r->visit_today     = $isToday ? 1 : 0;      // int 0/1
+                $r->plan_visit_date = $isToday ? $today : null;
+
+                return $r;
+            });
+        };
+
         // ===== posisi terakhir loan_accounts untuk tabel bawah =====
         $latestPosDate = $latestDate ? Carbon::parse($latestDate)->toDateString() : now()->toDateString();
 
@@ -196,6 +237,8 @@ class TlOsDailyDashboardController extends Controller
             ->limit(300)
             ->get();
 
+        $dueThisMonth = $attachVisitMeta($dueThisMonth);
+
         // 2) LT posisi terakhir
         $ltLatest = DB::table('loan_accounts as la')
             ->select([
@@ -213,9 +256,11 @@ class TlOsDailyDashboardController extends Controller
             ->where(function ($q) {
                 $q->where('la.ft_pokok', 1)->orWhere('la.ft_bunga', 1);
             })
-            ->orderByDesc('la.outstanding')
+            ->orderByDesc('la.dpd')
             ->limit(300)
             ->get();
+
+        $ltLatest = $attachVisitMeta($ltLatest);
 
         // 3) L0 -> LT bulan ini (pakai snapshot_monthly bulan lalu vs posisi terakhir)
         $prevSnapMonth = Carbon::parse($latestPosDate)->subMonth()->startOfMonth()->toDateString();
@@ -247,6 +292,11 @@ class TlOsDailyDashboardController extends Controller
             ->paginate($perPage)
             ->appends($request->query());
 
+        // inject meta ke paginator items
+        $migrasiTunggakan->setCollection(
+            $attachVisitMeta($migrasiTunggakan->getCollection())
+        );
+
         // 4) JT angsuran minggu ini
         $weekStartC = Carbon::parse($latestPosDate)->startOfWeek(Carbon::MONDAY);
         $weekEndC   = Carbon::parse($latestPosDate)->endOfWeek(Carbon::SUNDAY);
@@ -257,7 +307,7 @@ class TlOsDailyDashboardController extends Controller
         // due_date = YYYY-MM- + installment_day (dibaca pada bulan posisi terakhir)
         $ym = Carbon::parse($latestPosDate)->format('Y-m');
 
-        // bikin expression due_date (MySQL)
+        // MySQL expression due_date
         $dueDateExpr = "STR_TO_DATE(CONCAT('$ym','-',LPAD(la.installment_day,2,'0')),'%Y-%m-%d')";
 
         $jtAngsuran = DB::table('loan_accounts as la')
@@ -278,12 +328,13 @@ class TlOsDailyDashboardController extends Controller
             ->whereNotNull('la.installment_day')
             ->where('la.installment_day', '>=', 1)
             ->where('la.installment_day', '<=', 31)
-            // ✅ FILTER MINGGU INI YANG BENAR
             ->whereBetween(DB::raw($dueDateExpr), [$weekStart, $weekEnd])
             ->orderBy(DB::raw($dueDateExpr))
             ->orderByDesc('la.outstanding')
             ->limit(300)
             ->get();
+
+        $jtAngsuran = $attachVisitMeta($jtAngsuran);
 
         // 5) OS >= 500jt
         $bigThreshold = 500000000;
@@ -306,6 +357,8 @@ class TlOsDailyDashboardController extends Controller
             ->limit(300)
             ->get();
 
+        $osBig = $attachVisitMeta($osBig);
+
         return view('kpi.tl.os_daily', [
             'from'     => $from->toDateString(),
             'to'       => $to->toDateString(),
@@ -327,6 +380,9 @@ class TlOsDailyDashboardController extends Controller
             'aoOptions' => $aoOptions,
             'aoFilter'  => $aoFilter,
 
+            // ✅ visit info global (kalau mau ditampilkan di header)
+            'today' => $today,
+
             // tables
             'dueThisMonth' => $dueThisMonth,
             'dueMonthLabel' => Carbon::parse($latestPosDate)->translatedFormat('F Y'),
@@ -343,6 +399,7 @@ class TlOsDailyDashboardController extends Controller
             'bigThreshold' => $bigThreshold,
             'osBig' => $osBig,
         ]);
+
     }
 
     private function subordinateStaffForLeader(int $leaderUserId)

@@ -140,11 +140,30 @@
             Growth (Δ H vs H-1)
           </button>
         </div>
+        {{-- Mobile: toggle show all lines --}}
+        <div class="w-full sm:hidden">
+          <button type="button" id="btnShowAllLines"
+                  class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800">
+            Tampilkan semua garis
+          </button>
+          <div class="mt-1 text-[11px] text-slate-500">
+            Mode ringkas membantu grafik lebih kebaca di HP.
+          </div>
+        </div>
       </div>
     </div>
 
-    <div class="w-full overflow-x-auto">
-      <canvas id="osChart" height="120"></canvas>
+    {{-- Chart wrapper (mobile-friendly) --}}
+    <div class="w-full">
+      {{-- legend akan lebih enak kalau chart bisa “nafas” --}}
+      <div class="relative w-full h-[260px] sm:h-[360px] md:h-[420px]">
+        <canvas id="osChart" class="w-full h-full"></canvas>
+      </div>
+
+      {{-- Catatan kecil buat user HP --}}
+      <div class="mt-2 text-[11px] text-slate-500 sm:hidden">
+        Tips: geser layar ke samping untuk melihat detail legend & garis.
+      </div>
     </div>
   </div>
 
@@ -170,11 +189,21 @@
             <th class="text-right px-3 py-2">OS</th>
             <th class="text-right px-3 py-2">DPD</th>
             <th class="text-right px-3 py-2">Kolek</th>
+
+            {{-- NEW --}}
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Visit Hari Ini</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
           </tr>
         </thead>
 
         <tbody class="divide-y divide-slate-200">
           @forelse(($dueThisMonth ?? []) as $r)
+            @php
+              $lastVisit = !empty($r->last_visit_date) ? \Carbon\Carbon::parse($r->last_visit_date)->format('d/m/Y') : '-';
+              $isToday   = !empty($r->visit_today) && (int)$r->visit_today === 1;
+              $planVisit = !empty($r->plan_visit_date) ? \Carbon\Carbon::parse($r->plan_visit_date)->format('d/m/Y') : '-';
+            @endphp
             <tr>
               <td class="px-3 py-2 whitespace-nowrap">
                 {{ \Carbon\Carbon::parse($r->maturity_date)->format('d/m/Y') }}
@@ -185,10 +214,20 @@
               <td class="px-3 py-2 text-right">Rp {{ number_format((int)($r->outstanding ?? 0),0,',','.') }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ $r->kolek ?? '-' }}</td>
+
+              {{-- NEW --}}
+              <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
+              <td class="px-3 py-2 text-center">
+                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
+                  {{ $isToday ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-50 text-slate-600 border border-slate-200' }}">
+                  {{ $isToday ? 'Ya' : 'Tidak' }}
+                </span>
+              </td>
+              <td class="px-3 py-2 whitespace-nowrap">{{ $planVisit }}</td>
             </tr>
           @empty
             <tr>
-              <td colspan="7" class="px-3 py-6 text-center text-slate-500">
+              <td colspan="10" class="px-3 py-6 text-center text-slate-500">
                 Belum ada data jatuh tempo bulan ini.
               </td>
             </tr>
@@ -221,11 +260,21 @@
             <th class="text-right px-3 py-2">FT Bunga</th>
             <th class="text-right px-3 py-2">DPD</th>
             <th class="text-right px-3 py-2">Kolek</th>
+
+            {{-- NEW --}}
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Visit Hari Ini</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
           </tr>
         </thead>
 
         <tbody class="divide-y divide-slate-200">
           @forelse(($ltLatest ?? []) as $r)
+            @php
+              $lastVisit = !empty($r->last_visit_date) ? \Carbon\Carbon::parse($r->last_visit_date)->format('d/m/Y') : '-';
+              $isToday   = !empty($r->visit_today) && (int)$r->visit_today === 1;
+              $planVisit = !empty($r->plan_visit_date) ? \Carbon\Carbon::parse($r->plan_visit_date)->format('d/m/Y') : '-';
+            @endphp
             <tr>
               <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td>
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
@@ -235,10 +284,20 @@
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ $r->kolek ?? '-' }}</td>
+
+              {{-- NEW --}}
+              <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
+              <td class="px-3 py-2 text-center">
+                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
+                  {{ $isToday ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-50 text-slate-600 border border-slate-200' }}">
+                  {{ $isToday ? 'Ya' : 'Tidak' }}
+                </span>
+              </td>
+              <td class="px-3 py-2 whitespace-nowrap">{{ $planVisit }}</td>
             </tr>
           @empty
             <tr>
-              <td colspan="8" class="px-3 py-6 text-center text-slate-500">
+              <td colspan="11" class="px-3 py-6 text-center text-slate-500">
                 Tidak ada data LT untuk posisi terakhir.
               </td>
             </tr>
@@ -275,11 +334,21 @@
             <th class="text-right px-3 py-2">FT Bunga</th>
             <th class="text-right px-3 py-2">DPD</th>
             <th class="text-right px-3 py-2">Kolek</th>
+
+            {{-- NEW --}}
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Visit Hari Ini</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
           </tr>
         </thead>
 
         <tbody class="divide-y divide-slate-200">
           @forelse($migrasiTunggakan as $r)
+            @php
+              $lastVisit = !empty($r->last_visit_date) ? \Carbon\Carbon::parse($r->last_visit_date)->format('d/m/Y') : '-';
+              $isToday   = !empty($r->visit_today) && (int)$r->visit_today === 1;
+              $planVisit = !empty($r->plan_visit_date) ? \Carbon\Carbon::parse($r->plan_visit_date)->format('d/m/Y') : '-';
+            @endphp
             <tr>
               <td class="px-3 py-2 font-mono">{{ $r->account_no }}</td>
               <td class="px-3 py-2">{{ $r->customer_name }}</td>
@@ -289,10 +358,20 @@
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->kolek ?? 0) }}</td>
+
+              {{-- NEW --}}
+              <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
+              <td class="px-3 py-2 text-center">
+                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
+                  {{ $isToday ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-50 text-slate-600 border border-slate-200' }}">
+                  {{ $isToday ? 'Ya' : 'Tidak' }}
+                </span>
+              </td>
+              <td class="px-3 py-2 whitespace-nowrap">{{ $planVisit }}</td>
             </tr>
           @empty
             <tr>
-              <td colspan="8" class="px-3 py-6 text-center text-slate-500">
+              <td colspan="11" class="px-3 py-6 text-center text-slate-500">
                 Belum ada data L0 → LT untuk periode ini.
               </td>
             </tr>
@@ -335,6 +414,11 @@
             <th class="text-right px-3 py-2">FT Bunga</th>
             <th class="text-right px-3 py-2">DPD</th>
             <th class="text-right px-3 py-2">Kolek</th>
+
+            {{-- NEW --}}
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Visit Hari Ini</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
           </tr>
         </thead>
 
@@ -346,11 +430,15 @@
               $day = (int)($r->installment_day ?? 0);
               $day = $day > 0 ? min(max($day, 1), $pos->daysInMonth) : null;
               $due = $day ? $pos->copy()->day($day) : null;
+
+              $lastVisit = !empty($r->last_visit_date) ? \Carbon\Carbon::parse($r->last_visit_date)->format('d/m/Y') : '-';
+              $isToday   = !empty($r->visit_today) && (int)$r->visit_today === 1;
+              $planVisit = !empty($r->plan_visit_date) ? \Carbon\Carbon::parse($r->plan_visit_date)->format('d/m/Y') : '-';
             @endphp
             <tr>
               <td class="px-3 py-2 whitespace-nowrap">
-              {{ !empty($r->due_date) ? \Carbon\Carbon::parse($r->due_date)->format('d/m/Y') : '-' }}
-            </td>
+                {{ !empty($r->due_date) ? \Carbon\Carbon::parse($r->due_date)->format('d/m/Y') : '-' }}
+              </td>
               <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td>
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
               <td class="px-3 py-2 font-mono">{{ $r->ao_code ?? '-' }}</td>
@@ -359,10 +447,20 @@
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->kolek ?? 0) }}</td>
+
+              {{-- NEW --}}
+              <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
+              <td class="px-3 py-2 text-center">
+                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
+                  {{ $isToday ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-50 text-slate-600 border border-slate-200' }}">
+                  {{ $isToday ? 'Ya' : 'Tidak' }}
+                </span>
+              </td>
+              <td class="px-3 py-2 whitespace-nowrap">{{ $planVisit }}</td>
             </tr>
           @empty
             <tr>
-              <td colspan="9" class="px-3 py-6 text-center text-slate-500">
+              <td colspan="12" class="px-3 py-6 text-center text-slate-500">
                 Tidak ada JT angsuran minggu ini.
               </td>
             </tr>
@@ -395,11 +493,21 @@
             <th class="text-right px-3 py-2">FT Bunga</th>
             <th class="text-right px-3 py-2">DPD</th>
             <th class="text-right px-3 py-2">Kolek</th>
+
+            {{-- NEW --}}
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Visit Hari Ini</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
           </tr>
         </thead>
 
         <tbody class="divide-y divide-slate-200">
           @forelse(($osBig ?? []) as $r)
+            @php
+              $lastVisit = !empty($r->last_visit_date) ? \Carbon\Carbon::parse($r->last_visit_date)->format('d/m/Y') : '-';
+              $isToday   = !empty($r->visit_today) && (int)$r->visit_today === 1;
+              $planVisit = !empty($r->plan_visit_date) ? \Carbon\Carbon::parse($r->plan_visit_date)->format('d/m/Y') : '-';
+            @endphp
             <tr>
               <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td>
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
@@ -409,10 +517,20 @@
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->kolek ?? 0) }}</td>
+
+              {{-- NEW --}}
+              <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
+              <td class="px-3 py-2 text-center">
+                <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold
+                  {{ $isToday ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-50 text-slate-600 border border-slate-200' }}">
+                  {{ $isToday ? 'Ya' : 'Tidak' }}
+                </span>
+              </td>
+              <td class="px-3 py-2 whitespace-nowrap">{{ $planVisit }}</td>
             </tr>
           @empty
             <tr>
-              <td colspan="8" class="px-3 py-6 text-center text-slate-500">
+              <td colspan="11" class="px-3 py-6 text-center text-slate-500">
                 Tidak ada OS besar pada posisi terakhir.
               </td>
             </tr>
@@ -420,6 +538,8 @@
         </tbody>
       </table>
     </div>
+  </div>
+
   </div>
 
 </div>
@@ -457,27 +577,36 @@
   // ===== State =====
   let metric = 'os_total';
   let mode = 'value'; // value|growth
+  let showAllLines = false; // ✅ default: ringkas di HP
+
 
   function getRawDatasets() {
     return (datasetsByMetric && datasetsByMetric[metric]) ? datasetsByMetric[metric] : [];
   }
 
-  function buildDatasets() {
-    const raw = getRawDatasets();
-    return raw.map(ds => {
-      const base = ds.data || [];
-      const data = (mode === 'growth') ? toGrowthSeries(base) : base;
-      return {
-        label: ds.label || 'Series',
-        data,
-        spanGaps: false,
-        tension: 0.2,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-        borderWidth: 2
-      };
-    });
-  }
+    function buildDatasets() {
+      const raw = getRawDatasets();
+
+      let ds = raw.map((ds) => {
+        const base = ds.data || [];
+        const data = (mode === 'growth') ? toGrowthSeries(base) : base;
+
+        return {
+          label: ds.label || 'Series',
+          data,
+          spanGaps: false,
+          tension: 0.2,
+          pointRadius: 0,
+          pointHoverRadius: isMobile() ? 3 : 4,
+          borderWidth: isMobile() ? 2 : 2,
+        };
+      });
+
+      // ✅ apply mobile simplification
+      ds = applyMobileDatasetRules(ds);
+
+      return ds;
+    }
 
   function updateKpiStrip() {
     // KPI selalu pakai value (bukan growth)
@@ -494,6 +623,27 @@
     document.getElementById('kpiLatestPctLT').textContent = isNil(pctlt) ? '-' : fmtPct(pctlt);
   }
 
+  const isMobile = () => window.matchMedia('(max-width: 639px)').matches; // <sm
+  const isTablet = () => window.matchMedia('(max-width: 1023px)').matches; // <lg
+
+  // Pada HP: default tampil lebih "sedikit garis" biar kebaca
+  function applyMobileDatasetRules(datasets) {
+    if (!isMobile()) return datasets;
+
+    // kalau showAllLines ON → jangan hide
+    if (showAllLines) {
+      return datasets.map(ds => ({ ...ds, hidden: false }));
+    }
+
+    // default ringkas
+    const maxLines = isPercentMetric(metric) ? 2 : 3;
+
+    return datasets.map((ds, idx) => ({
+      ...ds,
+      hidden: idx >= maxLines, // sisanya hidden
+    }));
+  }
+
   // ===== Init Chart =====
   const canvas = document.getElementById('osChart');
   if (!canvas) {
@@ -503,20 +653,29 @@
   const chart = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: { labels, datasets: buildDatasets() },
-    options: {
+        options: {
       responsive: true,
+      maintainAspectRatio: false, // ✅ penting supaya ngikut tinggi container
+      resizeDelay: 150,
       interaction: { mode: 'index', intersect: false },
+
       plugins: {
         legend: {
           display: true,
-          position: 'bottom',
+          position: isMobile() ? 'bottom' : 'bottom',
           labels: {
-            boxWidth: 10,
-            boxHeight: 10,
+            // bikin legend ringkas di HP
+            boxWidth: isMobile() ? 10 : 12,
+            boxHeight: isMobile() ? 10 : 12,
             usePointStyle: true,
-            pointStyle: 'line'
+            pointStyle: 'line',
+            padding: isMobile() ? 10 : 14,
+            font: {
+              size: isMobile() ? 10 : 12
+            }
           }
         },
+
         tooltip: {
           callbacks: {
             label: function(ctx){
@@ -533,9 +692,24 @@
           }
         }
       },
+
       scales: {
+        x: {
+          ticks: {
+            autoSkip: true,
+            maxTicksLimit: isMobile() ? 6 : 14,
+            maxRotation: isMobile() ? 45 : 0,
+            minRotation: isMobile() ? 45 : 0,
+            font: { size: isMobile() ? 10 : 11 }
+          },
+          grid: {
+            display: !isMobile()
+          }
+        },
+
         y: {
           ticks: {
+            font: { size: isMobile() ? 10 : 11 },
             callback: (v) => {
               const pct = isPercentMetric(metric);
               if (mode === 'growth') {
@@ -561,6 +735,18 @@
       btnValue.className  = 'px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-700';
       btnGrowth.className = 'px-3 py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200';
     }
+  }
+
+  function repaintShowAllButton() {
+    const btn = document.getElementById('btnShowAllLines');
+    if (!btn) return;
+
+    btn.textContent = showAllLines ? 'Tampilkan ringkas' : 'Tampilkan semua garis';
+
+    // sedikit beda style biar terasa aktif
+    btn.className = showAllLines
+      ? 'w-full rounded-xl border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-semibold text-white'
+      : 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800';
   }
 
   function repaintMetricButtons() {
@@ -603,15 +789,42 @@
   document.querySelectorAll('[data-metric]')?.forEach(btn => {
     btn.addEventListener('click', () => {
       metric = btn.getAttribute('data-metric');
+
+      if (isMobile()) {
+        showAllLines = false;        // reset ke ringkas
+        repaintShowAllButton();
+      }
+
       repaintMetricButtons();
       refreshChart();
     });
   });
 
+
+  document.getElementById('btnShowAllLines')?.addEventListener('click', () => {
+    showAllLines = !showAllLines;
+    repaintShowAllButton();
+
+    // refresh chart agar hidden rules diterapkan ulang
+    refreshChart();
+  });
+
   // ===== first paint =====
+  
   repaintMetricButtons();
   repaintModeButtons();
+  repaintShowAllButton();
   updateKpiStrip();
+
+  // ✅ handle resize/rotate biar chart tidak “nge-freeze” ukuran
+  let __resizeTimer = null;
+  window.addEventListener('resize', () => {
+    clearTimeout(__resizeTimer);
+    __resizeTimer = setTimeout(() => {
+      refreshChart();
+    }, 200);
+  });
+
 </script>
 
 @endsection
