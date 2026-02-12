@@ -18,20 +18,28 @@ class RoOsDailyDashboardController extends Controller
         $ao = str_pad(trim((string)($me->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
         abort_unless($ao !== '' && $ao !== '000000', 403);
 
-        // =============================
-        // RANGE default: last 30 days
-        // =============================
-        $latest = DB::table('kpi_os_daily_aos')
-            ->whereRaw("LPAD(TRIM(ao_code),6,'0') = ?", [$ao])
-            ->max('position_date');
+         /* 1) RANGE DEFAULT
+         *    - from: tgl terakhir bulan lalu
+         *    - to  : tgl terakhir yang ada di tabel kpi_os_daily_aos
+         * =========================================================
+         */
+        $latestInKpi = DB::table('kpi_os_daily_aos')->max('position_date'); // date
+        $latestInKpi = $latestInKpi ? Carbon::parse($latestInKpi)->startOfDay() : now()->startOfDay();
 
-        $latest = $latest ? Carbon::parse($latest) : now();
+        $lastMonthEndC = Carbon::now()->subMonthNoOverflow()->endOfMonth()->startOfDay();
 
-        $to   = $request->query('to')   ? Carbon::parse($request->query('to'))   : $latest;
-        $from = $request->query('from') ? Carbon::parse($request->query('from')) : $to->copy()->subDays(29);
+        $from = $request->filled('from')
+            ? Carbon::parse($request->input('from'))->startOfDay()
+            : $lastMonthEndC->copy()->startOfDay();
 
-        $from = $from->startOfDay();
-        $to   = $to->endOfDay();
+        $to = $request->filled('to')
+            ? Carbon::parse($request->input('to'))->startOfDay()
+            : $latestInKpi->copy()->startOfDay();
+
+        // guard kalau user input kebalik
+        if ($from->gt($to)) {
+            [$from, $to] = [$to->copy()->startOfDay(), $from->copy()->startOfDay()];
+        }
 
         // =============================
         // LABELS tanggal lengkap
