@@ -66,7 +66,6 @@ class RoOsDailyDashboardController extends Controller
             $osL0    = (int)($r->os_l0 ?? 0);
             $osLt    = (int)($r->os_lt ?? 0);
 
-            // RR di sini definisinya %L0 (sesuai chart kamu RR (%L0))
             $rr    = ($osTotal > 0) ? round(($osL0 / $osTotal) * 100, 2) : null;
             $pctLt = ($osTotal > 0) ? round(($osLt / $osTotal) * 100, 2) : null;
 
@@ -97,94 +96,97 @@ class RoOsDailyDashboardController extends Controller
         }
 
         // =============================
-        // LATEST vs H-1 (summary)
-        // ✅ FIX: pakai 2 tanggal terakhir yang BENAR-BENAR ADA DATA
-        // (bukan sekadar last label), supaya delta & card growth valid
+        // LATEST + PREV (yang benar-benar ada snapshot)
         // =============================
-        $dataDates = array_keys($byDate);
-        sort($dataDates); // ascending
+        $latestDate = count($labels) ? $labels[count($labels) - 1] : null;
 
-        $latestDate = count($dataDates) ? $dataDates[count($dataDates) - 1] : null;
-        $prevDate   = count($dataDates) >= 2 ? $dataDates[count($dataDates) - 2] : null;
+        $prevAvailDate = null;
+        if ($latestDate) {
+            for ($i = count($labels) - 2; $i >= 0; $i--) {
+                $d = $labels[$i] ?? null;
+                if ($d && isset($byDate[$d])) {
+                    $prevAvailDate = $d;
+                    break;
+                }
+            }
+        }
 
         $latestPack = $latestDate ? ($byDate[$latestDate] ?? null) : null;
-        $prevPack   = $prevDate ? ($byDate[$prevDate] ?? null) : null;
+        $prevPack   = $prevAvailDate ? ($byDate[$prevAvailDate] ?? null) : null;
 
-        $deltaMoney = function ($a, $b) {
-            if ($a === null || $b === null) return null;
-            return (int)$a - (int)$b;
-        };
+        // fallback jika latestDate tidak ada data (misal range ke depan)
+        if ($latestDate && !$latestPack) {
+            for ($i = count($labels) - 1; $i >= 0; $i--) {
+                $d = $labels[$i] ?? null;
+                if ($d && isset($byDate[$d])) {
+                    $latestDate = $d;
+                    $latestPack = $byDate[$d];
+                    break;
+                }
+            }
+        }
 
-        $deltaPct = function ($a, $b) {
-            if ($a === null || $b === null) return null;
-            return round(((float)$a - (float)$b), 2); // percentage point (pp)
-        };
+        // kalau prev tidak ketemu, tetap null (delta tidak dihitung)
+        $prevDate = $prevAvailDate;
 
-        $latestOs     = $latestPack['os_total'] ?? null;
-        $prevOs       = $prevPack['os_total'] ?? null;
-        $deltaOs      = $deltaMoney($latestOs, $prevOs);
+        // =============================
+        // Cards value & delta (H vs H-1 snapshot available)
+        // =============================
+        $latestOs    = (int)($latestPack['os_total'] ?? 0);
+        $latestL0    = (int)($latestPack['os_l0'] ?? 0);
+        $latestLT    = (int)($latestPack['os_lt'] ?? 0);
+        $latestRR    = $latestPack['rr'] ?? null;
+        $latestPctLt = $latestPack['pct_lt'] ?? null;
 
-        $latestL0     = $latestPack['os_l0'] ?? null;
-        $prevL0       = $prevPack['os_l0'] ?? null;
-        $deltaL0      = $deltaMoney($latestL0, $prevL0);
+        $prevOs    = $prevPack ? (int)($prevPack['os_total'] ?? 0) : null;
+        $prevL0    = $prevPack ? (int)($prevPack['os_l0'] ?? 0) : null;
+        $prevLT    = $prevPack ? (int)($prevPack['os_lt'] ?? 0) : null;
+        $prevRR    = $prevPack ? ($prevPack['rr'] ?? null) : null;
+        $prevPctLt = $prevPack ? ($prevPack['pct_lt'] ?? null) : null;
 
-        $latestLT     = $latestPack['os_lt'] ?? null;
-        $prevLT       = $prevPack['os_lt'] ?? null;
-        $deltaLT      = $deltaMoney($latestLT, $prevLT);
+        $deltaOs    = is_null($prevOs) ? null : ($latestOs - $prevOs);
+        $deltaL0    = is_null($prevL0) ? null : ($latestL0 - $prevL0);
+        $deltaLT    = is_null($prevLT) ? null : ($latestLT - $prevLT);
+        $deltaRR    = (is_null($prevRR) || is_null($latestRR)) ? null : round(((float)$latestRR - (float)$prevRR), 2);
+        $deltaPctLt = (is_null($prevPctLt) || is_null($latestPctLt)) ? null : round(((float)$latestPctLt - (float)$prevPctLt), 2);
 
-        $latestRR     = $latestPack['rr'] ?? null;
-        $prevRR       = $prevPack['rr'] ?? null;
-        $deltaRR      = $deltaPct($latestRR, $prevRR);
-
-        $latestPctLt  = $latestPack['pct_lt'] ?? null;
-        $prevPctLt    = $prevPack['pct_lt'] ?? null;
-        $deltaPctLt   = $deltaPct($latestPctLt, $prevPctLt);
-
-        // ✅ Cards: value + growth harian (buat TLRO)
         $cards = [
             'os' => [
-                'title' => 'Latest OS',
-                'type'  => 'money',
-                'value' => is_null($latestOs) ? null : (int)$latestOs,
-                'prev'  => is_null($prevOs) ? null : (int)$prevOs,
-                'delta' => is_null($deltaOs) ? null : (int)$deltaOs,
+                'label' => 'OS',
+                'value' => $latestOs,
+                'prev'  => $prevOs,
+                'delta' => $deltaOs,
             ],
             'l0' => [
-                'title' => 'Latest L0',
-                'type'  => 'money',
-                'value' => is_null($latestL0) ? null : (int)$latestL0,
-                'prev'  => is_null($prevL0) ? null : (int)$prevL0,
-                'delta' => is_null($deltaL0) ? null : (int)$deltaL0,
+                'label' => 'L0',
+                'value' => $latestL0,
+                'prev'  => $prevL0,
+                'delta' => $deltaL0,
             ],
             'lt' => [
-                'title' => 'Latest LT',
-                'type'  => 'money',
-                'value' => is_null($latestLT) ? null : (int)$latestLT,
-                'prev'  => is_null($prevLT) ? null : (int)$prevLT,
-                'delta' => is_null($deltaLT) ? null : (int)$deltaLT,
+                'label' => 'LT',
+                'value' => $latestLT,
+                'prev'  => $prevLT,
+                'delta' => $deltaLT,
             ],
             'rr' => [
-                'title' => 'RR (%L0)',
-                'type'  => 'pct',
-                'value' => is_null($latestRR) ? null : (float)$latestRR,
-                'prev'  => is_null($prevRR) ? null : (float)$prevRR,
-                'delta' => is_null($deltaRR) ? null : (float)$deltaRR, // pp
+                'label' => 'RR (%L0)',
+                'value' => $latestRR,
+                'prev'  => $prevRR,
+                'delta' => $deltaRR,
             ],
             'pct_lt' => [
-                'title' => '%LT',
-                'type'  => 'pct',
-                'value' => is_null($latestPctLt) ? null : (float)$latestPctLt,
-                'prev'  => is_null($prevPctLt) ? null : (float)$prevPctLt,
-                'delta' => is_null($deltaPctLt) ? null : (float)$deltaPctLt, // pp
+                'label' => '%LT',
+                'value' => $latestPctLt,
+                'prev'  => $prevPctLt,
+                'delta' => $deltaPctLt,
             ],
         ];
 
+        // =============================
         // Posisi terakhir loan_accounts untuk tabel bawah
-        // ✅ pakai latestDate berbasis DATA; fallback ke tanggal "to" kalau tidak ada data
-        $latestPosDate = $latestDate
-            ? Carbon::parse($latestDate)->toDateString()
-            : $to->copy()->toDateString();
-
+        // =============================
+        $latestPosDate = $latestDate ? Carbon::parse($latestDate)->toDateString() : now()->toDateString();
         $prevSnapMonth = Carbon::parse($latestPosDate)->subMonth()->startOfMonth()->toDateString();
 
         // =============================
@@ -246,6 +248,93 @@ class RoOsDailyDashboardController extends Controller
         $l0ToLtOs  = (int)($l0ToLtAgg->os ?? 0);
 
         // =============================
+        // Bounce-back metrics (buat TLRO):
+        // 1) LT -> L0 hari ini (dibanding posisi kemarin)
+        // 2) JT angsuran 1-2 hari ke depan (potensi balik LT)
+        // =============================
+        $prevPosDate = $prevDate ?: Carbon::parse($latestPosDate)->subDay()->toDateString();
+
+        // 1) LT -> L0 (posisi kemarin LT, hari ini L0)
+        $ltToL0Agg = DB::table('loan_accounts as t')
+            ->join('loan_accounts as p', function ($j) use ($prevPosDate) {
+                $j->on('p.account_no', '=', 't.account_no')
+                  ->whereDate('p.position_date', $prevPosDate);
+            })
+            ->selectRaw("
+                COUNT(*) as noa,
+                ROUND(SUM(t.outstanding)) as os
+            ")
+            ->whereDate('t.position_date', $latestPosDate)
+            ->whereRaw("LPAD(TRIM(t.ao_code),6,'0') = ?", [$ao])
+            // prev LT
+            ->where(function ($q) {
+                $q->where('p.ft_pokok', '>', 0)->orWhere('p.ft_bunga', '>', 0);
+            })
+            // today L0
+            ->where('t.ft_pokok', 0)
+            ->where('t.ft_bunga', 0)
+            ->first();
+
+        $ltToL0Noa = (int)($ltToL0Agg->noa ?? 0);
+        $ltToL0Os  = (int)($ltToL0Agg->os ?? 0);
+
+        // 2) JT angsuran 1-2 hari ke depan (robust: next due date relative to latestPosDate)
+        $pos = Carbon::parse($latestPosDate);
+        $d1  = $pos->copy()->addDay()->toDateString();
+        $d2  = $pos->copy()->addDays(2)->toDateString();
+
+        $posLiteral = $pos->toDateString(); // dipakai di SQL literal
+
+        // base due date bulan ini & bulan depan
+        $dueBase = "STR_TO_DATE(CONCAT(DATE_FORMAT('$posLiteral','%Y-%m'),'-',LPAD(la.installment_day,2,'0')),'%Y-%m-%d')";
+        $dueNext = "STR_TO_DATE(CONCAT(DATE_FORMAT(DATE_ADD('$posLiteral', INTERVAL 1 MONTH),'%Y-%m'),'-',LPAD(la.installment_day,2,'0')),'%Y-%m-%d')";
+
+        // pilih due date terdekat >= posisi terakhir
+        $dueSmart = "(
+            CASE
+              WHEN $dueBase IS NULL THEN $dueNext
+              WHEN $dueBase < '$posLiteral' THEN $dueNext
+              ELSE $dueBase
+            END
+        )";
+
+        $jtNext2Agg = DB::table('loan_accounts as la')
+            ->selectRaw("
+                COUNT(*) as noa,
+                ROUND(SUM(la.outstanding)) as os
+            ")
+            ->whereDate('la.position_date', $latestPosDate)
+            ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
+            ->whereNotNull('la.installment_day')
+            ->where('la.installment_day', '>=', 1)
+            ->where('la.installment_day', '<=', 31)
+            ->whereBetween(DB::raw($dueSmart), [$d1, $d2])
+            ->first();
+
+        $jtNext2Noa = (int)($jtNext2Agg->noa ?? 0);
+        $jtNext2Os  = (int)($jtNext2Agg->os ?? 0);
+
+        // bounce risk flag (rule sederhana tapi sangat “TLRO friendly”)
+        $bounce = [
+            'prevPosDate' => $prevPosDate,
+            'd1' => $d1,
+            'd2' => $d2,
+
+            'lt_to_l0_noa' => $ltToL0Noa,
+            'lt_to_l0_os'  => $ltToL0Os,
+
+            'jt_next2_noa' => $jtNext2Noa,
+            'jt_next2_os'  => $jtNext2Os,
+
+            // sinyal: L0 naik & LT turun (indikasi bayar/cure), tapi ada JT dekat
+            'signal_cure'   => (!is_null($deltaL0) && !is_null($deltaLT) && $deltaL0 > 0 && $deltaLT < 0),
+            'signal_jtsoon' => ($jtNext2Noa > 0),
+            'signal_bounce_risk' => (
+                (!is_null($deltaL0) && !is_null($deltaLT) && $deltaL0 > 0 && $deltaLT < 0) && ($jtNext2Noa > 0)
+            ),
+        ];
+
+        // =============================
         // TABEL 1) JT bulan ini (maturity_date)
         // =============================
         $now        = Carbon::parse($latestPosDate);
@@ -295,7 +384,7 @@ class RoOsDailyDashboardController extends Controller
 
         // =============================
         // TABEL 3) JT Angsuran minggu ini
-        // FIX: robust lintas bulan
+        // FIX: robust lintas bulan (pakai approach sebelumnya)
         // =============================
         $weekStart = Carbon::parse($latestPosDate)->startOfWeek(Carbon::MONDAY)->toDateString();
         $weekEnd   = Carbon::parse($latestPosDate)->endOfWeek(Carbon::SUNDAY)->toDateString();
@@ -357,19 +446,19 @@ class RoOsDailyDashboardController extends Controller
         $osBig        = $attachVisitMeta($osBig);
 
         // =============================
-        // Insight text
+        // Insight text (upgrade + bounce)
         // =============================
         $insight = $this->buildInsight([
             'latestOs'     => $latestOs,
-            'prevOs'       => $prevOs,
-            'deltaOs'      => $deltaOs,
+            'prevOs'       => $prevOs ?? 0,
+            'deltaOs'      => $deltaOs ?? 0,
 
             'latestL0'     => $latestL0,
-            'prevL0'       => $prevL0,
+            'prevL0'       => $prevL0 ?? 0,
             'deltaL0'      => $deltaL0,
 
             'latestLT'     => $latestLT,
-            'prevLT'       => $prevLT,
+            'prevLT'       => $prevLT ?? 0,
             'deltaLT'      => $deltaLT,
 
             'latestRR'     => $latestRR,
@@ -382,6 +471,9 @@ class RoOsDailyDashboardController extends Controller
 
             'l0ToLtNoa'    => $l0ToLtNoa,
             'l0ToLtOs'     => $l0ToLtOs,
+
+            // bounce pack
+            'bounce' => $bounce,
         ]);
 
         return view('kpi.ro.os_daily', [
@@ -394,28 +486,15 @@ class RoOsDailyDashboardController extends Controller
             'latestDate' => $latestDate,
             'prevDate'   => $prevDate,
 
-            // ✅ untuk card baru (value + growth)
-            'cards' => $cards,
+            // legacy vars (biar blade lama aman)
+            'latestOs' => $latestOs,
+            'prevOs'   => $prevOs ?? 0,
+            'deltaOs'  => $deltaOs ?? 0,
 
-            // === backward compatible (kalau blade lama masih pakai ini) ===
-            'latestOs' => is_null($latestOs) ? 0 : (int)$latestOs,
-            'prevOs'   => is_null($prevOs) ? 0 : (int)$prevOs,
-            'deltaOs'  => is_null($deltaOs) ? 0 : (int)$deltaOs,
-
-            'latestL0' => is_null($latestL0) ? 0 : (int)$latestL0,
-            'latestLT' => is_null($latestLT) ? 0 : (int)$latestLT,
+            'latestL0' => $latestL0,
+            'latestLT' => $latestLT,
             'latestRR' => $latestRR,
             'latestPctLt' => $latestPctLt,
-
-            // growth tambahan (biar gampang dipakai di UI / insight box)
-            'prevL0'     => $prevL0,
-            'prevLT'     => $prevLT,
-            'prevRR'     => $prevRR,
-            'prevPctLt'  => $prevPctLt,
-            'deltaL0'    => $deltaL0,
-            'deltaLT'    => $deltaLT,
-            'deltaRR'    => $deltaRR,
-            'deltaPctLt' => $deltaPctLt,
 
             'latestPosDate' => $latestPosDate,
             'prevSnapMonth' => $prevSnapMonth,
@@ -432,6 +511,10 @@ class RoOsDailyDashboardController extends Controller
             'weekEnd'    => $weekEnd,
 
             'osBig'   => $osBig,
+
+            // NEW
+            'cards'   => $cards,
+            'bounce'  => $bounce,
             'insight' => $insight,
         ]);
     }
@@ -441,42 +524,28 @@ class RoOsDailyDashboardController extends Controller
         $good = [];
         $bad  = [];
         $why  = [];
+        $risk = [];
 
-        // ========= OS =========
-        $dOs = $x['deltaOs'] ?? null;
-        if (!is_null($dOs)) {
-            if ($dOs > 0) $good[] = "OS naik vs H-1 sebesar Rp " . number_format((int)$dOs, 0, ',', '.');
-            if ($dOs < 0) $bad[]  = "OS turun vs H-1 sebesar Rp " . number_format(abs((int)$dOs), 0, ',', '.');
-        }
+        $deltaOs = (int)($x['deltaOs'] ?? 0);
+        if ($deltaOs > 0) $good[] = "OS naik vs snapshot sebelumnya sebesar Rp " . number_format($deltaOs, 0, ',', '.');
+        if ($deltaOs < 0) $bad[]  = "OS turun vs snapshot sebelumnya sebesar Rp " . number_format(abs($deltaOs), 0, ',', '.');
 
-        // ========= L0 / LT Growth =========
-        $dL0 = $x['deltaL0'] ?? null;
-        if (!is_null($dL0)) {
-            if ($dL0 > 0) $bad[]  = "L0 naik harian Rp " . number_format((int)$dL0, 0, ',', '.') . " → cek debitur pemicu & follow-up.";
-            if ($dL0 < 0) $good[] = "L0 turun harian Rp " . number_format(abs((int)$dL0), 0, ',', '.') . " (indikasi pembayaran/penurunan tunggakan).";
-        }
-
-        $dLT = $x['deltaLT'] ?? null;
-        if (!is_null($dLT)) {
-            if ($dLT > 0) $bad[]  = "LT naik harian Rp " . number_format((int)$dLT, 0, ',', '.') . " → prioritas kunjungan/penagihan & input RKH.";
-            if ($dLT < 0) $good[] = "LT turun harian Rp " . number_format(abs((int)$dLT), 0, ',', '.') . " (indikasi perbaikan portofolio).";
-        }
-
-        // ========= RR (%L0) =========
+        // RR level
         $rr = $x['latestRR'] ?? null;
         if (!is_null($rr)) {
             if ($rr >= 95) $good[] = "RR sangat baik (≥95%).";
             elseif ($rr >= 90) $good[] = "RR cukup baik (90–95%).";
-            else $bad[] = "RR perlu perhatian (<90%).";
+            else $bad[] = "RR menurun/perlu perhatian (<90%).";
         }
 
-        $dRR = $x['deltaRR'] ?? null; // pp
+        // RR delta
+        $dRR = $x['deltaRR'] ?? null;
         if (!is_null($dRR)) {
-            if ($dRR > 0) $good[] = "RR membaik +" . number_format((float)$dRR, 2, ',', '.') . " pp (H vs H-1).";
-            if ($dRR < 0) $bad[]  = "RR turun -" . number_format(abs((float)$dRR), 2, ',', '.') . " pp (H vs H-1).";
+            if ($dRR > 0) $good[] = "RR membaik vs snapshot sebelumnya (+" . number_format((float)$dRR, 2, ',', '.') . " pts).";
+            if ($dRR < 0) $bad[]  = "RR memburuk vs snapshot sebelumnya (" . number_format((float)$dRR, 2, ',', '.') . " pts).";
         }
 
-        // ========= %LT =========
+        // %LT level
         $pctLt = $x['latestPctLt'] ?? null;
         if (!is_null($pctLt)) {
             if ($pctLt <= 5) $good[] = "%LT rendah (≤5%) – kualitas bagus.";
@@ -484,29 +553,43 @@ class RoOsDailyDashboardController extends Controller
             else $bad[] = "%LT tinggi (>10%) – ada risiko kualitas portofolio.";
         }
 
-        $dPctLt = $x['deltaPctLt'] ?? null; // pp
+        // %LT delta
+        $dPctLt = $x['deltaPctLt'] ?? null;
         if (!is_null($dPctLt)) {
-            if ($dPctLt > 0) $bad[]  = "%LT naik +" . number_format((float)$dPctLt, 2, ',', '.') . " pp (H vs H-1) → sinyal risiko meningkat.";
-            if ($dPctLt < 0) $good[] = "%LT turun -" . number_format(abs((float)$dPctLt), 2, ',', '.') . " pp (H vs H-1) → kualitas membaik.";
+            if ($dPctLt < 0) $good[] = "%LT turun (membaik) vs snapshot sebelumnya (" . number_format((float)$dPctLt, 2, ',', '.') . " pts).";
+            if ($dPctLt > 0) $bad[]  = "%LT naik (memburuk) vs snapshot sebelumnya (+" . number_format((float)$dPctLt, 2, ',', '.') . " pts).";
         }
 
-        // ========= WHY (indikasi penyebab feasible) =========
+        // indikasi L0 -> LT month-over-month
         $noa = (int)($x['l0ToLtNoa'] ?? 0);
         $os  = (int)($x['l0ToLtOs'] ?? 0);
         if ($noa > 0) {
-            $why[] = "Ada indikasi L0 → LT bulan ini sebanyak {$noa} NOA dengan OS ± Rp " . number_format($os, 0, ',', '.') . ". Ini biasanya menekan RR dan menaikkan %LT.";
+            $why[] = "Indikasi L0 → LT bulan ini: {$noa} NOA, OS ± Rp " . number_format($os, 0, ',', '.') . " (menekan RR & menaikkan %LT).";
         } else {
-            $why[] = "Tidak ada indikasi L0 → LT (bulan ini) berdasarkan snapshot bulan lalu vs posisi terakhir (bagus untuk stabilitas RR).";
+            $why[] = "Tidak ada indikasi L0 → LT (bulan ini) berdasarkan snapshot bulan lalu vs posisi terakhir (baik untuk stabilitas RR).";
         }
 
-        // tambahan korelasi sederhana
-        if (!is_null($dOs) && $dOs > 0 && !is_null($dL0) && $dL0 > 0) {
-            $why[] = "OS naik tapi L0 ikut naik → kemungkinan ada rollover/geser status di existing atau keterlambatan pembayaran pada sebagian account.";
-        }
-        if (!is_null($dLT) && $dLT > 0 && !is_null($dRR) && $dRR < 0) {
-            $why[] = "LT naik dan RR turun → kemungkinan beberapa account bergeser ke tunggakan (cek aging DPD & account kontribusi terbesar).";
+        // Bounce back insight
+        $bounce = (array)($x['bounce'] ?? []);
+        if (!empty($bounce)) {
+            $ltToL0Noa = (int)($bounce['lt_to_l0_noa'] ?? 0);
+            $ltToL0Os  = (int)($bounce['lt_to_l0_os'] ?? 0);
+            if ($ltToL0Noa > 0) {
+                $why[] = "Ada perbaikan LT → L0 hari ini: {$ltToL0Noa} NOA, OS ± Rp " . number_format($ltToL0Os, 0, ',', '.') . ".";
+            }
+
+            $jtNoa = (int)($bounce['jt_next2_noa'] ?? 0);
+            $jtOs  = (int)($bounce['jt_next2_os'] ?? 0);
+            if ($jtNoa > 0) {
+                $risk[] = "Ada JT angsuran 1–2 hari ke depan: {$jtNoa} NOA, OS ± Rp " . number_format($jtOs, 0, ',', '.') . " → potensi LT naik lagi jika tidak bayar.";
+            }
+
+            $signalBounce = (bool)($bounce['signal_bounce_risk'] ?? false);
+            if ($signalBounce) {
+                $risk[] = "Sinyal *bounce-back*: L0 naik & LT turun (indikasi bayar/cure), tetapi ada JT dekat → besok RR bisa turun lagi jika gagal bayar.";
+            }
         }
 
-        return compact('good', 'bad', 'why');
+        return compact('good', 'bad', 'why', 'risk');
     }
 }

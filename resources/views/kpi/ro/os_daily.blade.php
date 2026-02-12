@@ -7,35 +7,142 @@
   $meAo = str_pad(trim((string)(auth()->user()?->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
   if ($meAo === '000000') $meAo = '';
 
-  // helper tampilan growth
-  $fmtMoney = function($n){
-    if (is_null($n)) return '-';
-    $n = (int)$n;
-    $abs = abs($n);
-    // compact (jt/M) khusus label kecil
-    if ($abs >= 1000000000) return ($n/1000000000) >= 0
-        ? number_format($n/1000000000, 2, ',', '.') . 'M'
-        : '-' . number_format($abs/1000000000, 2, ',', '.') . 'M';
-    if ($abs >= 1000000) return ($n/1000000) >= 0
-        ? number_format($n/1000000, 1, ',', '.') . 'jt'
-        : '-' . number_format($abs/1000000, 1, ',', '.') . 'jt';
-    return number_format($n, 0, ',', '.');
+  // =============================
+  // Helpers view (format & badge)
+  // =============================
+  $fmtRpFull = fn($n) => 'Rp ' . number_format((int)($n ?? 0), 0, ',', '.');
+
+  $fmtRpCompact = function ($n) {
+      $n = (float)($n ?? 0);
+      $abs = abs($n);
+      if ($abs >= 1e12) return number_format($n/1e12, 2, ',', '.') . 'T';
+      if ($abs >= 1e9)  return number_format($n/1e9, 2, ',', '.') . 'M';
+      if ($abs >= 1e6)  return number_format($n/1e6, 1, ',', '.') . 'jt';
+      if ($abs >= 1e3)  return number_format($n/1e3, 1, ',', '.') . 'rb';
+      return number_format($n, 0, ',', '.');
   };
-  $fmtDeltaMoney = function($n) use ($fmtMoney){
-    if (is_null($n)) return '-';
-    $n = (int)$n;
-    $sign = $n >= 0 ? '+' : '-';
-    return $sign . 'Rp ' . $fmtMoney(abs($n));
+
+  $fmtPct = fn($v) => is_null($v) ? '-' : number_format((float)$v, 2, ',', '.') . '%';
+
+  // sign display
+  $fmtDeltaRp = function ($delta) use ($fmtRpCompact) {
+      if (is_null($delta)) return '-';
+      $d = (float)$delta;
+      $sign = $d > 0 ? '+' : '';
+      return $sign . $fmtRpCompact($d);
   };
-  $fmtPct = function($n){
-    if (is_null($n)) return '-';
-    return number_format((float)$n, 2, ',', '.') . '%';
+
+  $fmtDeltaPts = function ($deltaPts) {
+      if (is_null($deltaPts)) return '-';
+      $d = (float)$deltaPts;
+      $sign = $d > 0 ? '+' : '';
+      return $sign . number_format($d, 2, ',', '.') . ' pts';
   };
-  $fmtDeltaPct = function($n){
-    if (is_null($n)) return '-';
-    $n = (float)$n;
-    $sign = $n >= 0 ? '+' : '-';
-    return $sign . number_format(abs($n), 2, ',', '.') . ' pp';
+
+  // color logic per KPI
+  // returns [textClass, bgClass]
+  $deltaTone = function (string $key, $delta) {
+      if (is_null($delta) || (is_numeric($delta) && (float)$delta == 0.0)) {
+          return ['text-slate-600', 'bg-slate-50 border-slate-200'];
+      }
+      $up = ((float)$delta) > 0;
+
+      // OS: naik bagus, turun jelek (netral bisnis)
+      if ($key === 'os') {
+          return $up ? ['text-emerald-700', 'bg-emerald-50 border-emerald-200'] : ['text-rose-700', 'bg-rose-50 border-rose-200'];
+      }
+
+      // L0: naik = membaik, turun = memburuk
+      if ($key === 'l0') {
+          return $up ? ['text-emerald-700', 'bg-emerald-50 border-emerald-200'] : ['text-rose-700', 'bg-rose-50 border-rose-200'];
+      }
+
+      // LT: naik = memburuk, turun = membaik
+      if ($key === 'lt') {
+          return $up ? ['text-rose-700', 'bg-rose-50 border-rose-200'] : ['text-emerald-700', 'bg-emerald-50 border-emerald-200'];
+      }
+
+      // RR: naik = membaik, turun = memburuk
+      if ($key === 'rr') {
+          return $up ? ['text-emerald-700', 'bg-emerald-50 border-emerald-200'] : ['text-rose-700', 'bg-rose-50 border-rose-200'];
+      }
+
+      // %LT: naik = memburuk, turun = membaik
+      if ($key === 'pct_lt') {
+          return $up ? ['text-rose-700', 'bg-rose-50 border-rose-200'] : ['text-emerald-700', 'bg-emerald-50 border-emerald-200'];
+      }
+
+      return ['text-slate-600', 'bg-slate-50 border-slate-200'];
+  };
+
+  // build TLRO daily sentence (copy WA)
+  $tlroText = function () use ($cards, $bounce, $latestDate, $prevDate, $fmtRpCompact, $fmtDeltaRp, $fmtDeltaPts, $fmtPct) {
+      $dt = $latestDate ?: '-';
+      $pd = $prevDate ?: 'H-1';
+
+      $dOs = $cards['os']['delta'] ?? null;
+      $dL0 = $cards['l0']['delta'] ?? null;
+      $dLt = $cards['lt']['delta'] ?? null;
+      $dRr = $cards['rr']['delta'] ?? null;     // pts
+      $dPL = $cards['pct_lt']['delta'] ?? null; // pts
+
+      $latestRR = $cards['rr']['value'] ?? null;
+      $latestPL = $cards['pct_lt']['value'] ?? null;
+
+      $parts = [];
+      $parts[] = "Ringkas {$dt} (vs {$pd}):";
+
+      // OS
+      if (!is_null($dOs)) {
+          $parts[] = "OS " . ($dOs >= 0 ? "naik " : "turun ") . $fmtDeltaRp($dOs) . ".";
+      }
+
+      // L0
+      if (!is_null($dL0)) {
+          $parts[] = "L0 " . ($dL0 >= 0 ? "membaik (naik) " : "memburuk (turun) ") . $fmtDeltaRp($dL0) . ".";
+      }
+
+      // LT
+      if (!is_null($dLt)) {
+          $parts[] = "LT " . ($dLt >= 0 ? "naik (memburuk) " : "turun (membaik) ") . $fmtDeltaRp($dLt) . ".";
+      }
+
+      // RR & %LT level + delta
+      if (!is_null($latestRR)) {
+          $rrTxt = $fmtPct($latestRR);
+          $rrD   = is_null($dRr) ? '' : " (" . $fmtDeltaPts($dRr) . ")";
+          $parts[] = "RR {$rrTxt}{$rrD}.";
+      }
+
+      if (!is_null($latestPL)) {
+          $plTxt = $fmtPct($latestPL);
+          $plD   = is_null($dPL) ? '' : " (" . $fmtDeltaPts($dPL) . ")";
+          $parts[] = "%LT {$plTxt}{$plD}.";
+      }
+
+      // Bounce risk sentence
+      $signalBounce = (bool)($bounce['signal_bounce_risk'] ?? false);
+      $ltToL0Noa = (int)($bounce['lt_to_l0_noa'] ?? 0);
+      $ltToL0Os  = (int)($bounce['lt_to_l0_os'] ?? 0);
+      $jtNoa     = (int)($bounce['jt_next2_noa'] ?? 0);
+      $jtOs      = (int)($bounce['jt_next2_os'] ?? 0);
+
+      if ($ltToL0Noa > 0) {
+          $parts[] = "Ada cure LT→L0: {$ltToL0Noa} NOA (±" . $fmtRpCompact($ltToL0Os) . ").";
+      }
+
+      if ($jtNoa > 0) {
+          $parts[] = "JT angsuran 1–2 hari ke depan: {$jtNoa} NOA (±" . $fmtRpCompact($jtOs) . ").";
+      }
+
+      if ($signalBounce) {
+          $parts[] = "⚠️ Hati-hati bounce-back: L0 naik karena sebagian LT bayar, tapi masih ada JT dekat → besok bisa LT naik lagi & RR turun bila gagal bayar.";
+      }
+
+      // closing action
+      $parts[] = "Aksi: prioritaskan kunjungan/penagihan untuk debitur JT dekat & yang baru cure agar tidak balik LT. Inputkan di LKH.";
+
+      return implode(' ', $parts);
   };
 @endphp
 
@@ -48,14 +155,9 @@
       <p class="text-xs sm:text-sm text-slate-500 mt-1">
         Scope: <b>RO sendiri</b>. Data snapshot harian (kpi_os_daily_aos). Posisi terakhir: <b>{{ $latestPosDate }}</b>.
       </p>
-      @if(!empty($latestDate))
-        <p class="text-[11px] sm:text-xs text-slate-500 mt-1">
-          Snapshot terakhir: <b>{{ $latestDate }}</b>
-          @if(!empty($prevDate))
-            (banding H-1 data: <b>{{ $prevDate }}</b>)
-          @endif
-        </p>
-      @endif
+      <p class="text-[11px] sm:text-xs text-slate-500 mt-1">
+        Snapshot compare: <b>{{ $latestDate ?? '-' }}</b> vs <b>{{ $prevDate ?? '-' }}</b>.
+      </p>
     </div>
 
     <form method="GET" class="w-full sm:w-auto grid grid-cols-2 sm:flex sm:items-end gap-2">
@@ -75,28 +177,41 @@
     </form>
   </div>
 
-  {{-- Summary (Value + Growth H vs H-1) --}}
+  {{-- =============================
+      Summary Cards (value + growth)
+     ============================= --}}
   <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
     @php
       $cOs = $cards['os'] ?? null;
       $cL0 = $cards['l0'] ?? null;
       $cLt = $cards['lt'] ?? null;
       $cRr = $cards['rr'] ?? null;
-      $cPl = $cards['pct_lt'] ?? null;
+      $cPL = $cards['pct_lt'] ?? null;
+
+      [$osText,$osBg] = $deltaTone('os', $cOs['delta'] ?? null);
+      [$l0Text,$l0Bg] = $deltaTone('l0', $cL0['delta'] ?? null);
+      [$ltText,$ltBg] = $deltaTone('lt', $cLt['delta'] ?? null);
+      [$rrText,$rrBg] = $deltaTone('rr', $cRr['delta'] ?? null);
+      [$plText,$plBg] = $deltaTone('pct_lt', $cPL['delta'] ?? null);
     @endphp
 
     {{-- OS --}}
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
       <div class="text-[11px] sm:text-xs text-slate-500">Latest OS</div>
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
-        Rp {{ number_format((int)($latestOs ?? 0),0,',','.') }}
+        {{ $fmtRpFull($cOs['value'] ?? 0) }}
       </div>
-      <div class="mt-2 flex items-center justify-between text-[11px] sm:text-xs">
-        <span class="text-slate-500">Growth (H vs H-1)</span>
-        @php $d = $cOs['delta'] ?? null; @endphp
-        <span class="font-bold {{ is_null($d) ? 'text-slate-400' : ($d>=0 ? 'text-emerald-700' : 'text-rose-700') }}">
-          {{ $fmtDeltaMoney($d) }}
-        </span>
+
+      <div class="mt-3">
+        <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
+        <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $osBg }}">
+          <span class="text-sm font-bold {{ $osText }}">
+            {{ $fmtDeltaRp($cOs['delta'] ?? null) }}
+          </span>
+          <span class="text-[11px] text-slate-500">
+            {{ $prevDate ? '' : '(prev n/a)' }}
+          </span>
+        </div>
       </div>
     </div>
 
@@ -104,15 +219,17 @@
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
       <div class="text-[11px] sm:text-xs text-slate-500">Latest L0</div>
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
-        Rp {{ number_format((int)($latestL0 ?? 0),0,',','.') }}
+        {{ $fmtRpFull($cL0['value'] ?? 0) }}
       </div>
-      <div class="mt-2 flex items-center justify-between text-[11px] sm:text-xs">
-        <span class="text-slate-500">Growth (H vs H-1)</span>
-        @php $d = $cL0['delta'] ?? null; @endphp
-        <span class="font-bold {{ is_null($d) ? 'text-slate-400' : ($d<=0 ? 'text-emerald-700' : 'text-rose-700') }}">
-          {{-- L0 naik = buruk (merah), turun = baik (hijau) --}}
-          {{ $fmtDeltaMoney($d) }}
-        </span>
+
+      <div class="mt-3">
+        <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
+        <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $l0Bg }}">
+          <span class="text-sm font-bold {{ $l0Text }}">
+            {{ $fmtDeltaRp($cL0['delta'] ?? null) }}
+          </span>
+          <span class="text-[11px] text-slate-500">L0 naik = membaik</span>
+        </div>
       </div>
     </div>
 
@@ -120,15 +237,17 @@
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
       <div class="text-[11px] sm:text-xs text-slate-500">Latest LT</div>
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
-        Rp {{ number_format((int)($latestLT ?? 0),0,',','.') }}
+        {{ $fmtRpFull($cLt['value'] ?? 0) }}
       </div>
-      <div class="mt-2 flex items-center justify-between text-[11px] sm:text-xs">
-        <span class="text-slate-500">Growth (H vs H-1)</span>
-        @php $d = $cLt['delta'] ?? null; @endphp
-        <span class="font-bold {{ is_null($d) ? 'text-slate-400' : ($d<=0 ? 'text-emerald-700' : 'text-rose-700') }}">
-          {{-- LT naik = buruk (merah), turun = baik (hijau) --}}
-          {{ $fmtDeltaMoney($d) }}
-        </span>
+
+      <div class="mt-3">
+        <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
+        <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $ltBg }}">
+          <span class="text-sm font-bold {{ $ltText }}">
+            {{ $fmtDeltaRp($cLt['delta'] ?? null) }}
+          </span>
+          <span class="text-[11px] text-slate-500">LT naik = memburuk</span>
+        </div>
       </div>
     </div>
 
@@ -136,14 +255,17 @@
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
       <div class="text-[11px] sm:text-xs text-slate-500">RR (%L0)</div>
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
-        {{ is_null($latestRR) ? '-' : number_format((float)$latestRR,2,',','.') . '%' }}
+        {{ $fmtPct($cRr['value'] ?? null) }}
       </div>
-      <div class="mt-2 flex items-center justify-between text-[11px] sm:text-xs">
-        <span class="text-slate-500">Δ (pp)</span>
-        @php $d = $cRr['delta'] ?? null; @endphp
-        <span class="font-bold {{ is_null($d) ? 'text-slate-400' : ($d>=0 ? 'text-emerald-700' : 'text-rose-700') }}">
-          {{ $fmtDeltaPct($d) }}
-        </span>
+
+      <div class="mt-3">
+        <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
+        <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $rrBg }}">
+          <span class="text-sm font-bold {{ $rrText }}">
+            {{ $fmtDeltaPts($cRr['delta'] ?? null) }}
+          </span>
+          <span class="text-[11px] text-slate-500">RR naik = membaik</span>
+        </div>
       </div>
     </div>
 
@@ -151,15 +273,36 @@
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 col-span-2 sm:col-span-1">
       <div class="text-[11px] sm:text-xs text-slate-500">%LT</div>
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
-        {{ is_null($latestPctLt) ? '-' : number_format((float)$latestPctLt,2,',','.') . '%' }}
+        {{ $fmtPct($cPL['value'] ?? null) }}
       </div>
-      <div class="mt-2 flex items-center justify-between text-[11px] sm:text-xs">
-        <span class="text-slate-500">Δ (pp)</span>
-        @php $d = $cPl['delta'] ?? null; @endphp
-        <span class="font-bold {{ is_null($d) ? 'text-slate-400' : ($d<=0 ? 'text-emerald-700' : 'text-rose-700') }}">
-          {{-- %LT naik = buruk (merah), turun = baik (hijau) --}}
-          {{ $fmtDeltaPct($d) }}
-        </span>
+
+      <div class="mt-3">
+        <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
+        <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $plBg }}">
+          <span class="text-sm font-bold {{ $plText }}">
+            {{ $fmtDeltaPts($cPL['delta'] ?? null) }}
+          </span>
+          <span class="text-[11px] text-slate-500">%LT naik = memburuk</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {{-- =============================
+      TLRO Daily Narrative (copy WA)
+     ============================= --}}
+  <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
+    <div class="font-extrabold text-slate-900 text-sm sm:text-base">📣 Narasi Harian TLRO (Copy untuk WA)</div>
+    <div class="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+      <div class="text-sm text-slate-800 leading-relaxed whitespace-pre-line" id="tlroNarrative">
+        {{ $tlroText() }}
+      </div>
+      <div class="mt-3 flex items-center gap-2">
+        <button type="button" id="btnCopyTlro"
+                class="rounded-xl bg-slate-900 px-3 py-2 text-xs font-semibold text-white hover:bg-slate-800">
+          Copy
+        </button>
+        <span id="copyHint" class="text-[11px] text-slate-500"></span>
       </div>
     </div>
   </div>
@@ -168,7 +311,7 @@
   <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
     <div class="font-extrabold text-slate-900 text-sm sm:text-base">🧠 Catatan Kinerja (Auto Insight)</div>
 
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-2 sm:gap-3 mt-3">
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-2 sm:gap-3 mt-3">
       <div class="rounded-2xl border border-slate-200 bg-slate-50 p-3">
         <div class="text-[11px] font-bold text-slate-700 mb-2">Yang Baik</div>
         <ul class="text-sm text-slate-700 space-y-1 list-disc pl-5">
@@ -200,6 +343,21 @@
             <li>-</li>
           @endforelse
         </ul>
+      </div>
+
+      <div class="rounded-2xl border border-amber-200 bg-amber-50 p-3">
+        <div class="text-[11px] font-extrabold text-amber-800 mb-2">⚠️ Risiko Besok (Bounce-back)</div>
+        <ul class="text-sm text-amber-900 space-y-1 list-disc pl-5">
+          @forelse(($insight['risk'] ?? []) as $t)
+            <li>{{ $t }}</li>
+          @empty
+            <li>Tidak ada sinyal bounce-back yang kuat.</li>
+          @endforelse
+        </ul>
+
+        <div class="mt-3 text-[11px] text-amber-900/80">
+          Sinyal: <b>L0 naik & LT turun</b> + ada <b>JT angsuran 1–2 hari</b>.
+        </div>
       </div>
     </div>
   </div>
@@ -578,7 +736,6 @@
               <td class="px-3 py-2 whitespace-nowrap">
                 <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
               </td>
-
               <td class="px-3 py-2 text-center whitespace-nowrap">
                 <a href="{{ route('ro_visits.create', ['account_no' => $acc, 'back' => request()->fullUrl()]) }}"
                   class="text-xs font-semibold underline text-slate-700">
@@ -599,6 +756,9 @@
 
 </div>
 
+{{-- =============================
+    CHART JS (tetap)
+   ============================= --}}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 
@@ -622,18 +782,7 @@
 
   function isMobile(){ return window.matchMedia('(max-width: 640px)').matches; }
 
-  function fmtPct(v){ return Number(v||0).toLocaleString('id-ID',{maximumFractionDigits:2}) + '%'; }
-
-  function fmtCompactRp(v){
-    const n = Number(v || 0);
-    const abs = Math.abs(n);
-    if (abs >= 1e12) return (n/1e12).toFixed(2).replace('.',',') + 'T';
-    if (abs >= 1e9)  return (n/1e9 ).toFixed(2).replace('.',',') + 'M';
-    if (abs >= 1e6)  return (n/1e6 ).toFixed(1).replace('.',',') + 'jt';
-    return n.toLocaleString('id-ID');
-  }
-
-  // ✅ plugin
+  console.log('ChartDataLabels:', typeof ChartDataLabels, ChartDataLabels);
   Chart.register(ChartDataLabels);
 
   let mode = 'value';
@@ -642,7 +791,6 @@
 
   const ctx = document.getElementById('roChart').getContext('2d');
 
-  // helper ambil value yang aman (number / {x,y})
   function dlValue(ctx){
     const raw = ctx?.dataset?.data?.[ctx.dataIndex];
     if (raw && typeof raw === 'object') return raw.y;
@@ -672,7 +820,6 @@
           clip: false,
           font: { size: isMobile() ? 9 : 10, weight: '600' },
 
-          // ✅ jangan taruh "function dlValue" di options (itu bikin chart blank).
           display: (ctx) => {
             const v = dlValue(ctx);
             if (isBad(v)) return false;
@@ -732,68 +879,81 @@
     chart.update();
   }
 
-  // ========= tombol mode + label =========
-  const btnValue  = document.getElementById('btnModeValue');
-  const btnGrowth = document.getElementById('btnModeGrowth');
+  function fmtPct(v){ return Number(v||0).toLocaleString('id-ID',{maximumFractionDigits:2}) + '%'; }
 
-  const btnLabelsLastOnly = document.getElementById('btnLabelsLastOnly');
-  const btnLabelsAll      = document.getElementById('btnLabelsAll');
-
-  function paintMode(){
-    if (mode==='value'){
-      btnValue.className='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200';
-      btnGrowth.className='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700';
-    } else {
-      btnValue.className='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700';
-      btnGrowth.className='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200';
-    }
+  function fmtCompactRp(v){
+    const n = Number(v || 0);
+    const abs = Math.abs(n);
+    if (abs >= 1e12) return (n/1e12).toFixed(2).replace('.',',') + 'T';
+    if (abs >= 1e9)  return (n/1e9 ).toFixed(2).replace('.',',') + 'M';
+    if (abs >= 1e6)  return (n/1e6 ).toFixed(1).replace('.',',') + 'jt';
+    return n.toLocaleString('id-ID');
   }
 
-  function paintLabels(){
-    if (!btnLabelsLastOnly || !btnLabelsAll) return;
-    if (!showAllPointLabels) {
-      btnLabelsLastOnly.className='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200';
-      btnLabelsAll.className     ='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700';
-    } else {
-      btnLabelsLastOnly.className='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700';
-      btnLabelsAll.className     ='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200';
-    }
+  rebuild();
+
+  // =============================
+  // UI controls: mode & labels
+  // =============================
+  const btnModeValue   = document.getElementById('btnModeValue');
+  const btnModeGrowth  = document.getElementById('btnModeGrowth');
+  const btnLabelsLast  = document.getElementById('btnLabelsLastOnly');
+  const btnLabelsAll   = document.getElementById('btnLabelsAll');
+  const btnShowAllLines= document.getElementById('btnShowAllLines');
+
+  function setActive(btnOn, btnOff){
+    btnOn.classList.add('bg-white','shadow-sm','border','border-slate-200');
+    btnOn.classList.remove('text-slate-700');
+    btnOff.classList.remove('bg-white','shadow-sm','border','border-slate-200');
+    btnOff.classList.add('text-slate-700');
   }
 
-  function repaintShowAllButton(){
-    const btn = document.getElementById('btnShowAllLines');
-    if (!btn) return;
-    btn.textContent = showAllLines ? 'Tampilkan ringkas' : 'Tampilkan semua garis';
-    btn.className = showAllLines
-      ? 'w-full rounded-xl border border-slate-200 bg-slate-900 px-3 py-2 text-xs font-semibold text-white'
-      : 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800';
-  }
-
-  btnValue?.addEventListener('click', ()=>{ mode='value'; paintMode(); rebuild(); });
-  btnGrowth?.addEventListener('click', ()=>{ mode='growth'; paintMode(); rebuild(); });
-
-  btnLabelsLastOnly?.addEventListener('click', ()=>{ showAllPointLabels=false; paintLabels(); rebuild(); });
-  btnLabelsAll?.addEventListener('click', ()=>{ showAllPointLabels=true; paintLabels(); rebuild(); });
-
-  document.getElementById('btnShowAllLines')?.addEventListener('click', ()=>{
-    showAllLines=!showAllLines;
-    repaintShowAllButton();
+  btnModeValue?.addEventListener('click', () => {
+    mode = 'value';
+    setActive(btnModeValue, btnModeGrowth);
     rebuild();
   });
 
-  let resizeT = null;
-  window.addEventListener('resize', ()=>{
-    clearTimeout(resizeT);
-    resizeT = setTimeout(()=>{
-      repaintShowAllButton();
-      paintLabels();
-      rebuild();
-    }, 200);
+  btnModeGrowth?.addEventListener('click', () => {
+    mode = 'growth';
+    setActive(btnModeGrowth, btnModeValue);
+    rebuild();
   });
 
-  paintMode();
-  paintLabels();
-  repaintShowAllButton();
-  rebuild();
+  btnLabelsLast?.addEventListener('click', () => {
+    showAllPointLabels = false;
+    setActive(btnLabelsLast, btnLabelsAll);
+    chart.update();
+  });
+
+  btnLabelsAll?.addEventListener('click', () => {
+    showAllPointLabels = true;
+    setActive(btnLabelsAll, btnLabelsLast);
+    chart.update();
+  });
+
+  btnShowAllLines?.addEventListener('click', () => {
+    showAllLines = !showAllLines;
+    btnShowAllLines.textContent = showAllLines ? 'Mode ringkas' : 'Tampilkan semua garis';
+    rebuild();
+  });
+
+  // =============================
+  // Copy TLRO narrative
+  // =============================
+  const btnCopy = document.getElementById('btnCopyTlro');
+  const hint = document.getElementById('copyHint');
+  btnCopy?.addEventListener('click', async () => {
+    const text = (document.getElementById('tlroNarrative')?.textContent || '').trim();
+    try {
+      await navigator.clipboard.writeText(text);
+      hint.textContent = '✅ Tercopy';
+      setTimeout(() => hint.textContent = '', 1500);
+    } catch (e) {
+      hint.textContent = '❌ Gagal copy (browser block)';
+      setTimeout(() => hint.textContent = '', 2500);
+    }
+  });
 </script>
+
 @endsection
