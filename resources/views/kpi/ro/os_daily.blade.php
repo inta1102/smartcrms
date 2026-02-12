@@ -6,6 +6,37 @@
 @php
   $meAo = str_pad(trim((string)(auth()->user()?->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
   if ($meAo === '000000') $meAo = '';
+
+  // helper tampilan growth
+  $fmtMoney = function($n){
+    if (is_null($n)) return '-';
+    $n = (int)$n;
+    $abs = abs($n);
+    // compact (jt/M) khusus label kecil
+    if ($abs >= 1000000000) return ($n/1000000000) >= 0
+        ? number_format($n/1000000000, 2, ',', '.') . 'M'
+        : '-' . number_format($abs/1000000000, 2, ',', '.') . 'M';
+    if ($abs >= 1000000) return ($n/1000000) >= 0
+        ? number_format($n/1000000, 1, ',', '.') . 'jt'
+        : '-' . number_format($abs/1000000, 1, ',', '.') . 'jt';
+    return number_format($n, 0, ',', '.');
+  };
+  $fmtDeltaMoney = function($n) use ($fmtMoney){
+    if (is_null($n)) return '-';
+    $n = (int)$n;
+    $sign = $n >= 0 ? '+' : '-';
+    return $sign . 'Rp ' . $fmtMoney(abs($n));
+  };
+  $fmtPct = function($n){
+    if (is_null($n)) return '-';
+    return number_format((float)$n, 2, ',', '.') . '%';
+  };
+  $fmtDeltaPct = function($n){
+    if (is_null($n)) return '-';
+    $n = (float)$n;
+    $sign = $n >= 0 ? '+' : '-';
+    return $sign . number_format(abs($n), 2, ',', '.') . ' pp';
+  };
 @endphp
 
 <div class="max-w-6xl mx-auto p-3 sm:p-4 space-y-4 sm:space-y-5">
@@ -17,6 +48,14 @@
       <p class="text-xs sm:text-sm text-slate-500 mt-1">
         Scope: <b>RO sendiri</b>. Data snapshot harian (kpi_os_daily_aos). Posisi terakhir: <b>{{ $latestPosDate }}</b>.
       </p>
+      @if(!empty($latestDate))
+        <p class="text-[11px] sm:text-xs text-slate-500 mt-1">
+          Snapshot terakhir: <b>{{ $latestDate }}</b>
+          @if(!empty($prevDate))
+            (banding H-1 data: <b>{{ $prevDate }}</b>)
+          @endif
+        </p>
+      @endif
     </div>
 
     <form method="GET" class="w-full sm:w-auto grid grid-cols-2 sm:flex sm:items-end gap-2">
@@ -36,40 +75,91 @@
     </form>
   </div>
 
-  {{-- Summary --}}
+  {{-- Summary (Value + Growth H vs H-1) --}}
   <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
+    @php
+      $cOs = $cards['os'] ?? null;
+      $cL0 = $cards['l0'] ?? null;
+      $cLt = $cards['lt'] ?? null;
+      $cRr = $cards['rr'] ?? null;
+      $cPl = $cards['pct_lt'] ?? null;
+    @endphp
+
+    {{-- OS --}}
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
       <div class="text-[11px] sm:text-xs text-slate-500">Latest OS</div>
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
-        Rp {{ number_format((int)$latestOs,0,',','.') }}
+        Rp {{ number_format((int)($latestOs ?? 0),0,',','.') }}
+      </div>
+      <div class="mt-2 flex items-center justify-between text-[11px] sm:text-xs">
+        <span class="text-slate-500">Growth (H vs H-1)</span>
+        @php $d = $cOs['delta'] ?? null; @endphp
+        <span class="font-bold {{ is_null($d) ? 'text-slate-400' : ($d>=0 ? 'text-emerald-700' : 'text-rose-700') }}">
+          {{ $fmtDeltaMoney($d) }}
+        </span>
       </div>
     </div>
 
+    {{-- L0 --}}
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
       <div class="text-[11px] sm:text-xs text-slate-500">Latest L0</div>
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
-        Rp {{ number_format((int)$latestL0,0,',','.') }}
+        Rp {{ number_format((int)($latestL0 ?? 0),0,',','.') }}
+      </div>
+      <div class="mt-2 flex items-center justify-between text-[11px] sm:text-xs">
+        <span class="text-slate-500">Growth (H vs H-1)</span>
+        @php $d = $cL0['delta'] ?? null; @endphp
+        <span class="font-bold {{ is_null($d) ? 'text-slate-400' : ($d<=0 ? 'text-emerald-700' : 'text-rose-700') }}">
+          {{-- L0 naik = buruk (merah), turun = baik (hijau) --}}
+          {{ $fmtDeltaMoney($d) }}
+        </span>
       </div>
     </div>
 
+    {{-- LT --}}
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
       <div class="text-[11px] sm:text-xs text-slate-500">Latest LT</div>
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
-        Rp {{ number_format((int)$latestLT,0,',','.') }}
+        Rp {{ number_format((int)($latestLT ?? 0),0,',','.') }}
+      </div>
+      <div class="mt-2 flex items-center justify-between text-[11px] sm:text-xs">
+        <span class="text-slate-500">Growth (H vs H-1)</span>
+        @php $d = $cLt['delta'] ?? null; @endphp
+        <span class="font-bold {{ is_null($d) ? 'text-slate-400' : ($d<=0 ? 'text-emerald-700' : 'text-rose-700') }}">
+          {{-- LT naik = buruk (merah), turun = baik (hijau) --}}
+          {{ $fmtDeltaMoney($d) }}
+        </span>
       </div>
     </div>
 
+    {{-- RR --}}
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
       <div class="text-[11px] sm:text-xs text-slate-500">RR (%L0)</div>
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
         {{ is_null($latestRR) ? '-' : number_format((float)$latestRR,2,',','.') . '%' }}
       </div>
+      <div class="mt-2 flex items-center justify-between text-[11px] sm:text-xs">
+        <span class="text-slate-500">Δ (pp)</span>
+        @php $d = $cRr['delta'] ?? null; @endphp
+        <span class="font-bold {{ is_null($d) ? 'text-slate-400' : ($d>=0 ? 'text-emerald-700' : 'text-rose-700') }}">
+          {{ $fmtDeltaPct($d) }}
+        </span>
+      </div>
     </div>
 
+    {{-- %LT --}}
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 col-span-2 sm:col-span-1">
       <div class="text-[11px] sm:text-xs text-slate-500">%LT</div>
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
         {{ is_null($latestPctLt) ? '-' : number_format((float)$latestPctLt,2,',','.') . '%' }}
+      </div>
+      <div class="mt-2 flex items-center justify-between text-[11px] sm:text-xs">
+        <span class="text-slate-500">Δ (pp)</span>
+        @php $d = $cPl['delta'] ?? null; @endphp
+        <span class="font-bold {{ is_null($d) ? 'text-slate-400' : ($d<=0 ? 'text-emerald-700' : 'text-rose-700') }}">
+          {{-- %LT naik = buruk (merah), turun = baik (hijau) --}}
+          {{ $fmtDeltaPct($d) }}
+        </span>
       </div>
     </div>
   </div>
@@ -133,6 +223,17 @@
           <button type="button" id="btnModeGrowth"
                   class="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700">
             Growth (Δ H vs H-1)
+          </button>
+        </div>
+
+        <div class="rounded-xl border border-slate-200 p-1 bg-slate-50 flex items-center gap-1 w-full sm:w-auto">
+          <button type="button" id="btnLabelsLastOnly"
+                  class="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200">
+            Label: Last
+          </button>
+          <button type="button" id="btnLabelsAll"
+                  class="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700">
+            Label: Semua
           </button>
         </div>
 
@@ -234,7 +335,7 @@
             </tr>
           @empty
             <tr>
-              <td colspan="8" class="px-3 py-6 text-center text-slate-500">Tidak ada JT bulan ini.</td>
+              <td colspan="9" class="px-3 py-6 text-center text-slate-500">Tidak ada JT bulan ini.</td>
             </tr>
           @endforelse
         </tbody>
@@ -315,7 +416,7 @@
             </tr>
           @empty
             <tr>
-              <td colspan="9" class="px-3 py-6 text-center text-slate-500">Tidak ada LT pada posisi terakhir.</td>
+              <td colspan="10" class="px-3 py-6 text-center text-slate-500">Tidak ada LT pada posisi terakhir.</td>
             </tr>
           @endforelse
         </tbody>
@@ -406,7 +507,7 @@
             </tr>
           @empty
             <tr>
-              <td colspan="10" class="px-3 py-6 text-center text-slate-500">Tidak ada JT angsuran minggu ini.</td>
+              <td colspan="11" class="px-3 py-6 text-center text-slate-500">Tidak ada JT angsuran minggu ini.</td>
             </tr>
           @endforelse
         </tbody>
@@ -477,18 +578,18 @@
               <td class="px-3 py-2 whitespace-nowrap">
                 <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
               </td>
+
               <td class="px-3 py-2 text-center whitespace-nowrap">
                 <a href="{{ route('ro_visits.create', ['account_no' => $acc, 'back' => request()->fullUrl()]) }}"
                   class="text-xs font-semibold underline text-slate-700">
                   Isi LKH
                 </a>
-
               </td>
 
             </tr>
           @empty
             <tr>
-              <td colspan="9" class="px-3 py-6 text-center text-slate-500">Tidak ada OS ≥ 500 juta.</td>
+              <td colspan="10" class="px-3 py-6 text-center text-slate-500">Tidak ada OS ≥ 500 juta.</td>
             </tr>
           @endforelse
         </tbody>
@@ -499,11 +600,15 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
+
 <script>
   const labels = @json($labels);
   const series = @json($series);
 
   const isNil = v => v === null || typeof v === 'undefined';
+  const isBad = v => isNil(v) || Number.isNaN(Number(v));
+
   function toGrowth(arr){
     const out = [];
     for (let i=0;i<arr.length;i++){
@@ -515,59 +620,89 @@
     return out;
   }
 
-  function fmtRp(v){ return 'Rp ' + Number(v||0).toLocaleString('id-ID'); }
-  function fmtPct(v){ return Number(v||0).toLocaleString('id-ID',{maximumFractionDigits:2}) + '%'; }
   function isMobile(){ return window.matchMedia('(max-width: 640px)').matches; }
+
+  function fmtPct(v){ return Number(v||0).toLocaleString('id-ID',{maximumFractionDigits:2}) + '%'; }
+
+  function fmtCompactRp(v){
+    const n = Number(v || 0);
+    const abs = Math.abs(n);
+    if (abs >= 1e12) return (n/1e12).toFixed(2).replace('.',',') + 'T';
+    if (abs >= 1e9)  return (n/1e9 ).toFixed(2).replace('.',',') + 'M';
+    if (abs >= 1e6)  return (n/1e6 ).toFixed(1).replace('.',',') + 'jt';
+    return n.toLocaleString('id-ID');
+  }
+
+  // ✅ plugin
+  Chart.register(ChartDataLabels);
 
   let mode = 'value';
   let showAllLines = false;
+  let showAllPointLabels = false;
 
   const ctx = document.getElementById('roChart').getContext('2d');
 
-  const chart = new Chart(ctx,{
-    type:'line',
-    data:{ labels, datasets:[] },
-    options:{
-      responsive:true,
+  // helper ambil value yang aman (number / {x,y})
+  function dlValue(ctx){
+    const raw = ctx?.dataset?.data?.[ctx.dataIndex];
+    if (raw && typeof raw === 'object') return raw.y;
+    return raw;
+  }
+
+  const chart = new Chart(ctx, {
+    type: 'line',
+    data: { labels, datasets: [] },
+    options: {
+      responsive: true,
       maintainAspectRatio: false,
-      interaction:{ mode:'index', intersect:false },
-      plugins:{
-        legend:{
-          display:true,
-          position:'bottom',
-          labels:{ boxWidth:10, boxHeight:10, usePointStyle:true, pointStyle:'line' }
+      interaction: { mode: 'index', intersect: false },
+
+      plugins: {
+        legend: {
+          display: true,
+          position: 'bottom',
+          labels: { usePointStyle: true, pointStyle: 'line' }
         },
-        tooltip:{
-          callbacks:{
-            label:(c)=>{
-              const v = c.raw;
-              if (isNil(v)) return `${c.dataset.label}: (no data)`;
-              const isPct = c.dataset.yAxisID === 'yPct';
-              const sign = (mode==='growth' && Number(v)>=0) ? '+' : '';
-              return `${c.dataset.label}: ${sign}${isPct ? fmtPct(v) : fmtRp(v)}`;
+
+        datalabels: {
+          anchor: 'end',
+          align: 'top',
+          offset: 6,
+          clamp: true,
+          clip: false,
+          font: { size: isMobile() ? 9 : 10, weight: '600' },
+
+          // ✅ jangan taruh "function dlValue" di options (itu bikin chart blank).
+          display: (ctx) => {
+            const v = dlValue(ctx);
+            if (isBad(v)) return false;
+
+            if (showAllPointLabels) {
+              if (isMobile()) return (ctx.dataIndex % 2 === 0);
+              return true;
             }
-          }
+
+            const data = ctx.dataset.data || [];
+            let last = -1;
+            for (let i = data.length - 1; i >= 0; i--) {
+              const vv = (data[i] && typeof data[i] === 'object') ? data[i].y : data[i];
+              if (!isBad(vv)) { last = i; break; }
+            }
+            return ctx.dataIndex === last;
+          },
+
+          formatter: (_value, ctx) => {
+            const v = dlValue(ctx);
+            if (isBad(v)) return '';
+            const isPct = ctx.dataset.yAxisID === 'yPct';
+            return isPct ? fmtPct(v) : fmtCompactRp(v);
+          },
         }
       },
-      scales:{
-        yRp:{
-          type:'linear',
-          position:'left',
-          ticks:{
-            callback:(v)=>{
-              if (isMobile()) return '';
-              return 'Rp ' + Number(v).toLocaleString('id-ID');
-            }
-          }
-        },
-        yPct:{
-          type:'linear',
-          position:'right',
-          grid:{ drawOnChartArea:false },
-          ticks:{
-            callback:(v)=> Number(v).toLocaleString('id-ID',{maximumFractionDigits:2})+'%'
-          }
-        }
+
+      scales: {
+        yRp: { type: 'linear', position: 'left' },
+        yPct:{ type: 'linear', position: 'right', grid:{ drawOnChartArea:false } }
       }
     }
   });
@@ -581,28 +716,47 @@
 
   function rebuild(){
     const s = (k)=> (mode==='growth') ? toGrowth(series[k]||[]) : (series[k]||[]);
+    const pr  = isMobile() ? 3 : 4;
+    const phr = isMobile() ? 5 : 6;
+
     let dss = [
-      { label:'OS Total', data:s('os_total'), yAxisID:'yRp', tension:0.2, spanGaps:false, borderWidth:2, pointRadius:0 },
-      { label:'OS L0',    data:s('os_l0'),    yAxisID:'yRp', tension:0.2, spanGaps:false, borderWidth:2, pointRadius:0 },
-      { label:'OS LT',    data:s('os_lt'),    yAxisID:'yRp', tension:0.2, spanGaps:false, borderWidth:2, pointRadius:0 },
-      { label:'RR (%L0)', data:s('rr'),       yAxisID:'yPct',tension:0.2, spanGaps:false, borderWidth:2, pointRadius:0 },
-      { label:'%LT',      data:s('pct_lt'),   yAxisID:'yPct',tension:0.2, spanGaps:false, borderWidth:2, pointRadius:0 },
+      { label:'OS Total', data:s('os_total'), yAxisID:'yRp',  tension:0.2, spanGaps:false, borderWidth:2, pointRadius:pr, pointHoverRadius:phr },
+      { label:'OS L0',    data:s('os_l0'),    yAxisID:'yRp',  tension:0.2, spanGaps:false, borderWidth:2, pointRadius:pr, pointHoverRadius:phr },
+      { label:'OS LT',    data:s('os_lt'),    yAxisID:'yRp',  tension:0.2, spanGaps:false, borderWidth:2, pointRadius:pr, pointHoverRadius:phr },
+      { label:'RR (%L0)', data:s('rr'),       yAxisID:'yPct', tension:0.2, spanGaps:false, borderWidth:2, pointRadius:pr, pointHoverRadius:phr },
+      { label:'%LT',      data:s('pct_lt'),   yAxisID:'yPct', tension:0.2, spanGaps:false, borderWidth:2, pointRadius:pr, pointHoverRadius:phr },
     ];
+
     dss = applyMobileDatasetRules(dss);
     chart.data.datasets = dss;
     chart.update();
   }
 
+  // ========= tombol mode + label =========
   const btnValue  = document.getElementById('btnModeValue');
   const btnGrowth = document.getElementById('btnModeGrowth');
 
-  function paint(){
+  const btnLabelsLastOnly = document.getElementById('btnLabelsLastOnly');
+  const btnLabelsAll      = document.getElementById('btnLabelsAll');
+
+  function paintMode(){
     if (mode==='value'){
       btnValue.className='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200';
       btnGrowth.className='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700';
     } else {
       btnValue.className='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700';
       btnGrowth.className='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200';
+    }
+  }
+
+  function paintLabels(){
+    if (!btnLabelsLastOnly || !btnLabelsAll) return;
+    if (!showAllPointLabels) {
+      btnLabelsLastOnly.className='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200';
+      btnLabelsAll.className     ='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700';
+    } else {
+      btnLabelsLastOnly.className='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700';
+      btnLabelsAll.className     ='flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200';
     }
   }
 
@@ -615,100 +769,31 @@
       : 'w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800';
   }
 
-  btnValue?.addEventListener('click', ()=>{ mode='value'; paint(); rebuild(); });
-  btnGrowth?.addEventListener('click', ()=>{ mode='growth'; paint(); rebuild(); });
-  document.getElementById('btnShowAllLines')?.addEventListener('click', ()=>{ showAllLines=!showAllLines; repaintShowAllButton(); rebuild(); });
+  btnValue?.addEventListener('click', ()=>{ mode='value'; paintMode(); rebuild(); });
+  btnGrowth?.addEventListener('click', ()=>{ mode='growth'; paintMode(); rebuild(); });
+
+  btnLabelsLastOnly?.addEventListener('click', ()=>{ showAllPointLabels=false; paintLabels(); rebuild(); });
+  btnLabelsAll?.addEventListener('click', ()=>{ showAllPointLabels=true; paintLabels(); rebuild(); });
+
+  document.getElementById('btnShowAllLines')?.addEventListener('click', ()=>{
+    showAllLines=!showAllLines;
+    repaintShowAllButton();
+    rebuild();
+  });
 
   let resizeT = null;
   window.addEventListener('resize', ()=>{
     clearTimeout(resizeT);
-    resizeT = setTimeout(()=>{ repaintShowAllButton(); rebuild(); }, 200);
+    resizeT = setTimeout(()=>{
+      repaintShowAllButton();
+      paintLabels();
+      rebuild();
+    }, 200);
   });
 
-  paint();
+  paintMode();
+  paintLabels();
   repaintShowAllButton();
   rebuild();
-
-  // =========================
-  // ✅ Checkbox Plan Visit (AJAX)
-  // =========================
-  const toggleUrl = @json(route('ro_visits.toggle'));
-  const csrf = @json(csrf_token());
-
-  function setPlanUi(accountNo, checked, locked, planDateYmd, status) {
-    document.querySelectorAll(`.ro-plan-checkbox[data-account="${CSS.escape(accountNo)}"]`).forEach(el => {
-      el.checked = !!checked;
-      el.disabled = !!locked;
-      const label = el.closest('label')?.querySelector('span');
-      if (label) {
-        if (locked || status === 'done') label.textContent = 'Done';
-        else label.textContent = checked ? 'Ya' : 'Tidak';
-      }
-    });
-
-    const planText = planDateYmd ? (() => {
-      const d = new Date(planDateYmd + 'T00:00:00');
-      const dd = String(d.getDate()).padStart(2,'0');
-      const mm = String(d.getMonth()+1).padStart(2,'0');
-      const yy = d.getFullYear();
-      return `${dd}/${mm}/${yy}`;
-    })() : '-';
-
-    document.querySelectorAll(`.ro-plan-date[data-account="${CSS.escape(accountNo)}"]`).forEach(el => {
-      el.textContent = planText;
-    });
-  }
-
-  async function postToggle(accountNo, aoCode, checked) {
-    const res = await fetch(toggleUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-CSRF-TOKEN': csrf,
-        'Accept': 'application/json',
-      },
-      body: JSON.stringify({
-        account_no: accountNo,
-        ao_code: aoCode || null,
-        checked: !!checked,
-        source: 'dashboard',
-      }),
-    });
-
-    if (!res.ok) {
-      const txt = await res.text();
-      throw new Error(txt || 'Request failed');
-    }
-    return await res.json();
-  }
-
-  document.querySelectorAll('.ro-plan-checkbox').forEach(cb => {
-    cb.addEventListener('change', async (e) => {
-      const el = e.target;
-      const accountNo = el.getAttribute('data-account') || '';
-      const aoCode = el.getAttribute('data-ao') || '';
-      const checked = el.checked;
-
-      const label = el.closest('label')?.querySelector('span');
-      if (label) label.textContent = checked ? 'Ya' : 'Tidak';
-
-      el.disabled = true;
-
-      try {
-        const json = await postToggle(accountNo, aoCode, checked);
-
-        // ✅ penting: enable lagi kalau tidak locked
-        setPlanUi(accountNo, json.checked, json.locked, json.plan_date, json.status);
-        if (!json.locked) {
-          document.querySelectorAll(`.ro-plan-checkbox[data-account="${CSS.escape(accountNo)}"]`).forEach(x => x.disabled = false);
-        }
-      } catch (err) {
-        el.checked = !checked;
-        if (label) label.textContent = (!checked) ? 'Ya' : 'Tidak';
-        el.disabled = false;
-        alert('Gagal update plan visit. Coba refresh halaman.\n\n' + (err?.message || err));
-      }
-    });
-  });
 </script>
 @endsection

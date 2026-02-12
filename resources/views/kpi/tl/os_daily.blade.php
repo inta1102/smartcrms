@@ -3,6 +3,87 @@
 @section('title', 'Dashboard TL RO - OS Harian')
 
 @section('content')
+
+@php
+  $riskMeta = function($dpd, $kolek, $os, $lastVisitRaw, $isLt = false) {
+    $dpd = (int)($dpd ?? 0);
+    $os  = (int)($os ?? 0);
+
+    // kolek numeric only
+    $kolekRaw = $kolek;
+    $kolekNum = null;
+    if (is_numeric($kolekRaw)) $kolekNum = (int)$kolekRaw;
+
+    // age visit
+    $age = null;
+    if (!empty($lastVisitRaw)) {
+      try { $age = \Carbon\Carbon::parse($lastVisitRaw)->diffInDays(now()); }
+      catch (\Throwable $e) { $age = null; }
+    }
+
+    $score = 0;
+    $reasons = [];
+
+    // ===== DPD score =====
+    if ($dpd >= 60) { $score += 40; $reasons[] = "DPD ≥ 60 (+40)"; }
+    elseif ($dpd >= 30) { $score += 30; $reasons[] = "DPD 30–59 (+30)"; }
+    elseif ($dpd >= 15) { $score += 20; $reasons[] = "DPD 15–29 (+20)"; }
+    elseif ($dpd >= 8)  { $score += 10; $reasons[] = "DPD 8–14 (+10)"; }
+    else { $reasons[] = "DPD 0–7 (+0)"; }
+
+    // ===== Kolek score =====
+    if ($kolekNum !== null) {
+      if ($kolekNum >= 5) { $score += 50; $reasons[] = "Kolek 5 (+50)"; }
+      elseif ($kolekNum === 4) { $score += 40; $reasons[] = "Kolek 4 (+40)"; }
+      elseif ($kolekNum === 3) { $score += 30; $reasons[] = "Kolek 3 (+30)"; }
+      elseif ($kolekNum === 2) { $score += 15; $reasons[] = "Kolek 2 (+15)"; }
+      else { $reasons[] = "Kolek 1 (+0)"; }
+    } else {
+      $reasons[] = "Kolek non-angka (skip)";
+    }
+
+    // ===== OS score =====
+    if ($os >= 1000000000) { $score += 30; $reasons[] = "OS ≥ 1M (+30)"; }
+    elseif ($os >= 500000000) { $score += 20; $reasons[] = "OS 500–999jt (+20)"; }
+    elseif ($os >= 100000000) { $score += 10; $reasons[] = "OS 100–499jt (+10)"; }
+    else { $reasons[] = "OS < 100jt (+0)"; }
+
+    // ===== Age visit score =====
+    if ($age === null) {
+      $score += 20; $reasons[] = "Belum ada visit / kosong (+20)";
+    } else {
+      if ($age >= 30) { $score += 30; $reasons[] = "Umur visit ≥ 30 hari (+30)"; }
+      elseif ($age >= 14) { $score += 20; $reasons[] = "Umur visit 14–29 hari (+20)"; }
+      elseif ($age >= 7)  { $score += 10; $reasons[] = "Umur visit 7–13 hari (+10)"; }
+      else { $reasons[] = "Umur visit 0–6 hari (+0)"; }
+    }
+
+    // ===== Level =====
+    $level = 'LOW';
+    $cls   = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    if ($score >= 80) { $level = 'CRITICAL'; $cls = 'bg-rose-100 text-rose-800 border-rose-300'; }
+    elseif ($score >= 60) { $level = 'HIGH'; $cls = 'bg-rose-50 text-rose-700 border-rose-200'; }
+    elseif ($score >= 35) { $level = 'MEDIUM'; $cls = 'bg-amber-50 text-amber-700 border-amber-200'; }
+
+    // Override LT label (supervisi)
+    if ($isLt) {
+      $level = 'LT';
+      $cls   = 'bg-pink-50 text-pink-700 border-pink-200';
+      array_unshift($reasons, 'Status: LT (override label)');
+    }
+
+    $tooltip = "Risk: {$level} | Score: {$score}\n- " . implode("\n- ", $reasons);
+
+    return [
+      'level' => $level,
+      'score' => $score,
+      'cls' => $cls,
+      'age' => $age,
+      'tooltip' => $tooltip,
+    ];
+  };
+@endphp
+
 <div class="max-w-6xl mx-auto p-4 space-y-5">
 
   {{-- Header --}}
@@ -64,14 +145,16 @@
     </div>
 
     <div class="rounded-2xl border border-slate-200 bg-white p-4">
-      <div class="text-xs text-slate-500">OS H-1</div>
+      <div class="text-xs text-slate-500">
+        OS Closing Bulan Lalu <span class="text-slate-400">({{ $prevOsLabel ?? '-' }})</span>
+      </div>
       <div class="text-xl font-extrabold text-slate-900">
         Rp {{ number_format((int)$prevOs, 0, ',', '.') }}
       </div>
     </div>
 
     <div class="rounded-2xl border border-slate-200 bg-white p-4">
-      <div class="text-xs text-slate-500">Perubahan (Terakhir vs H-1)</div>
+      <div class="text-xs text-slate-500">Growth (Terakhir vs M-1)</div>
       <div class="text-xl font-extrabold {{ $delta >= 0 ? 'text-emerald-700' : 'text-rose-700' }}">
         {{ $delta >= 0 ? '+' : '' }}Rp {{ number_format((int)$delta, 0, ',', '.') }}
       </div>
@@ -147,6 +230,18 @@
           <button type="button" id="btnModeGrowth"
                   class="px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-700">
             Growth (Δ H vs H-1)
+          </button>
+        </div>
+
+        {{-- Labels toggle --}}
+        <div class="rounded-xl border border-slate-200 p-1 bg-slate-50 flex items-center gap-1">
+          <button type="button" id="btnLabelsLastOnly"
+                  class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200">
+            Label: Last
+          </button>
+          <button type="button" id="btnLabelsAll"
+                  class="px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-700">
+            Label: Semua
           </button>
         </div>
 
@@ -272,6 +367,15 @@
                 ? 'bg-amber-50/30'
                 : '';
             @endphp
+            @php
+                $rm = $riskMeta(
+                  $r->dpd ?? 0,
+                  $r->kolek ?? null,
+                  $r->outstanding ?? ($r->os ?? 0),
+                  $r->last_visit_date ?? null,
+                  /* isLt */ false // di section LT set true
+                );
+              @endphp
             <tr class="{{ $rowEmphasis }}">
               <td class="px-3 py-2 whitespace-nowrap">
                 {{ !empty($r->maturity_date) ? \Carbon\Carbon::parse($r->maturity_date)->format('d/m/Y') : '-' }}
@@ -284,6 +388,16 @@
               <td class="px-3 py-2 text-right">{{ $r->kolek ?? '-' }}</td>
 
               <td class="px-3 py-2 whitespace-nowrap">{!! $riskBadge($r->dpd ?? 0, $r->kolek ?? '-', false) !!}</td>
+              
+
+              <td class="px-3 py-2 whitespace-nowrap">
+                <span
+                  class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold border {{ $rm['cls'] }}"
+                  title="{{ $rm['tooltip'] }}"
+                >
+                  {{ $rm['level'] }}
+                </span>
+              </td>
 
               <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">
@@ -769,6 +883,7 @@
 
 {{-- Chart.js --}}
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0"></script>
 <script>
   const labels = @json($labels ?? []);
   const datasetsByMetric = @json($datasetsByMetric ?? []);
@@ -778,6 +893,26 @@
   const fmtRp = (v) => 'Rp ' + Number(v || 0).toLocaleString('id-ID');
   const fmtPct = (v) => Number(v || 0).toLocaleString('id-ID', { maximumFractionDigits: 2 }) + '%';
   const isPercentMetric = (m) => (m === 'rr' || m === 'pct_lt');
+
+
+
+  Chart.register(ChartDataLabels);
+
+  function fmtCompactRp(v){
+    const n = Number(v || 0);
+    const abs = Math.abs(n);
+    if (abs >= 1e12) return (n/1e12).toFixed(2).replace('.',',') + 'T';
+    if (abs >= 1e9)  return (n/1e9 ).toFixed(2).replace('.',',') + 'M';
+    if (abs >= 1e6)  return (n/1e6 ).toFixed(1).replace('.',',') + 'jt';
+    return n.toLocaleString('id-ID');
+  }
+
+  function lastIndexNonNull(arr) {
+    for (let i = (arr?.length || 0) - 1; i >= 0; i--) {
+      if (!isNil(arr[i])) return i;
+    }
+    return -1;
+  }
 
   function toGrowthSeries(arr) {
     const out = [];
@@ -797,10 +932,24 @@
     return null;
   }
 
+  function anomalyThreshold(metricKey) {
+    if (metricKey === 'rr' || metricKey === 'pct_lt') return 2; // 2% threshold
+    return 500000000; // 500jt untuk growth OS
+  }
+
+  function isAnomalyPoint(metricKey, value) {
+    if (isNil(value)) return false;
+    const thr = anomalyThreshold(metricKey);
+    return Math.abs(Number(value)) >= thr;
+  }
+
   // ===== State =====
   let metric = 'os_total';
   let mode = 'value'; // value|growth
   let showAllLines = false; // default ringkas di HP
+  let showAllPointLabels = false; // default: hanya label titik terakhir
+  let showTotalLine = true; // default ON biar feel “head office”
+
 
   const isMobile = () => window.matchMedia('(max-width: 639px)').matches;
 
@@ -818,32 +967,181 @@
 
   function buildDatasets() {
     const raw = getRawDatasets();
+    const lastIdx = findLastIndexWithAnyDataForMetric(metric);
+    const top = (!isNil(lastIdx) ? topContributorAtIndex(metric, lastIdx) : null);
 
     let ds = raw.map((ds) => {
       const base = ds.data || [];
       const data = (mode === 'growth') ? toGrowthSeries(base) : base;
+
+      const isTop = (top && (ds.label === top.label));
 
       return {
         label: ds.label || 'Series',
         data,
         spanGaps: false,
         tension: 0.2,
-        pointRadius: 0,
-        pointHoverRadius: isMobile() ? 3 : 4,
-        borderWidth: 2,
+
+        // ✅ marker di setiap titik (lebih sedap)
+        pointRadius: isMobile() ? 2.5 : 3,
+        pointHoverRadius: isMobile() ? 4 : 5,
+
+        // ✅ highlight top contributor di titik terakhir
+        pointRadius: (ctx) => {
+          const i = ctx.dataIndex;
+          if (!isTop || isNil(lastIdx)) return (isMobile() ? 2.5 : 3);
+          if (i === lastIdx) return (isMobile() ? 5 : 6);
+          return (isMobile() ? 2.5 : 3);
+        },
+        pointBorderWidth: (ctx) => {
+          const i = ctx.dataIndex;
+          if (isTop && i === lastIdx) return 3;
+          return 2;
+        },
+
+        pointBorderWidth: (ctx) => {
+          const v = ctx.raw;
+          const i = ctx.dataIndex;
+
+          // top contributor last point tetep paling tegas
+          if (top && (ds.label === top.label) && i === lastIdx) return 3;
+
+          // anomali saat growth
+          if (mode === 'growth' && isAnomalyPoint(metric, v)) return 3;
+
+          return 2;
+        },
+        pointRadius: (ctx) => {
+          const v = ctx.raw;
+          const i = ctx.dataIndex;
+
+          if (top && (ds.label === top.label) && i === lastIdx) return (isMobile() ? 5 : 6);
+
+          if (mode === 'growth' && isAnomalyPoint(metric, v)) return (isMobile() ? 4 : 5);
+
+          return (isMobile() ? 2.5 : 3);
+        },
+
+        borderWidth: isTop ? 3 : 2,
       };
     });
+
+    // ✅ Tambahkan TOTAL TL
+    if (showTotalLine) {
+      const totalBase = seriesSum(metric);
+      const totalData = (mode === 'growth') ? toGrowthSeries(totalBase) : totalBase;
+
+      ds.unshift({
+        label: 'TOTAL TL',
+        data: totalData,
+        spanGaps: false,
+        tension: 0.25,
+        borderWidth: 3,
+
+        // marker total lebih “solid”
+        pointRadius: isMobile() ? 3 : 3.5,
+        pointHoverRadius: isMobile() ? 5 : 6,
+        pointBorderWidth: 2,
+
+        // biar “head office”: garis total sedikit lebih dominan
+        // (warna jangan di-set manual sesuai rule kamu; Chart.js otomatis)
+      });
+    }
 
     ds = applyMobileDatasetRules(ds);
     return ds;
   }
 
+  function sumAtIndex(metricKey, idx) {
+    const sets = (datasetsByMetric && datasetsByMetric[metricKey]) ? datasetsByMetric[metricKey] : [];
+    let sum = 0;
+    let hasAny = false;
+
+    for (const ds of sets) {
+      const v = ds?.data?.[idx];
+      if (!isNil(v)) {
+        sum += Number(v);
+        hasAny = true;
+      }
+    }
+
+    return hasAny ? sum : null; // kalau semua null -> null
+  }
+
+  function seriesSum(metricKey) {
+    const sets = (datasetsByMetric && datasetsByMetric[metricKey]) ? datasetsByMetric[metricKey] : [];
+    const n = labels?.length || 0;
+    const out = new Array(n).fill(null);
+
+    for (let i = 0; i < n; i++) {
+      let sum = 0;
+      let has = false;
+      for (const ds of sets) {
+        const v = ds?.data?.[i];
+        if (!isNil(v)) { sum += Number(v); has = true; }
+      }
+      out[i] = has ? sum : null;
+    }
+    return out;
+  }
+
+  function topContributorAtIndex(metricKey, idx) {
+    const sets = (datasetsByMetric && datasetsByMetric[metricKey]) ? datasetsByMetric[metricKey] : [];
+    let best = null;
+    for (const ds of sets) {
+      const v = ds?.data?.[idx];
+      if (isNil(v)) continue;
+      if (!best || Number(v) > Number(best.value)) {
+        best = { label: ds.label || 'Series', value: Number(v) };
+      }
+    }
+    return best; // {label, value} | null
+  }
+
+  // Cari index terakhir yg punya data untuk metric aktif (bukan hanya os_total)
+  function findLastIndexWithAnyDataForMetric(metricKey) {
+    const sets = (datasetsByMetric && datasetsByMetric[metricKey]) ? datasetsByMetric[metricKey] : [];
+    const n = labels?.length || 0;
+    for (let i = n - 1; i >= 0; i--) {
+      let has = false;
+      for (const ds of sets) {
+        if (!isNil(ds?.data?.[i])) { has = true; break; }
+      }
+      if (has) return i;
+    }
+    return null;
+  }
+
+  function findLastIndexWithAnyData() {
+    const n = labels?.length || 0;
+    for (let i = n - 1; i >= 0; i--) {
+      const t = sumAtIndex('os_total', i);
+      const l0 = sumAtIndex('os_l0', i);
+      const lt = sumAtIndex('os_lt', i);
+      if (!isNil(t) || !isNil(l0) || !isNil(lt)) return i;
+    }
+    return null;
+  }
+
   function updateKpiStrip() {
-    const os = lastNonNull((datasetsByMetric?.os_total?.[0]?.data) || []);
-    const l0 = lastNonNull((datasetsByMetric?.os_l0?.[0]?.data) || []);
-    const lt = lastNonNull((datasetsByMetric?.os_lt?.[0]?.data) || []);
-    const rr = lastNonNull((datasetsByMetric?.rr?.[0]?.data) || []);
-    const pctlt = lastNonNull((datasetsByMetric?.pct_lt?.[0]?.data) || []);
+    const idx = findLastIndexWithAnyData();
+
+    if (isNil(idx)) {
+      document.getElementById('kpiLatestOs').textContent = '-';
+      document.getElementById('kpiLatestL0').textContent = '-';
+      document.getElementById('kpiLatestLT').textContent = '-';
+      document.getElementById('kpiLatestRR').textContent = '-';
+      document.getElementById('kpiLatestPctLT').textContent = '-';
+      return;
+    }
+
+    const os = sumAtIndex('os_total', idx);
+    const l0 = sumAtIndex('os_l0', idx);
+    const lt = sumAtIndex('os_lt', idx);
+
+    // RR & %LT dihitung dari agregat (bukan rata-rata per RO)
+    const rr = (!isNil(os) && os > 0 && !isNil(l0)) ? (Number(l0) / Number(os)) * 100 : null;
+    const pctlt = (!isNil(os) && os > 0 && !isNil(lt)) ? (Number(lt) / Number(os)) * 100 : null;
 
     document.getElementById('kpiLatestOs').textContent = isNil(os) ? '-' : fmtRp(os);
     document.getElementById('kpiLatestL0').textContent = isNil(l0) ? '-' : fmtRp(l0);
@@ -852,32 +1150,39 @@
     document.getElementById('kpiLatestPctLT').textContent = isNil(pctlt) ? '-' : fmtPct(pctlt);
   }
 
+
   // ===== Init Chart =====
   const canvas = document.getElementById('osChart');
+
   const chart = new Chart(canvas.getContext('2d'), {
     type: 'line',
     data: { labels, datasets: buildDatasets() },
+
+    // ✅ paksa plugin nempel ke chart instance
+    plugins: [ChartDataLabels],
+
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      resizeDelay: 150,
       interaction: { mode: 'index', intersect: false },
+
       plugins: {
         legend: {
           display: true,
           position: 'bottom',
           labels: {
-            boxWidth: isMobile() ? 10 : 12,
-            boxHeight: isMobile() ? 10 : 12,
             usePointStyle: true,
             pointStyle: 'line',
+            boxWidth: isMobile() ? 10 : 12,
+            boxHeight: isMobile() ? 10 : 12,
             padding: isMobile() ? 10 : 14,
-            font: { size: isMobile() ? 10 : 12 }
-          }
+            font: { size: isMobile() ? 10 : 12 },
+          },
         },
+
         tooltip: {
           callbacks: {
-            label: function(ctx){
+            label: function (ctx) {
               const v = ctx.raw;
               if (isNil(v)) return `${ctx.dataset.label}: (no data)`;
               const pct = isPercentMetric(metric);
@@ -886,10 +1191,42 @@
                 return `${ctx.dataset.label}: ${sign}${pct ? fmtPct(v) : fmtRp(v)}`;
               }
               return `${ctx.dataset.label}: ${pct ? fmtPct(v) : fmtRp(v)}`;
+            },
+          },
+        },
+
+        // ✅ PASTIKAN datalabels ada DI DALAM plugins
+        datalabels: {
+          anchor: 'end',
+          align: 'top',
+          offset: 6,
+          clamp: true,
+          clip: false, // biar aman tidak ilang saat mepet atas
+          font: { size: isMobile() ? 9 : 10, weight: '600' },
+
+          display: function(ctx){
+            const v = ctx.dataset?.data?.[ctx.dataIndex]; // ✅ ini yang benar utk datalabels
+            if (isNil(v)) return false;
+
+            if (showAllPointLabels) {
+              if (isMobile()) return (ctx.dataIndex % 2 === 0);
+              return true;
             }
-          }
-        }
+
+            const data = ctx.dataset.data || [];
+            const li = lastIndexNonNull(data);
+            return li >= 0 && ctx.dataIndex === li;
+          },
+
+          formatter: function (value) {
+            if (isNil(value)) return '';
+            const pct = isPercentMetric(metric);
+            if (pct) return Number(value).toLocaleString('id-ID', { maximumFractionDigits: 2 }) + '%';
+            return fmtCompactRp(value);
+          },
+        },
       },
+
       scales: {
         x: {
           ticks: {
@@ -897,9 +1234,9 @@
             maxTicksLimit: isMobile() ? 6 : 14,
             maxRotation: isMobile() ? 45 : 0,
             minRotation: isMobile() ? 45 : 0,
-            font: { size: isMobile() ? 10 : 11 }
+            font: { size: isMobile() ? 10 : 11 },
           },
-          grid: { display: !isMobile() }
+          grid: { display: !isMobile() },
         },
         y: {
           ticks: {
@@ -912,11 +1249,11 @@
                 return sign + (pct ? fmtPct(v) : ('Rp ' + Number(v).toLocaleString('id-ID')));
               }
               return pct ? fmtPct(v) : ('Rp ' + Number(v).toLocaleString('id-ID'));
-            }
-          }
-        }
-      }
-    }
+            },
+          },
+        },
+      },
+    },
   });
 
   function repaintModeButtons() {
@@ -961,9 +1298,24 @@
     });
   }
 
+  function repaintLabelButtons() {
+    const btnLast = document.getElementById('btnLabelsLastOnly');
+    const btnAll  = document.getElementById('btnLabelsAll');
+    if (!btnLast || !btnAll) return;
+
+    if (!showAllPointLabels) {
+      btnLast.className = 'px-3 py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200';
+      btnAll.className  = 'px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-700';
+    } else {
+      btnLast.className = 'px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-700';
+      btnAll.className  = 'px-3 py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200';
+    }
+  }
+
   function refreshChart() {
     chart.data.datasets = buildDatasets();
     chart.update();
+    updateKpiStrip(); // biar konsisten saat metric/mode berubah
   }
 
   // ===== Bind Buttons =====
@@ -994,10 +1346,24 @@
     refreshChart();
   });
 
+  document.getElementById('btnLabelsLastOnly')?.addEventListener('click', () => {
+    showAllPointLabels = false;
+    repaintLabelButtons();
+    refreshChart();
+  });
+
+  document.getElementById('btnLabelsAll')?.addEventListener('click', () => {
+    showAllPointLabels = true;
+    repaintLabelButtons();
+    refreshChart();
+  });
+
   repaintMetricButtons();
   repaintModeButtons();
   repaintShowAllButton();
+  repaintLabelButtons();
   updateKpiStrip();
+
 
   let __resizeTimer = null;
   window.addEventListener('resize', () => {

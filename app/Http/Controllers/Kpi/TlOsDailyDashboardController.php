@@ -4,10 +4,10 @@ namespace App\Http\Controllers\Kpi;
 
 use App\Http\Controllers\Controller;
 use App\Models\OrgAssignment;
+use App\Models\RoVisit;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use App\Models\RoVisit;
 
 class TlOsDailyDashboardController extends Controller
 {
@@ -16,17 +16,36 @@ class TlOsDailyDashboardController extends Controller
         $me = auth()->user();
         abort_unless($me, 403);
 
-        // ===== range default: last 30 days dari data yang ada =====
-        $latest = DB::table('kpi_os_daily_aos')->max('position_date');
-        $latest = $latest ? Carbon::parse($latest) : now();
+        /**
+         * =========================================================
+         * 1) RANGE DEFAULT
+         *    - from: tgl terakhir bulan lalu
+         *    - to  : tgl terakhir yang ada di tabel kpi_os_daily_aos
+         * =========================================================
+         */
+        $latestInKpi = DB::table('kpi_os_daily_aos')->max('position_date'); // date
+        $latestInKpi = $latestInKpi ? Carbon::parse($latestInKpi)->startOfDay() : now()->startOfDay();
 
-        $to   = $request->query('to') ? Carbon::parse($request->query('to')) : $latest;
-        $from = $request->query('from') ? Carbon::parse($request->query('from')) : $to->copy()->subDays(29);
+        $lastMonthEndC = Carbon::now()->subMonthNoOverflow()->endOfMonth()->startOfDay();
 
-        $from = $from->startOfDay();
-        $to   = $to->endOfDay();
+        $from = $request->filled('from')
+            ? Carbon::parse($request->input('from'))->startOfDay()
+            : $lastMonthEndC->copy()->startOfDay();
 
-        // ===== ambil staff bawahan TL =====
+        $to = $request->filled('to')
+            ? Carbon::parse($request->input('to'))->startOfDay()
+            : $latestInKpi->copy()->startOfDay();
+
+        // guard kalau user input kebalik
+        if ($from->gt($to)) {
+            [$from, $to] = [$to->copy()->startOfDay(), $from->copy()->startOfDay()];
+        }
+
+        /**
+         * =========================================================
+         * 2) STAFF SCOPE (bawahan TL)
+         * =========================================================
+         */
         $staff = $this->subordinateStaffForLeader((int) $me->id);
 
         // fallback: kalau tidak ada bawahan, pakai TL sendiri jika punya ao_code
@@ -46,7 +65,7 @@ class TlOsDailyDashboardController extends Controller
         $aoFilter = trim((string) $request->query('ao', ''));
         $aoFilter = $aoFilter !== '' ? str_pad($aoFilter, 6, '0', STR_PAD_LEFT) : '';
 
-        // ao options (dropdown)
+        // AO options (dropdown)
         $aoOptions = $staff->map(function ($u) {
             return [
                 'ao_code' => $u->ao_code,
@@ -60,17 +79,30 @@ class TlOsDailyDashboardController extends Controller
         }
 
         $aoCodes = $staff->pluck('ao_code')->unique()->values()->all();
+        $aoCount = count($aoCodes);
 
-        // ===== labels tanggal lengkap (biar tanggal bolong tetap ada) =====
+        /**
+         * =========================================================
+         * 3) LABELS tanggal lengkap untuk chart (biar bolong tetap ada)
+         * =========================================================
+         */
         $labels = [];
-        $cursor = $from->copy()->startOfDay();
-        $end    = $to->copy()->startOfDay();
+        $cursor = $from->copy();
+        $end    = $to->copy();
         while ($cursor->lte($end)) {
             $labels[] = $cursor->toDateString();
             $cursor->addDay();
         }
 
-        // ===== ambil data harian per ao_code =====
+        // latest date berdasarkan ujung range (tanggal $to)
+        $latestDate    = count($labels) ? $labels[count($labels) - 1] : $to->toDateString();
+        $latestPosDate = $to->toDateString(); // ✅ tabel bawah mengikuti filter/range
+
+        /**
+         * =========================================================
+         * 4) DATA HARIAN KPI (per ao_code) dari kpi_os_daily_aos
+         * =========================================================
+         */
         $rows = DB::table('kpi_os_daily_aos')
             ->selectRaw("
                 DATE(position_date) as d,
@@ -85,7 +117,7 @@ class TlOsDailyDashboardController extends Controller
             ->orderBy('d')
             ->get();
 
-        // map[ao_code][date] = ['os_total'=>..., 'os_l0'=>..., 'os_lt'=>...]
+        // map[ao_code][date] = metrics
         $map = [];
         foreach ($rows as $r) {
             $map[$r->ao_code][$r->d] = [
@@ -95,31 +127,57 @@ class TlOsDailyDashboardController extends Controller
             ];
         }
 
-        // ===== summary total (latest vs prev) across staff =====
-        $latestDate = count($labels) ? $labels[count($labels) - 1] : null;
-        $prevDate   = count($labels) >= 2 ? $labels[count($labels) - 2] : null;
-
+        /**
+         * =========================================================
+         * 5) SUMMARY: OS Terakhir (dari latestDate)
+         * =========================================================
+         */
         $latestOs = 0;
-        $prevOs   = 0;
-
         if ($latestDate) {
             foreach ($aoCodes as $ao) {
                 $latestOs += (int)($map[$ao][$latestDate]['os_total'] ?? 0);
-                if ($prevDate) $prevOs += (int)($map[$ao][$prevDate]['os_total'] ?? 0);
             }
         }
-        $delta = $latestOs - $prevOs;
 
-        // ===== inject OS terakhir ke staff untuk sort legend lebih enak =====
+        /**
+         * =========================================================
+         * 6) OS CLOSING BULAN LALU (snapshot monthly)
+         *    sumber: loan_account_snapshots_monthly
+         * =========================================================
+         */
+        $prevSnapMonth = Carbon::parse($latestPosDate)
+            ->subMonthNoOverflow()
+            ->startOfMonth()
+            ->toDateString(); // biasanya YYYY-MM-01
+
+        $osLastMonth = (int) DB::table('loan_account_snapshots_monthly as m')
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(m.ao_code),6,'0')"), $aoCodes))
+            ->whereDate('m.snapshot_month', $prevSnapMonth)
+            ->sum('m.outstanding'); // ⚠️ ganti jika kolom snapshot berbeda
+
+        $prevOsLabel = Carbon::parse($prevSnapMonth)->translatedFormat('F Y');
+
+        $prevOs = $osLastMonth;
+        $delta  = $latestOs - $prevOs;
+
+        /**
+         * =========================================================
+         * 7) Inject OS terakhir ke staff untuk urut legend
+         * =========================================================
+         */
         $staff = $staff->map(function ($u) use ($map, $latestDate) {
             $u->os_latest = $latestDate ? (int)($map[$u->ao_code][$latestDate]['os_total'] ?? 0) : 0;
             return $u;
         })->sortByDesc('os_latest')->values();
 
-        // refresh aoCodes mengikuti urutan staff
+        // refresh aoCodes mengikuti urutan staff (legend lebih enak)
         $aoCodes = $staff->pluck('ao_code')->unique()->values()->all();
 
-        // ===== builder dataset per metric =====
+        /**
+         * =========================================================
+         * 8) DATASETS CHART per metric
+         * =========================================================
+         */
         $datasetsByMetric = [
             'os_total' => [],
             'os_l0'    => [],
@@ -154,8 +212,8 @@ class TlOsDailyDashboardController extends Controller
                 $seriesL0[]    = (int)($osL0 ?? 0);
                 $seriesLT[]    = (int)($osLT ?? 0);
 
-                $den = (int)($osTotal ?? 0);
-                $rr = $den > 0 ? ((int)($osL0 ?? 0) / $den) * 100 : null;
+                $den   = (int)($osTotal ?? 0);
+                $rr    = $den > 0 ? ((int)($osL0 ?? 0) / $den) * 100 : null;
                 $pctLt = $den > 0 ? ((int)($osLT ?? 0) / $den) * 100 : null;
 
                 $seriesRR[]    = $rr === null ? null : round($rr, 2);
@@ -170,65 +228,55 @@ class TlOsDailyDashboardController extends Controller
             $datasetsByMetric['rr'][]       = ['key' => $u->ao_code, 'label' => $label, 'data' => $seriesRR];
             $datasetsByMetric['pct_lt'][]   = ['key' => $u->ao_code, 'label' => $label, 'data' => $seriesPctLT];
         }
-            $subUserIds = $staff->pluck('id')->map(fn($v) => (int)$v)->values()->all();
-
-            $today = now()->toDateString();
 
         /**
          * =========================================================
-         * VISIT META (Last visit + Planned Today) - no N+1
-         * Scope planned_today: hanya milik user login (TL)
+         * 9) VISIT META (Last visit + Planned Today) - no N+1
          * =========================================================
          */
+        $subUserIds = $staff->pluck('id')->map(fn($v) => (int)$v)->values()->all();
+        $today = now()->toDateString(); // string utk whereDate
 
-        // 1) Last visit per account (GLOBAL) => account_no => last_visit_date
+        // 1) Last visit per account (GLOBAL)
         $lastVisitMap = RoVisit::query()
             ->selectRaw('account_no, MAX(visit_date) as last_visit_date')
             ->groupBy('account_no')
             ->pluck('last_visit_date', 'account_no')
             ->toArray();
 
-        // 2) Planned/done today oleh staff bawahan TL (hari ini)
-        //    hasil: account_no => row (contoh row: {account_no, visit_date, status, planner_user_id})
+        // 2) Planned/done today oleh staff bawahan TL
         $plannedTodayMap = RoVisit::query()
             ->select(['account_no', 'status', 'visit_date', 'user_id'])
             ->whereDate('visit_date', $today)
             ->when(!empty($subUserIds), fn($q) => $q->whereIn('user_id', $subUserIds))
             ->get()
-            // kalau satu account diplan oleh >1 orang (harusnya jarang), ambil salah satu (first)
             ->groupBy('account_no')
             ->map(fn($rows) => $rows->first());
 
-        // helper inject meta ke rows (Collection / array)
+        // helper inject meta ke rows
         $attachVisitMeta = function ($rows) use ($lastVisitMap, $plannedTodayMap) {
             return collect($rows)->map(function ($r) use ($lastVisitMap, $plannedTodayMap) {
                 $acc = (string)($r->account_no ?? '');
 
-                // last visit global
                 $r->last_visit_date = $acc !== '' ? ($lastVisitMap[$acc] ?? null) : null;
 
-                // planned today by user login
                 $row = ($acc !== '' && $plannedTodayMap->has($acc)) ? $plannedTodayMap->get($acc) : null;
 
-                $r->planned_today    = $row ? 1 : 0;
-                $r->plan_visit_date  = $row ? (string)($row->visit_date ?? null) : null;
-                $r->plan_status      = $row ? (string)($row->status ?? 'planned') : null;
-
-                // ✅ opsional: siapa yg plan (user_id RO) — nanti gampang kalau TL mau lihat nama RO
-                $r->planned_by_user_id = $row ? (int)($row->user_id ?? 0) : null;
-
-                $r->planned_today   = $row ? 1 : 0;                       // ✅ dipakai blade
-                $r->plan_visit_date = $row ? (string)$row->visit_date : null; // ✅ dipakai blade
-
-                // opsional: kalau mau info status di UI (planned/done) buat lock label
+                $r->planned_today   = $row ? 1 : 0;
+                $r->plan_visit_date = $row ? (string)($row->visit_date ?? null) : null;
                 $r->plan_status     = $row ? (string)($row->status ?? 'planned') : null;
+
+                $r->planned_by_user_id = $row ? (int)($row->user_id ?? 0) : null;
 
                 return $r;
             });
         };
 
-        // ===== posisi terakhir loan_accounts untuk tabel bawah =====
-        $latestPosDate = $latestDate ? Carbon::parse($latestDate)->toDateString() : now()->toDateString();
+        /**
+         * =========================================================
+         * 10) TABLES (loan_accounts posisi terbaru = $latestPosDate)
+         * =========================================================
+         */
 
         // 1) JT bulan ini
         $now = Carbon::parse($latestPosDate);
@@ -278,8 +326,7 @@ class TlOsDailyDashboardController extends Controller
 
         $ltLatest = $attachVisitMeta($ltLatest);
 
-        // 3) L0 -> LT bulan ini (pakai snapshot_monthly bulan lalu vs posisi terakhir)
-        $prevSnapMonth = Carbon::parse($latestPosDate)->subMonth()->startOfMonth()->toDateString();
+        // 3) L0 -> LT bulan ini (monthly snapshot bulan lalu vs posisi terakhir)
         $perPage = (int) $request->query('per_page', 25);
         if ($perPage <= 0) $perPage = 25;
         if ($perPage > 200) $perPage = 200;
@@ -308,7 +355,6 @@ class TlOsDailyDashboardController extends Controller
             ->paginate($perPage)
             ->appends($request->query());
 
-        // inject meta ke paginator items
         $migrasiTunggakan->setCollection(
             $attachVisitMeta($migrasiTunggakan->getCollection())
         );
@@ -320,10 +366,7 @@ class TlOsDailyDashboardController extends Controller
         $weekStart = $weekStartC->toDateString();
         $weekEnd   = $weekEndC->toDateString();
 
-        // due_date = YYYY-MM- + installment_day (dibaca pada bulan posisi terakhir)
         $ym = Carbon::parse($latestPosDate)->format('Y-m');
-
-        // MySQL expression due_date
         $dueDateExpr = "STR_TO_DATE(CONCAT('$ym','-',LPAD(la.installment_day,2,'0')),'%Y-%m-%d')";
 
         $jtAngsuran = DB::table('loan_accounts as la')
@@ -375,47 +418,49 @@ class TlOsDailyDashboardController extends Controller
 
         $osBig = $attachVisitMeta($osBig);
 
+        /**
+         * =========================================================
+         * 11) RETURN VIEW
+         * =========================================================
+         */
         return view('kpi.tl.os_daily', [
-            'from'     => $from->toDateString(),
-            'to'       => $to->toDateString(),
+            'from' => $from->toDateString(),
+            'to'   => $to->toDateString(),
 
-            'labels'   => $labels,
+            'labels'           => $labels,
             'datasetsByMetric' => $datasetsByMetric,
 
-            'latestOs' => $latestOs,
-            'prevOs'   => $prevOs,
-            'delta'    => $delta,
+            'latestOs'    => $latestOs,
+            'prevOs'      => $prevOs,
+            'prevOsLabel' => $prevOsLabel,
+            'delta'       => $delta,
 
-            'staff'    => $staff,
-            'aoCount'  => count($aoCodes),
+            'staff'   => $staff,
+            'aoCount' => $aoCount,
 
-            'latestDate' => $latestDate,
-            'prevDate'   => $prevDate,
+            'latestDate'    => $latestDate,
             'latestPosDate' => $latestPosDate,
 
             'aoOptions' => $aoOptions,
             'aoFilter'  => $aoFilter,
 
-            // ✅ visit info global (kalau mau ditampilkan di header)
             'today' => $today,
 
-            // tables
-            'dueThisMonth' => $dueThisMonth,
-            'dueMonthLabel' => Carbon::parse($latestPosDate)->translatedFormat('F Y'),
+            'dueThisMonth'   => $dueThisMonth,
+            'dueMonthLabel'  => Carbon::parse($latestPosDate)->translatedFormat('F Y'),
 
             'ltLatest' => $ltLatest,
 
             'migrasiTunggakan' => $migrasiTunggakan,
             'prevSnapMonth'    => $prevSnapMonth,
 
-            'weekStart' => $weekStart,
-            'weekEnd'   => $weekEnd,
+            'weekStart'  => $weekStart,
+            'weekEnd'    => $weekEnd,
             'jtAngsuran' => $jtAngsuran,
 
             'bigThreshold' => $bigThreshold,
-            'osBig' => $osBig,
+            'osBig'        => $osBig,
         ]);
-
     }
 
     private function subordinateStaffForLeader(int $leaderUserId)
