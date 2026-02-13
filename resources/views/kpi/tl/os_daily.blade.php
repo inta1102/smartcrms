@@ -121,7 +121,54 @@
   $jtNext2Start = $jtNext2Start ?? null;
   $jtNext2End   = $jtNext2End ?? null;
 
+  $ltTlPack = function($deltaLt, array $bounce) {
+    $toDpkNoa = (int)($bounce['lt_to_dpk_noa'] ?? 0);
+    $toDpkOs  = (int)($bounce['lt_to_dpk_os'] ?? 0);
+
+    if (is_null($deltaLt)) {
+      return [
+        'deltaTone' => 'text-slate-500',
+        'hintTone'  => 'text-slate-500',
+        'hint'      => 'prev n/a',
+      ];
+    }
+
+    $d = (float)$deltaLt;
+
+    // ⚠️ Mixed: LT turun tapi migrasi ke DPK
+    if ($d < 0 && $toDpkNoa > 0) {
+      return [
+        'deltaTone' => 'text-amber-700',
+        'hintTone'  => 'text-amber-700',
+        'hint'      => "LT turun, tapi ada eskalasi LT→DPK: {$toDpkNoa} NOA (OS ± Rp ".number_format($toDpkOs,0,',','.').")",
+      ];
+    }
+
+    // Normal
+    if ($d > 0) {
+      return [
+        'deltaTone' => 'text-rose-700',
+        'hintTone'  => 'text-slate-500',
+        'hint'      => 'LT naik = memburuk',
+      ];
+    }
+
+    if ($d < 0) {
+      return [
+        'deltaTone' => 'text-emerald-700',
+        'hintTone'  => 'text-slate-500',
+        'hint'      => 'LT turun = membaik',
+      ];
+    }
+
+    return [
+      'deltaTone' => 'text-slate-500',
+      'hintTone'  => 'text-slate-500',
+      'hint'      => 'stagnan',
+    ];
+  };
 @endphp
+
 
 <div class="max-w-6xl mx-auto p-4 space-y-5">
 
@@ -264,16 +311,57 @@
         </div>
       </div>
 
-      {{-- LT --}}
+      @php
+        $deltaHint = function(string $metric, $delta): string {
+          if (is_null($delta)) return 'prev n/a';
+
+          $d = (float) $delta;
+
+          // metric yang "naik = baik"
+          if (in_array($metric, ['os','l0','rr'], true)) {
+            if ($d > 0) return $metric === 'rr' ? 'RR naik = membaik' : strtoupper($metric).' naik = membaik';
+            if ($d < 0) return $metric === 'rr' ? 'RR turun = memburuk' : strtoupper($metric).' turun = memburuk';
+            return 'stagnan';
+          }
+
+          // metric yang "naik = buruk"
+          if (in_array($metric, ['lt','pct_lt'], true)) {
+            if ($d > 0) return $metric === 'lt' ? 'LT naik = memburuk' : '%LT naik = memburuk';
+            if ($d < 0) return $metric === 'lt' ? 'LT turun = membaik'  : '%LT turun = membaik';
+            return 'stagnan';
+          }
+
+          return '—';
+        };
+      @endphp
+
+      {{-- LT --}} 
+      @php
+        $ltPack = $ltTlPack($cLT['delta'] ?? null, (array)($bounce ?? []));
+      @endphp
+
       <div class="rounded-2xl border border-slate-200 bg-white p-4">
         <div class="text-xs text-slate-500">Latest LT</div>
+
         <div class="text-lg font-extrabold text-slate-900">
           {{ $fmtRp($cLT['value'] ?? 0) }}
         </div>
-        <div class="mt-1 text-sm font-bold {{ (($cLT['delta'] ?? 0) <= 0) ? 'text-emerald-700' : 'text-rose-700' }}">
+
+        <div class="mt-1 text-sm font-bold {{ $ltPack['deltaTone'] }}">
           Δ {{ $fmtRpDelta($cLT['delta'] ?? null) }}
         </div>
-        <div class="text-[11px] text-slate-500">LT turun = bagus</div>
+
+        <span class="text-[11px] {{ $ltPack['hintTone'] }}">
+          {{ $ltPack['hint'] }}
+        </span>
+
+        {{-- Optional kecil, biar TL kebaca cepat --}}
+        @php $toDpkNoa = (int)($bounce['lt_to_dpk_noa'] ?? 0); @endphp
+        @if($toDpkNoa > 0)
+          <div class="mt-2 text-[11px] text-amber-700">
+            ⚠ Fokus: migrasi LT→DPK hari ini (potensi pindah FE)
+          </div>
+        @endif
       </div>
 
       {{-- RR --}}
@@ -297,7 +385,7 @@
         <div class="mt-1 text-sm font-bold {{ (($cPLT['delta'] ?? 0) <= 0) ? 'text-emerald-700' : 'text-rose-700' }}">
           Δ {{ $fmtPts($cPLT['delta'] ?? null) }}
         </div>
-        <div class="text-[11px] text-slate-500">turun = bagus</div>
+        <span class="text-[11px] text-slate-500">{{ $deltaHint('pct_lt', $cPLT['delta'] ?? null) }}</span>
       </div>
     </div>
 

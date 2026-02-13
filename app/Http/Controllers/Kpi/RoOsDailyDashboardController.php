@@ -18,6 +18,7 @@ class RoOsDailyDashboardController extends Controller
         $ao = str_pad(trim((string)($me->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
         abort_unless($ao !== '' && $ao !== '000000', 403);
 
+
         /* 1) RANGE DEFAULT
          *    - from: tgl terakhir bulan lalu
          *    - to  : tgl terakhir yang ada di tabel kpi_os_daily_aos
@@ -41,7 +42,9 @@ class RoOsDailyDashboardController extends Controller
             [$from, $to] = [$to->copy()->startOfDay(), $from->copy()->startOfDay()];
         }
 
-        
+        $mode = $request->input('mode', 'mtd'); // default: MtoD
+        $mode = in_array($mode, ['mtd','h'], true) ? $mode : 'mtd';
+
         // =============================
         // LABELS tanggal lengkap
         // =============================
@@ -62,10 +65,8 @@ class RoOsDailyDashboardController extends Controller
         // Posisi terakhir loan_accounts untuk tabel bawah
         // =============================
         $latestPosDate = $latestDate ? Carbon::parse($latestDate)->toDateString() : now()->toDateString();
-        $prevSnapMonth = Carbon::parse($latestPosDate)
-            ->subMonthNoOverflow()
-            ->startOfMonth()
-            ->toDateString(); 
+        $prevSnapMonth = Carbon::parse($latestPosDate)->subMonthNoOverflow()->startOfMonth()->toDateString();
+
 
         // =============================
         // DATA harian KPI (AO ini)
@@ -151,6 +152,15 @@ class RoOsDailyDashboardController extends Controller
 
         // kalau prev tidak ketemu, tetap null (delta tidak dihitung)
         $prevDate = $prevAvailDate;
+        // =============================
+        // Posisi terakhir untuk join loan_accounts & baseline MtoD
+        // =============================
+        $latestPosDate = $latestDate
+            ? Carbon::parse($latestDate)->toDateString()
+            : $latestInKpi->toDateString(); // fallback aman
+
+        $aoCodes = [$ao]; // biar when(!empty($aoCodes)) aman
+
 
         // =============================
         // Cards value & delta (H vs H-1 snapshot available)
@@ -707,6 +717,7 @@ class RoOsDailyDashboardController extends Controller
             'eomMonth' => $eomMonth,              // 'YYYY-MM-01'
             'lastDate' => $latestPosDate,         // 'YYYY-MM-DD'
             ],
+            'mode' => $mode,
 
         ]);
     }

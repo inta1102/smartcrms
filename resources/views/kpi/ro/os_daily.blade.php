@@ -24,6 +24,9 @@
 
   $fmtPct = fn($v) => is_null($v) ? '-' : number_format((float)$v, 2, ',', '.') . '%';
 
+  $mode = request('mode', 'mtd'); // default MtoD
+  if (!in_array($mode, ['daily','mtd'], true)) $mode = 'mtd';
+
   // sign display
   $fmtDeltaRp = function ($delta) use ($fmtRpCompact) {
       if (is_null($delta)) return '-';
@@ -39,7 +42,7 @@
       return $sign . number_format($d, 2, ',', '.') . ' pts';
   };
 
-  // ========= NEW: bucket helper (L0 / LT / DPK) =========
+  // ========= bucket helper (L0 / LT / DPK) =========
   // DPK: ft_pokok=2 atau ft_bunga=2
   // LT : ft_pokok=1 atau ft_bunga=1
   // L0 : selain itu
@@ -51,7 +54,7 @@
       return 'L0';
   };
 
-  // ========= NEW: progress badge builder =========
+  // ========= progress badge builder =========
   // expects prev_ft_pokok/prev_ft_bunga from controller; fallback '-' if not available
   $progressText = function ($r) use ($bucketFromFt) {
       $hasPrev = isset($r->prev_ft_pokok) || isset($r->prev_ft_bunga) || isset($r->prev_bucket);
@@ -72,20 +75,19 @@
   };
 
   $progressBadgeClass = function (string $prog) {
-      // default
       if ($prog === '-' || $prog === '') return 'bg-slate-50 border-slate-200 text-slate-600';
 
-      // worsening: L0→LT, LT→DPK, L0→DPK
+      // worsening
       if (str_contains($prog, 'L0→LT') || str_contains($prog, 'LT→DPK') || str_contains($prog, 'L0→DPK')) {
           return 'bg-rose-50 border-rose-200 text-rose-700';
       }
 
-      // improving: DPK→LT, LT→L0, DPK→L0
+      // improving
       if (str_contains($prog, 'DPK→LT') || str_contains($prog, 'LT→L0') || str_contains($prog, 'DPK→L0')) {
           return 'bg-emerald-50 border-emerald-200 text-emerald-700';
       }
 
-      // stable state
+      // stable
       if ($prog === 'L0' || $prog === 'LT' || $prog === 'DPK') {
           return 'bg-slate-50 border-slate-200 text-slate-700';
       }
@@ -101,47 +103,79 @@
       }
       $up = ((float)$delta) > 0;
 
-      // OS: naik bagus, turun jelek (netral bisnis)
-      if ($key === 'os') {
-          return $up ? ['text-emerald-700', 'bg-emerald-50 border-emerald-200'] : ['text-rose-700', 'bg-rose-50 border-rose-200'];
-      }
-
-      // L0: naik = membaik, turun = memburuk
-      if ($key === 'l0') {
-          return $up ? ['text-emerald-700', 'bg-emerald-50 border-emerald-200'] : ['text-rose-700', 'bg-rose-50 border-rose-200'];
-      }
-
-      // LT: naik = memburuk, turun = membaik
-      if ($key === 'lt') {
-          return $up ? ['text-rose-700', 'bg-rose-50 border-rose-200'] : ['text-emerald-700', 'bg-emerald-50 border-emerald-200'];
-      }
-
-      // RR: naik = membaik, turun = memburuk
-      if ($key === 'rr') {
-          return $up ? ['text-emerald-700', 'bg-emerald-50 border-emerald-200'] : ['text-rose-700', 'bg-rose-50 border-rose-200'];
-      }
-
-      // %LT: naik = memburuk, turun = membaik
-      if ($key === 'pct_lt') {
-          return $up ? ['text-rose-700', 'bg-rose-50 border-rose-200'] : ['text-emerald-700', 'bg-emerald-50 border-emerald-200'];
-      }
+      if ($key === 'os') return $up ? ['text-emerald-700', 'bg-emerald-50 border-emerald-200'] : ['text-rose-700', 'bg-rose-50 border-rose-200'];
+      if ($key === 'l0') return $up ? ['text-emerald-700', 'bg-emerald-50 border-emerald-200'] : ['text-rose-700', 'bg-rose-50 border-rose-200'];
+      if ($key === 'lt') return $up ? ['text-rose-700', 'bg-rose-50 border-rose-200'] : ['text-emerald-700', 'bg-emerald-50 border-emerald-200'];
+      if ($key === 'rr') return $up ? ['text-emerald-700', 'bg-emerald-50 border-emerald-200'] : ['text-rose-700', 'bg-rose-50 border-rose-200'];
+      if ($key === 'pct_lt') return $up ? ['text-rose-700', 'bg-rose-50 border-rose-200'] : ['text-emerald-700', 'bg-emerald-50 border-emerald-200'];
 
       return ['text-slate-600', 'bg-slate-50 border-slate-200'];
   };
 
-  // build TLRO daily sentence (copy WA)
-  $tlroText = function () use ($cards, $bounce, $latestDate, $prevDate, $fmtRpCompact, $fmtDeltaRp, $fmtDeltaPts, $fmtPct) {
+  // ========= hint text helper (dipakai di card) =========
+  $deltaHint = function(string $metric, $delta): string {
+      if (is_null($delta)) return 'prev n/a';
+      $d = (float) $delta;
+
+      // naik = baik
+      if (in_array($metric, ['os','l0','rr'], true)) {
+          if ($d > 0) return $metric === 'rr' ? 'RR naik = membaik' : strtoupper($metric).' naik = membaik';
+          if ($d < 0) return $metric === 'rr' ? 'RR turun = memburuk' : strtoupper($metric).' turun = memburuk';
+          return 'stagnan';
+      }
+
+      // naik = buruk
+      if (in_array($metric, ['lt','pct_lt'], true)) {
+          if ($d > 0) return $metric === 'lt' ? 'LT naik = memburuk' : '%LT naik = memburuk';
+          if ($d < 0) return $metric === 'lt' ? 'LT turun = membaik'  : '%LT turun = membaik';
+          return 'stagnan';
+      }
+
+      return '—';
+  };
+
+  // ========= Smart LT pack: kalau LT turun tapi ada migrasi LT->DPK, jangan tampil "membaik" hijau =========
+  // note: $toDpkNoa/$toDpkOs akan kita hitung di bagian Summary Cards, lalu dipassing via $bounce + fallback.
+  $ltSmartPack = function($deltaLt, int $toDpkNoa, int $toDpkOs) {
+      if (is_null($deltaLt)) {
+          return [
+            'hint' => 'prev n/a',
+            'tone' => 'text-slate-500',
+            'forceBg' => null,
+          ];
+      }
+
+      $d = (float)$deltaLt;
+
+      // KRITIKAL: LT turun bukan karena cure, tapi "pindah bucket" jadi DPK
+      if ($d < 0 && $toDpkNoa > 0) {
+          return [
+            'hint' => "LT turun, tapi ada migrasi LT→DPK: {$toDpkNoa} NOA (OS ± Rp ".number_format($toDpkOs,0,',','.').")",
+            'tone' => 'text-amber-700',
+            'forceBg' => 'bg-amber-50 border-amber-200',
+          ];
+      }
+
+      // normal interpretation
+      if ($d > 0) return ['hint' => 'LT naik = memburuk', 'tone' => 'text-rose-700', 'forceBg' => null];
+      if ($d < 0) return ['hint' => 'LT turun = membaik',  'tone' => 'text-emerald-700', 'forceBg' => null];
+
+      return ['hint' => 'stagnan', 'tone' => 'text-slate-500', 'forceBg' => null];
+  };
+
+  // build TLRO sentence (copy WA) -> gunakan cardsSrc (bukan selalu $cards)
+  $tlroText = function (array $cardsUse) use ($bounce, $latestDate, $prevDate, $fmtRpCompact, $fmtDeltaRp, $fmtDeltaPts, $fmtPct, $mode) {
       $dt = $latestDate ?: '-';
       $pd = $prevDate ?: 'H-1';
 
-      $dOs = $cards['os']['delta'] ?? null;
-      $dL0 = $cards['l0']['delta'] ?? null;
-      $dLt = $cards['lt']['delta'] ?? null;
-      $dRr = $cards['rr']['delta'] ?? null;     // pts
-      $dPL = $cards['pct_lt']['delta'] ?? null; // pts
+      $dOs = $cardsUse['os']['delta'] ?? null;
+      $dL0 = $cardsUse['l0']['delta'] ?? null;
+      $dLt = $cardsUse['lt']['delta'] ?? null;
+      $dRr = $cardsUse['rr']['delta'] ?? null;     // pts
+      $dPL = $cardsUse['pct_lt']['delta'] ?? null; // pts
 
-      $latestRR = $cards['rr']['value'] ?? null;
-      $latestPL = $cards['pct_lt']['value'] ?? null;
+      $latestRR = $cardsUse['rr']['value'] ?? null;
+      $latestPL = $cardsUse['pct_lt']['value'] ?? null;
 
       $parts = [];
       $parts[] = "Ringkas {$dt} (vs {$pd}):";
@@ -162,15 +196,14 @@
           $parts[] = "%LT {$plTxt}{$plD}.";
       }
 
-      // Bounce risk sentence + NEW: LT→DPK
       $signalBounce = (bool)($bounce['signal_bounce_risk'] ?? false);
 
       $ltToL0Noa = (int)($bounce['lt_to_l0_noa'] ?? 0);
       $ltToL0Os  = (int)($bounce['lt_to_l0_os'] ?? 0);
 
-      // ✅ NEW: EOM LT→DPK
-      $ltToDpkNoa = (int)($bounce['lt_to_dpk_noa'] ?? 0);
-      $ltToDpkOs  = (int)($bounce['lt_to_dpk_os'] ?? 0);
+      // mode aware key
+      $ltToDpkNoa = $mode === 'mtd' ? (int)($bounce['lt_eom_to_dpk_noa'] ?? 0) : (int)($bounce['lt_to_dpk_noa'] ?? 0);
+      $ltToDpkOs  = $mode === 'mtd' ? (int)($bounce['lt_eom_to_dpk_os'] ?? 0)  : (int)($bounce['lt_to_dpk_os'] ?? 0);
 
       $jtNoa     = (int)($bounce['jt_next2_noa'] ?? 0);
       $jtOs      = (int)($bounce['jt_next2_os'] ?? 0);
@@ -180,7 +213,7 @@
       }
 
       if ($ltToDpkNoa > 0) {
-          $parts[] = "⚠️ EOM: LT→DPK (FT=2): {$ltToDpkNoa} NOA (±" . $fmtRpCompact($ltToDpkOs) . ").";
+          $parts[] = "⚠️ LT→DPK (FT=2): {$ltToDpkNoa} NOA (±" . $fmtRpCompact($ltToDpkOs) . ").";
       }
 
       if ($jtNoa > 0) {
@@ -209,7 +242,7 @@
       <p class="text-[11px] sm:text-xs text-slate-500 mt-1">
         Snapshot compare: <b>{{ $latestDate ?? '-' }}</b> vs <b>{{ $prevDate ?? '-' }}</b>.
       </p>
-      @if(request('mode')==='mtd')
+      @if($mode === 'mtd')
         <p class="text-[11px] sm:text-xs text-slate-500 mt-1">
           Mode: <b>MtoD</b> (EOM bulan lalu → posisi terakhir).
         </p>
@@ -227,9 +260,6 @@
         <input type="date" name="to" value="{{ $to }}"
                class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm bg-white">
       </div>
-      @php
-        $mode = request('mode', 'daily'); // daily | mtd
-      @endphp
 
       <input type="hidden" name="mode" value="{{ $mode }}">
 
@@ -256,18 +286,18 @@
 
   {{-- Summary Cards --}}
   @php
-    $mode = request('mode', 'daily'); // daily | mtd
-
     // pilih sumber cards
-    $cardsSrc = ($mode === 'mtd' && isset($cardsMtd) && is_array($cardsMtd)) ? $cardsMtd : ($cards ?? []);
+    $cardsSrc = ($mode === 'mtd' && !empty($cardsMtd) && is_array($cardsMtd))
+      ? $cardsMtd
+      : ($cards ?? []);
 
-    $cOs = $cardsSrc['os'] ?? null;
-    $cL0 = $cardsSrc['l0'] ?? null;
-    $cLt = $cardsSrc['lt'] ?? null;
-    $cRr = $cardsSrc['rr'] ?? null;
-    $cPL = $cardsSrc['pct_lt'] ?? null;
+    $cOs = $cardsSrc['os'] ?? [];
+    $cL0 = $cardsSrc['l0'] ?? [];
+    $cLt = $cardsSrc['lt'] ?? [];
+    $cRr = $cardsSrc['rr'] ?? [];
+    $cPL = $cardsSrc['pct_lt'] ?? [];
 
-    // delta tone tetap pakai helper kamu
+    // tone
     [$osText,$osBg] = $deltaTone('os', $cOs['delta'] ?? null);
     [$l0Text,$l0Bg] = $deltaTone('l0', $cL0['delta'] ?? null);
     [$ltText,$ltBg] = $deltaTone('lt', $cLt['delta'] ?? null);
@@ -276,16 +306,60 @@
 
     $growthLabel = $mode === 'mtd' ? 'Growth (MtoD)' : 'Growth (H vs H-1)';
 
-    // baseline info (optional)
-    $eomMonth = $cardsMtdMeta['eomMonth'] ?? null;
-    $lastDate = $cardsMtdMeta['lastDate'] ?? null;
+    // baseline info (optional, aman)
+    $mtdMeta  = (array)($cardsMtdMeta ?? []);
+    $eomMonth = $mtdMeta['eomMonth'] ?? null;
+    $lastDate = $mtdMeta['lastDate'] ?? null;
 
     $baselineText = '';
     if ($mode === 'mtd') {
-        $b1 = $eomMonth ? Carbon\Carbon::parse($eomMonth)->translatedFormat('M Y') : '-';
-        $b2 = $lastDate ? $lastDate : ($latestPosDate ?? '-');
-        $baselineText = "EOM {$b1} → Latest {$b2}";
+      $b1 = $eomMonth ? \Carbon\Carbon::parse($eomMonth)->translatedFormat('M Y') : '-';
+      $b2 = $lastDate ?: ($latestPosDate ?? '-');
+      $baselineText = "EOM {$b1} → Latest {$b2}";
     }
+
+    // =========================
+    // ✅ KUNCI: definisikan LT->DPK counter + fallback dari cohort table ($ltLatest)
+    // =========================
+    $bounceArr = (array)($bounce ?? []);
+
+    $toDpkNoa = $mode === 'mtd'
+      ? (int)($bounceArr['lt_eom_to_dpk_noa'] ?? 0)
+      : (int)($bounceArr['lt_to_dpk_noa'] ?? 0);
+
+    $toDpkOs  = $mode === 'mtd'
+      ? (int)($bounceArr['lt_eom_to_dpk_os'] ?? 0)
+      : (int)($bounceArr['lt_to_dpk_os'] ?? 0);
+
+    // fallback: kalau bounce belum ngisi, hitung dari cohort LT EOM -> Hari ini
+    if (($toDpkNoa <= 0) && !empty($ltLatest)) {
+      try {
+        $col = collect($ltLatest);
+
+        $isDpk = fn($r) =>
+          ((int)($r->ft_pokok ?? 0) === 2) ||
+          ((int)($r->ft_bunga ?? 0) === 2) ||
+          ((int)($r->kolek ?? 0) === 2);
+
+        $toDpkNoa = (int) $col->filter($isDpk)->count();
+
+        // os field di cohort table kamu pakai $r->os
+        $toDpkOs = (int) $col->filter($isDpk)->sum(function($r){
+          return (int)($r->os ?? $r->outstanding ?? 0);
+        });
+      } catch (\Throwable $e) {
+        // biarin 0 kalau ada masalah
+      }
+    }
+
+    // build LT smart pack
+    $ltPack = $ltSmartPack($cLt['delta'] ?? null, $toDpkNoa, $toDpkOs);
+    $ltWrapperBg = $ltPack['forceBg'] ?? $ltBg;
+    $ltHintTone  = $ltPack['tone'] ?? 'text-slate-500';
+
+    // ✅ OPTIONAL: %LT juga bisa misleading saat LT turun karena migrasi ke DPK (bisa bikin %LT tampak membaik)
+    $plDelta = $cPL['delta'] ?? null;
+    $plMislead = (!is_null($plDelta) && (float)$plDelta < 0 && $toDpkNoa > 0);
   @endphp
 
   <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
@@ -337,7 +411,7 @@
         <div class="text-[11px] text-slate-500">{{ $growthLabel }}</div>
         <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $l0Bg }}">
           <span class="text-sm font-bold {{ $l0Text }}">{{ $fmtDeltaRp($cL0['delta'] ?? null) }}</span>
-          <span class="text-[11px] text-slate-500">L0 naik = membaik</span>
+          <span class="text-[11px] text-slate-500">{{ $deltaHint('l0', $cL0['delta'] ?? null) }}</span>
         </div>
       </div>
     </div>
@@ -357,10 +431,17 @@
 
       <div class="mt-3">
         <div class="text-[11px] text-slate-500">{{ $growthLabel }}</div>
-        <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $ltBg }}">
+
+        <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $ltWrapperBg }}">
           <span class="text-sm font-bold {{ $ltText }}">{{ $fmtDeltaRp($cLt['delta'] ?? null) }}</span>
-          <span class="text-[11px] text-slate-500">LT naik = memburuk</span>
+          <span class="text-[11px] {{ $ltHintTone }}">{{ $ltPack['hint'] }}</span>
         </div>
+
+        @if($toDpkNoa > 0)
+          <div class="mt-2 text-[11px] text-amber-700">
+            ⚠ Ada migrasi LT→DPK: <b>{{ $toDpkNoa }}</b> NOA (OS ± Rp {{ number_format($toDpkOs,0,',','.') }})
+          </div>
+        @endif
       </div>
     </div>
 
@@ -381,7 +462,7 @@
         <div class="text-[11px] text-slate-500">{{ $growthLabel }}</div>
         <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $rrBg }}">
           <span class="text-sm font-bold {{ $rrText }}">{{ $fmtDeltaPts($cRr['delta'] ?? null) }}</span>
-          <span class="text-[11px] text-slate-500">RR naik = membaik</span>
+          <span class="text-[11px] text-slate-500">{{ $deltaHint('rr', $cRr['delta'] ?? null) }}</span>
         </div>
       </div>
     </div>
@@ -401,9 +482,23 @@
 
       <div class="mt-3">
         <div class="text-[11px] text-slate-500">{{ $growthLabel }}</div>
-        <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $plBg }}">
+
+        @php
+          // kalau %LT terlihat "membaik" tapi sebenarnya LT turun karena pindah ke DPK, kasih amber hint
+          $plWrapper = $plBg;
+          $plHintText = $deltaHint('pct_lt', $cPL['delta'] ?? null);
+          $plHintTone = 'text-slate-500';
+
+          if ($plMislead) {
+            $plWrapper  = 'bg-amber-50 border-amber-200';
+            $plHintText = "Turun terlihat membaik, tapi ada LT→DPK ({$toDpkNoa} NOA)";
+            $plHintTone = 'text-amber-700';
+          }
+        @endphp
+
+        <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $plWrapper }}">
           <span class="text-sm font-bold {{ $plText }}">{{ $fmtDeltaPts($cPL['delta'] ?? null) }}</span>
-          <span class="text-[11px] text-slate-500">%LT naik = memburuk</span>
+          <span class="text-[11px] {{ $plHintTone }}">{{ $plHintText }}</span>
         </div>
       </div>
     </div>
@@ -415,7 +510,7 @@
     <div class="font-extrabold text-slate-900 text-sm sm:text-base">📣 Pangandikanipun Pimpinan kangge Panjenengan </div>
     <div class="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
       <div class="text-sm text-slate-800 leading-relaxed whitespace-pre-line" id="tlroNarrative">
-        {{ $tlroText() }}
+        {{ $tlroText($cardsSrc) }}
       </div>
       <div class="mt-3 flex items-center gap-2">
         <button type="button" id="btnCopyTlro"
@@ -465,7 +560,7 @@
         </ul>
       </div>
 
-      {{-- ✅ UPDATED RISK PANEL --}}
+      {{-- UPDATED RISK PANEL --}}
       <div class="rounded-2xl border border-amber-200 bg-amber-50 p-3">
         <div class="text-[11px] font-extrabold text-amber-800 mb-2">⚠️ Risiko Besok (Bounce-back + EOM)</div>
         <ul class="text-sm text-amber-900 space-y-1 list-disc pl-5">
@@ -478,7 +573,10 @@
 
         <div class="mt-3 text-[11px] text-amber-900/80 space-y-1">
           <div>Sinyal: <b>L0 naik & LT turun</b> + ada <b>JT angsuran 1–2 hari</b>.</div>
-          <div>Tambahan: <b>EOM LT→DPK</b> saat <b>FT Pokok/Bunga = 2</b> (indikasi mulai masuk bucket risiko lebih tinggi).</div>
+          <div>Tambahan: <b>LT→DPK</b> saat <b>FT Pokok/Bunga/Kolek = 2</b> (indikasi mulai masuk bucket risiko lebih tinggi).</div>
+          @if($toDpkNoa > 0)
+            <div>Terbaca: <b>{{ $toDpkNoa }}</b> NOA migrasi ke DPK (OS ± <b>Rp {{ number_format($toDpkOs,0,',','.') }}</b>).</div>
+          @endif
         </div>
       </div>
     </div>
@@ -486,7 +584,6 @@
 
   {{-- Grafik --}}
   <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 space-y-3 sm:space-y-4">
-    {{-- ... bagian chart kamu BIARIN sama ... --}}
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
       <div>
         <div class="font-bold text-slate-900 text-sm sm:text-base">Grafik Harian (5 garis)</div>
@@ -566,10 +663,7 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">OS</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">DPD</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
-
-            {{-- ✅ NEW --}}
             <th class="text-center px-3 py-2 whitespace-nowrap">Progres (H-1→H)</th>
-
             <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Aksi</th>
@@ -595,7 +689,6 @@
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ $r->kolek ?? '-' }}</td>
 
-              {{-- ✅ NEW --}}
               <td class="px-3 py-2 text-center whitespace-nowrap">
                 <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold {{ $progClass }}">
                   {{ $prog }}
@@ -661,10 +754,7 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">FT Bunga</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">DPD</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
-
-            {{-- ✅ Cohort progress --}}
             <th class="text-center px-3 py-2 whitespace-nowrap">Progres (EOM→H)</th>
-
             <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Aksi</th>
@@ -674,10 +764,10 @@
         <tbody class="divide-y divide-slate-200">
           @forelse(($ltLatest ?? []) as $r)
             @php
-              $bucketFromFt = function($ftPokok, $ftBunga, $kolek){
+              $bucketFromFt2 = function($ftPokok, $ftBunga, $kolek){
                 $fp = (int)($ftPokok ?? 0);
                 $fb = (int)($ftBunga ?? 0);
-                $k = (int)($kolek ?? 0);
+                $k  = (int)($kolek ?? 0);
                 if ($fp === 2 || $fb === 2 || $k === 2) return 'DPK';
                 if ($fp === 1 || $fb === 1) return 'LT';
                 return 'L0';
@@ -685,25 +775,21 @@
 
               $progressBadge = function($from, $to){
                 if ($from === $to) return ['LT→LT', 'bg-slate-50 border-slate-200 text-slate-700'];
-                if ($to === 'DPK') return ['LT→DPK', 'bg-rose-50 border-rose-200 text-rose-700'];        // ✅ kritikal (migrasi FE)
-                if ($to === 'L0')  return ['LT→L0',  'bg-emerald-50 border-emerald-200 text-emerald-700']; // cure sementara (rawan bounce)
+                if ($to === 'DPK') return ['LT→DPK', 'bg-rose-50 border-rose-200 text-rose-700'];
+                if ($to === 'L0')  return ['LT→L0',  'bg-emerald-50 border-emerald-200 text-emerald-700'];
                 return ["LT→{$to}", 'bg-slate-50 border-slate-200 text-slate-700'];
               };
 
-              // ✅ variabel yang tadinya undefined
               $acc = (string)($r->account_no ?? '');
-              $meAo = str_pad(trim((string)(auth()->user()?->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
 
               $plannedToday = (int)($r->planned_today ?? 0) === 1;
               $planVisit = (string)($r->plan_visit_date ?? '');
 
-              // lock: kalau status done, checkbox disable
               $planStatus = strtolower(trim((string)($r->plan_status ?? '')));
               $locked = ($planStatus === 'done');
 
-              // progress EOM -> hari ini
-              $from = $bucketFromFt($r->eom_ft_pokok ?? 1, $r->eom_ft_bunga ?? 0, $r->eom_kolek ?? null);
-              $to   = $bucketFromFt($r->ft_pokok ?? 0,      $r->ft_bunga ?? 0,      $r->kolek ?? null);
+              $from = $bucketFromFt2($r->eom_ft_pokok ?? 1, $r->eom_ft_bunga ?? 0, $r->eom_kolek ?? null);
+              $to   = $bucketFromFt2($r->ft_pokok ?? 0,      $r->ft_bunga ?? 0,      $r->kolek ?? null);
               [$txt, $cls] = $progressBadge($from, $to);
             @endphp
 
@@ -721,7 +807,6 @@
                   {{ $txt }}
                 </span>
 
-                {{-- optional kecil: highlight bounce-risk note --}}
                 @if($txt === 'LT→L0')
                   <div class="mt-1 text-[11px] text-slate-500">Cure sementara • rawan bounce</div>
                 @endif
@@ -792,10 +877,7 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">FT Bunga</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">DPD</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
-
-            {{-- ✅ NEW --}}
             <th class="text-center px-3 py-2 whitespace-nowrap">Progres (H-1→H)</th>
-
             <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Aksi</th>
@@ -826,7 +908,6 @@
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ $r->kolek ?? '-' }}</td>
 
-              {{-- ✅ NEW --}}
               <td class="px-3 py-2 text-center whitespace-nowrap">
                 <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold {{ $progClass }}">
                   {{ $prog }}
@@ -891,10 +972,7 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">FT Bunga</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">DPD</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
-
-            {{-- ✅ NEW --}}
             <th class="text-center px-3 py-2 whitespace-nowrap">Progres (H-1→H)</th>
-
             <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Aksi</th>
@@ -922,7 +1000,6 @@
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ $r->kolek ?? '-' }}</td>
 
-              {{-- ✅ NEW --}}
               <td class="px-3 py-2 text-center whitespace-nowrap">
                 <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold {{ $progClass }}">
                   {{ $prog }}
