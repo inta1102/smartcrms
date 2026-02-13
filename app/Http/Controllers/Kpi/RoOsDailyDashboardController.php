@@ -18,7 +18,7 @@ class RoOsDailyDashboardController extends Controller
         $ao = str_pad(trim((string)($me->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
         abort_unless($ao !== '' && $ao !== '000000', 403);
 
-         /* 1) RANGE DEFAULT
+        /* 1) RANGE DEFAULT
          *    - from: tgl terakhir bulan lalu
          *    - to  : tgl terakhir yang ada di tabel kpi_os_daily_aos
          * =========================================================
@@ -159,36 +159,11 @@ class RoOsDailyDashboardController extends Controller
         $deltaPctLt = (is_null($prevPctLt) || is_null($latestPctLt)) ? null : round(((float)$latestPctLt - (float)$prevPctLt), 2);
 
         $cards = [
-            'os' => [
-                'label' => 'OS',
-                'value' => $latestOs,
-                'prev'  => $prevOs,
-                'delta' => $deltaOs,
-            ],
-            'l0' => [
-                'label' => 'L0',
-                'value' => $latestL0,
-                'prev'  => $prevL0,
-                'delta' => $deltaL0,
-            ],
-            'lt' => [
-                'label' => 'LT',
-                'value' => $latestLT,
-                'prev'  => $prevLT,
-                'delta' => $deltaLT,
-            ],
-            'rr' => [
-                'label' => 'RR (%L0)',
-                'value' => $latestRR,
-                'prev'  => $prevRR,
-                'delta' => $deltaRR,
-            ],
-            'pct_lt' => [
-                'label' => '%LT',
-                'value' => $latestPctLt,
-                'prev'  => $prevPctLt,
-                'delta' => $deltaPctLt,
-            ],
+            'os' => ['label' => 'OS',       'value' => $latestOs,    'prev' => $prevOs,    'delta' => $deltaOs],
+            'l0' => ['label' => 'L0',       'value' => $latestL0,    'prev' => $prevL0,    'delta' => $deltaL0],
+            'lt' => ['label' => 'LT',       'value' => $latestLT,    'prev' => $prevLT,    'delta' => $deltaLT],
+            'rr' => ['label' => 'RR (%L0)', 'value' => $latestRR,    'prev' => $prevRR,    'delta' => $deltaRR],
+            'pct_lt' => ['label' => '%LT',  'value' => $latestPctLt, 'prev' => $prevPctLt, 'delta' => $deltaPctLt],
         ];
 
         // =============================
@@ -196,6 +171,24 @@ class RoOsDailyDashboardController extends Controller
         // =============================
         $latestPosDate = $latestDate ? Carbon::parse($latestDate)->toDateString() : now()->toDateString();
         $prevSnapMonth = Carbon::parse($latestPosDate)->subMonth()->startOfMonth()->toDateString();
+
+        // =============================
+        // Bounce compare date for per-account progress (H-1 snapshot available)
+        // =============================
+        $prevPosDate = $prevDate ?: Carbon::parse($latestPosDate)->subDay()->toDateString();
+
+        // =============================
+        // Bucket CASE SQL (L0/LT/DPK) untuk tabel-tabel harian
+        // =============================
+        $bucketSql = function (string $alias): string {
+            return "(
+                CASE
+                  WHEN {$alias}.ft_pokok = 2 OR {$alias}.ft_bunga = 2 THEN 'DPK'
+                  WHEN {$alias}.ft_pokok = 1 OR {$alias}.ft_bunga = 1 THEN 'LT'
+                  ELSE 'L0'
+                END
+            )";
+        };
 
         // =============================
         // VISIT META
@@ -257,12 +250,12 @@ class RoOsDailyDashboardController extends Controller
 
         // =============================
         // Bounce-back metrics (buat TLRO):
-        // 1) LT -> L0 hari ini (dibanding posisi kemarin)
-        // 2) JT angsuran 1-2 hari ke depan (potensi balik LT)
+        // 1) LT -> L0 (H-1 -> H)
+        // 2) LT -> DPK (H-1 -> H)
+        // 3) JT angsuran 1-2 hari ke depan
         // =============================
-        $prevPosDate = $prevDate ?: Carbon::parse($latestPosDate)->subDay()->toDateString();
 
-        // 1) LT -> L0 (posisi kemarin LT, hari ini L0)
+        // 1) LT -> L0 (posisi kemarin LT (FT=1), hari ini L0)
         $ltToL0Agg = DB::table('loan_accounts as t')
             ->join('loan_accounts as p', function ($j) use ($prevPosDate) {
                 $j->on('p.account_no', '=', 't.account_no')
@@ -274,11 +267,9 @@ class RoOsDailyDashboardController extends Controller
             ")
             ->whereDate('t.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(t.ao_code),6,'0') = ?", [$ao])
-            // prev LT
             ->where(function ($q) {
-                $q->where('p.ft_pokok', '>', 0)->orWhere('p.ft_bunga', '>', 0);
+                $q->where('p.ft_pokok', 1)->orWhere('p.ft_bunga', 1);
             })
-            // today L0
             ->where('t.ft_pokok', 0)
             ->where('t.ft_bunga', 0)
             ->first();
@@ -286,18 +277,39 @@ class RoOsDailyDashboardController extends Controller
         $ltToL0Noa = (int)($ltToL0Agg->noa ?? 0);
         $ltToL0Os  = (int)($ltToL0Agg->os ?? 0);
 
-        // 2) JT angsuran 1-2 hari ke depan (robust: next due date relative to latestPosDate)
+        // 2) LT -> DPK (posisi kemarin LT (FT=1), hari ini DPK (FT=2))
+        $ltToDpkAgg = DB::table('loan_accounts as t')
+            ->join('loan_accounts as p', function ($j) use ($prevPosDate) {
+                $j->on('p.account_no', '=', 't.account_no')
+                  ->whereDate('p.position_date', $prevPosDate);
+            })
+            ->selectRaw("
+                COUNT(*) as noa,
+                ROUND(SUM(t.outstanding)) as os
+            ")
+            ->whereDate('t.position_date', $latestPosDate)
+            ->whereRaw("LPAD(TRIM(t.ao_code),6,'0') = ?", [$ao])
+            ->where(function ($q) {
+                $q->where('p.ft_pokok', 1)->orWhere('p.ft_bunga', 1);
+            })
+            ->where(function ($q) {
+                $q->where('t.ft_pokok', 2)->orWhere('t.ft_bunga', 2);
+            })
+            ->first();
+
+        $ltToDpkNoa = (int)($ltToDpkAgg->noa ?? 0);
+        $ltToDpkOs  = (int)($ltToDpkAgg->os ?? 0);
+
+        // 3) JT angsuran 1-2 hari ke depan (robust: next due date relative to latestPosDate)
         $pos = Carbon::parse($latestPosDate);
         $d1  = $pos->copy()->addDay()->toDateString();
         $d2  = $pos->copy()->addDays(2)->toDateString();
 
-        $posLiteral = $pos->toDateString(); // dipakai di SQL literal
+        $posLiteral = $pos->toDateString();
 
-        // base due date bulan ini & bulan depan
         $dueBase = "STR_TO_DATE(CONCAT(DATE_FORMAT('$posLiteral','%Y-%m'),'-',LPAD(la.installment_day,2,'0')),'%Y-%m-%d')";
         $dueNext = "STR_TO_DATE(CONCAT(DATE_FORMAT(DATE_ADD('$posLiteral', INTERVAL 1 MONTH),'%Y-%m'),'-',LPAD(la.installment_day,2,'0')),'%Y-%m-%d')";
 
-        // pilih due date terdekat >= posisi terakhir
         $dueSmart = "(
             CASE
               WHEN $dueBase IS NULL THEN $dueNext
@@ -322,19 +334,67 @@ class RoOsDailyDashboardController extends Controller
         $jtNext2Noa = (int)($jtNext2Agg->noa ?? 0);
         $jtNext2Os  = (int)($jtNext2Agg->os ?? 0);
 
-        // bounce risk flag (rule sederhana tapi sangat “TLRO friendly”)
+        // =============================
+        // Cohort LT EOM bulan lalu -> status hari ini:
+        // - LT EOM -> DPK hari ini (kritikal migrasi FE)
+        // - LT EOM -> L0 hari ini (cure sementara, rawan bounce)
+        // =============================
+        $ltEomToDpkAgg = DB::table('loan_account_snapshots_monthly as m')
+            ->join('loan_accounts as la', 'la.account_no', '=', 'm.account_no')
+            ->selectRaw("COUNT(*) as noa, ROUND(SUM(la.outstanding)) as os")
+            ->whereDate('m.snapshot_month', $prevSnapMonth)
+            ->whereDate('la.position_date', $latestPosDate)
+            ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
+            ->where(function ($q) {
+                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
+            })
+            ->where(function ($q) {
+                $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2);
+            })
+            ->first();
+
+        $ltEomToDpkNoa = (int)($ltEomToDpkAgg->noa ?? 0);
+        $ltEomToDpkOs  = (int)($ltEomToDpkAgg->os ?? 0);
+
+        $ltEomToL0Agg = DB::table('loan_account_snapshots_monthly as m')
+            ->join('loan_accounts as la', 'la.account_no', '=', 'm.account_no')
+            ->selectRaw("COUNT(*) as noa, ROUND(SUM(la.outstanding)) as os")
+            ->whereDate('m.snapshot_month', $prevSnapMonth)
+            ->whereDate('la.position_date', $latestPosDate)
+            ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
+            ->where(function ($q) {
+                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
+            })
+            ->where('la.ft_pokok', 0)
+            ->where('la.ft_bunga', 0)
+            ->first();
+
+        $ltEomToL0Noa = (int)($ltEomToL0Agg->noa ?? 0);
+        $ltEomToL0Os  = (int)($ltEomToL0Agg->os ?? 0);
+
+        // bounce risk flag (rule sederhana tapi TLRO friendly)
         $bounce = [
             'prevPosDate' => $prevPosDate,
             'd1' => $d1,
             'd2' => $d2,
 
-            'lt_to_l0_noa' => $ltToL0Noa,
-            'lt_to_l0_os'  => $ltToL0Os,
+            // H-1 -> H
+            'lt_to_l0_noa'  => $ltToL0Noa,
+            'lt_to_l0_os'   => $ltToL0Os,
+            'lt_to_dpk_noa' => $ltToDpkNoa,
+            'lt_to_dpk_os'  => $ltToDpkOs,
 
+            // JT soon
             'jt_next2_noa' => $jtNext2Noa,
             'jt_next2_os'  => $jtNext2Os,
 
-            // sinyal: L0 naik & LT turun (indikasi bayar/cure), tapi ada JT dekat
+            // EOM -> Today (yang kamu jadikan fokus)
+            'lt_eom_to_dpk_noa' => $ltEomToDpkNoa,
+            'lt_eom_to_dpk_os'  => $ltEomToDpkOs,
+            'lt_eom_to_l0_noa'  => $ltEomToL0Noa,
+            'lt_eom_to_l0_os'   => $ltEomToL0Os,
+
+            // sinyal: L0 naik & LT turun (indikasi cure), tapi ada JT dekat
             'signal_cure'   => (!is_null($deltaL0) && !is_null($deltaLT) && $deltaL0 > 0 && $deltaLT < 0),
             'signal_jtsoon' => ($jtNext2Noa > 0),
             'signal_bounce_risk' => (
@@ -350,6 +410,10 @@ class RoOsDailyDashboardController extends Controller
         $monthEnd   = $now->copy()->endOfMonth()->toDateString();
 
         $dueThisMonth = DB::table('loan_accounts as la')
+            ->leftJoin('loan_accounts as p', function ($j) use ($prevPosDate) {
+                $j->on('p.account_no', '=', 'la.account_no')
+                  ->whereDate('p.position_date', $prevPosDate);
+            })
             ->select([
                 'la.account_no',
                 'la.customer_name',
@@ -358,6 +422,12 @@ class RoOsDailyDashboardController extends Controller
                 'la.maturity_date',
                 'la.dpd',
                 'la.kolek',
+
+                // prev for progress (H-1 -> H)
+                DB::raw("COALESCE(p.ft_pokok, 0) as prev_ft_pokok"),
+                DB::raw("COALESCE(p.ft_bunga, 0) as prev_ft_bunga"),
+                DB::raw($bucketSql('p') . " as prev_bucket"),
+                DB::raw($bucketSql('la') . " as cur_bucket"),
             ])
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
             ->whereNotNull('la.maturity_date')
@@ -368,9 +438,14 @@ class RoOsDailyDashboardController extends Controller
             ->get();
 
         // =============================
-        // TABEL 2) LT posisi terakhir
+        // TABEL 2) COHORT: LT EOM bulan lalu (snapshot) -> status posisi terakhir
         // =============================
-        $ltLatest = DB::table('loan_accounts as la')
+        $ltEom = DB::table('loan_account_snapshots_monthly as m')
+            ->join('loan_accounts as la', 'la.account_no', '=', 'm.account_no')
+            ->leftJoin('loan_accounts as p', function ($j) use ($prevPosDate) {
+                $j->on('p.account_no', '=', 'la.account_no')
+                  ->whereDate('p.position_date', $prevPosDate);
+            })
             ->select([
                 'la.account_no',
                 'la.customer_name',
@@ -380,19 +455,28 @@ class RoOsDailyDashboardController extends Controller
                 'la.ft_bunga',
                 'la.dpd',
                 'la.kolek',
+
+                // snapshot EOM (basis cohort)
+                DB::raw("COALESCE(m.ft_pokok,0) as eom_ft_pokok"),
+                DB::raw("COALESCE(m.ft_bunga,0) as eom_ft_bunga"),
+
+                // prev hari H-1 (opsional)
+                DB::raw("COALESCE(p.ft_pokok,0) as prev_ft_pokok"),
+                DB::raw("COALESCE(p.ft_bunga,0) as prev_ft_bunga"),
             ])
-            ->whereDate('la.position_date', $latestPosDate)
+            ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
+            ->whereDate('la.position_date', $latestPosDate)
             ->where(function ($q) {
-                $q->where('la.ft_pokok', 1)->orWhere('la.ft_bunga', 1);
+                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
             })
             ->orderByDesc('la.dpd')
-            ->limit(200)
+            ->orderByDesc('la.outstanding')
+            ->limit(300)
             ->get();
 
         // =============================
         // TABEL 3) JT Angsuran minggu ini
-        // FIX: robust lintas bulan (pakai approach sebelumnya)
         // =============================
         $weekStart = Carbon::parse($latestPosDate)->startOfWeek(Carbon::MONDAY)->toDateString();
         $weekEnd   = Carbon::parse($latestPosDate)->endOfWeek(Carbon::SUNDAY)->toDateString();
@@ -401,6 +485,10 @@ class RoOsDailyDashboardController extends Controller
         $dueDateExpr = "STR_TO_DATE(CONCAT('$ym','-',LPAD(la.installment_day,2,'0')),'%Y-%m-%d')";
 
         $jtAngsuran = DB::table('loan_accounts as la')
+            ->leftJoin('loan_accounts as p', function ($j) use ($prevPosDate) {
+                $j->on('p.account_no', '=', 'la.account_no')
+                  ->whereDate('p.position_date', $prevPosDate);
+            })
             ->select([
                 'la.account_no',
                 'la.customer_name',
@@ -412,6 +500,12 @@ class RoOsDailyDashboardController extends Controller
                 'la.dpd',
                 'la.kolek',
                 DB::raw("$dueDateExpr as due_date"),
+
+                // prev for progress (H-1 -> H)
+                DB::raw("COALESCE(p.ft_pokok, 0) as prev_ft_pokok"),
+                DB::raw("COALESCE(p.ft_bunga, 0) as prev_ft_bunga"),
+                DB::raw($bucketSql('p') . " as prev_bucket"),
+                DB::raw($bucketSql('la') . " as cur_bucket"),
             ])
             ->whereDate('la.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
@@ -428,6 +522,10 @@ class RoOsDailyDashboardController extends Controller
         // TABEL 4) OS >= 500jt
         // =============================
         $osBig = DB::table('loan_accounts as la')
+            ->leftJoin('loan_accounts as p', function ($j) use ($prevPosDate) {
+                $j->on('p.account_no', '=', 'la.account_no')
+                  ->whereDate('p.position_date', $prevPosDate);
+            })
             ->select([
                 'la.account_no',
                 'la.customer_name',
@@ -437,6 +535,12 @@ class RoOsDailyDashboardController extends Controller
                 'la.ft_bunga',
                 'la.dpd',
                 'la.kolek',
+
+                // prev for progress (H-1 -> H)
+                DB::raw("COALESCE(p.ft_pokok, 0) as prev_ft_pokok"),
+                DB::raw("COALESCE(p.ft_bunga, 0) as prev_ft_bunga"),
+                DB::raw($bucketSql('p') . " as prev_bucket"),
+                DB::raw($bucketSql('la') . " as cur_bucket"),
             ])
             ->whereDate('la.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
@@ -449,39 +553,22 @@ class RoOsDailyDashboardController extends Controller
         // Inject visit meta ke tabel-tabel
         // =============================
         $dueThisMonth = $attachVisitMeta($dueThisMonth);
-        $ltLatest     = $attachVisitMeta($ltLatest);
+        $ltEom        = $attachVisitMeta($ltEom);
         $jtAngsuran   = $attachVisitMeta($jtAngsuran);
         $osBig        = $attachVisitMeta($osBig);
 
         // =============================
-        // Insight text (upgrade + bounce)
+        // Insight text (upgrade + bounce + EOM->DPK)
         // =============================
         $insight = $this->buildInsight([
-            'latestOs'     => $latestOs,
-            'prevOs'       => $prevOs ?? 0,
-            'deltaOs'      => $deltaOs ?? 0,
-
-            'latestL0'     => $latestL0,
-            'prevL0'       => $prevL0 ?? 0,
-            'deltaL0'      => $deltaL0,
-
-            'latestLT'     => $latestLT,
-            'prevLT'       => $prevLT ?? 0,
-            'deltaLT'      => $deltaLT,
-
+            'deltaOs'      => $deltaOs,
             'latestRR'     => $latestRR,
-            'prevRR'       => $prevRR,
             'deltaRR'      => $deltaRR,
-
             'latestPctLt'  => $latestPctLt,
-            'prevPctLt'    => $prevPctLt,
             'deltaPctLt'   => $deltaPctLt,
-
             'l0ToLtNoa'    => $l0ToLtNoa,
             'l0ToLtOs'     => $l0ToLtOs,
-
-            // bounce pack
-            'bounce' => $bounce,
+            'bounce'       => $bounce,
         ]);
 
         return view('kpi.ro.os_daily', [
@@ -513,14 +600,14 @@ class RoOsDailyDashboardController extends Controller
             'dueThisMonth'  => $dueThisMonth,
             'dueMonthLabel' => $now->translatedFormat('F Y'),
 
-            'ltLatest'   => $ltLatest,
+            // ✅ keep key name: ltLatest (biar blade tidak pecah)
+            'ltLatest'   => $ltEom,
             'jtAngsuran' => $jtAngsuran,
             'weekStart'  => $weekStart,
             'weekEnd'    => $weekEnd,
 
             'osBig'   => $osBig,
 
-            // NEW
             'cards'   => $cards,
             'bounce'  => $bounce,
             'insight' => $insight,
@@ -577,21 +664,45 @@ class RoOsDailyDashboardController extends Controller
             $why[] = "Tidak ada indikasi L0 → LT (bulan ini) berdasarkan snapshot bulan lalu vs posisi terakhir (baik untuk stabilitas RR).";
         }
 
-        // Bounce back insight
+        // Bounce pack + fokus EOM->DPK
         $bounce = (array)($x['bounce'] ?? []);
         if (!empty($bounce)) {
+            // EOM -> DPK (paling kritikal)
+            $eomToDpkNoa = (int)($bounce['lt_eom_to_dpk_noa'] ?? 0);
+            $eomToDpkOs  = (int)($bounce['lt_eom_to_dpk_os'] ?? 0);
+            if ($eomToDpkNoa > 0) {
+                $risk[] = "Kritis: LT EOM → DPK (FT=2): {$eomToDpkNoa} NOA, OS ± Rp " . number_format($eomToDpkOs, 0, ',', '.') . " (potensi migrasi ke FE & OS RO turun).";
+            }
+
+            // EOM -> L0 (cure sementara)
+            $eomToL0Noa = (int)($bounce['lt_eom_to_l0_noa'] ?? 0);
+            $eomToL0Os  = (int)($bounce['lt_eom_to_l0_os'] ?? 0);
+            if ($eomToL0Noa > 0) {
+                $why[] = "Cure sementara: LT EOM → L0 hari ini: {$eomToL0Noa} NOA, OS ± Rp " . number_format($eomToL0Os, 0, ',', '.') . " (rawan bounce-back bila JT dekat tidak dibayar).";
+            }
+
+            // H-1 -> H: LT->DPK (harian)
+            $ltToDpkNoa = (int)($bounce['lt_to_dpk_noa'] ?? 0);
+            $ltToDpkOs  = (int)($bounce['lt_to_dpk_os'] ?? 0);
+            if ($ltToDpkNoa > 0) {
+                $risk[] = "Eskalasi harian: LT → DPK (FT=2): {$ltToDpkNoa} NOA, OS ± Rp " . number_format($ltToDpkOs, 0, ',', '.') . " → siapkan rencana migrasi/koordinasi FE & update LKH.";
+            }
+
+            // H-1 -> H: LT->L0 (harian)
             $ltToL0Noa = (int)($bounce['lt_to_l0_noa'] ?? 0);
             $ltToL0Os  = (int)($bounce['lt_to_l0_os'] ?? 0);
             if ($ltToL0Noa > 0) {
-                $why[] = "Ada perbaikan LT → L0 hari ini: {$ltToL0Noa} NOA, OS ± Rp " . number_format($ltToL0Os, 0, ',', '.') . ".";
+                $why[] = "Ada perbaikan LT → L0 hari ini (H-1→H): {$ltToL0Noa} NOA, OS ± Rp " . number_format($ltToL0Os, 0, ',', '.') . ".";
             }
 
+            // JT dekat
             $jtNoa = (int)($bounce['jt_next2_noa'] ?? 0);
             $jtOs  = (int)($bounce['jt_next2_os'] ?? 0);
             if ($jtNoa > 0) {
                 $risk[] = "Ada JT angsuran 1–2 hari ke depan: {$jtNoa} NOA, OS ± Rp " . number_format($jtOs, 0, ',', '.') . " → potensi LT naik lagi jika tidak bayar.";
             }
 
+            // sinyal bounce-back
             $signalBounce = (bool)($bounce['signal_bounce_risk'] ?? false);
             if ($signalBounce) {
                 $risk[] = "Sinyal *bounce-back*: L0 naik & LT turun (indikasi bayar/cure), tetapi ada JT dekat → besok RR bisa turun lagi jika gagal bayar.";

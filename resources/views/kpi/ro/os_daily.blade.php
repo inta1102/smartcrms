@@ -39,6 +39,60 @@
       return $sign . number_format($d, 2, ',', '.') . ' pts';
   };
 
+  // ========= NEW: bucket helper (L0 / LT / DPK) =========
+  // DPK: ft_pokok=2 atau ft_bunga=2
+  // LT : ft_pokok=1 atau ft_bunga=1
+  // L0 : selain itu
+  $bucketFromFt = function ($ftPokok, $ftBunga) {
+      $fp = (int)($ftPokok ?? 0);
+      $fb = (int)($ftBunga ?? 0);
+      if ($fp === 2 || $fb === 2) return 'DPK';
+      if ($fp === 1 || $fb === 1) return 'LT';
+      return 'L0';
+  };
+
+  // ========= NEW: progress badge builder =========
+  // expects prev_ft_pokok/prev_ft_bunga from controller; fallback '-' if not available
+  $progressText = function ($r) use ($bucketFromFt) {
+      $hasPrev = isset($r->prev_ft_pokok) || isset($r->prev_ft_bunga) || isset($r->prev_bucket);
+      if (!$hasPrev) return '-';
+
+      $prev = isset($r->prev_bucket)
+        ? (string)($r->prev_bucket ?? '-')
+        : $bucketFromFt($r->prev_ft_pokok ?? 0, $r->prev_ft_bunga ?? 0);
+
+      $cur = isset($r->cur_bucket)
+        ? (string)($r->cur_bucket ?? '-')
+        : $bucketFromFt($r->ft_pokok ?? 0, $r->ft_bunga ?? 0);
+
+      if ($prev === '-' || $cur === '-') return '-';
+      if ($prev === $cur) return $cur; // tetap
+
+      return $prev . '→' . $cur;
+  };
+
+  $progressBadgeClass = function (string $prog) {
+      // default
+      if ($prog === '-' || $prog === '') return 'bg-slate-50 border-slate-200 text-slate-600';
+
+      // worsening: L0→LT, LT→DPK, L0→DPK
+      if (str_contains($prog, 'L0→LT') || str_contains($prog, 'LT→DPK') || str_contains($prog, 'L0→DPK')) {
+          return 'bg-rose-50 border-rose-200 text-rose-700';
+      }
+
+      // improving: DPK→LT, LT→L0, DPK→L0
+      if (str_contains($prog, 'DPK→LT') || str_contains($prog, 'LT→L0') || str_contains($prog, 'DPK→L0')) {
+          return 'bg-emerald-50 border-emerald-200 text-emerald-700';
+      }
+
+      // stable state
+      if ($prog === 'L0' || $prog === 'LT' || $prog === 'DPK') {
+          return 'bg-slate-50 border-slate-200 text-slate-700';
+      }
+
+      return 'bg-slate-50 border-slate-200 text-slate-600';
+  };
+
   // color logic per KPI
   // returns [textClass, bgClass]
   $deltaTone = function (string $key, $delta) {
@@ -92,22 +146,10 @@
       $parts = [];
       $parts[] = "Ringkas {$dt} (vs {$pd}):";
 
-      // OS
-      if (!is_null($dOs)) {
-          $parts[] = "OS " . ($dOs >= 0 ? "naik " : "turun ") . $fmtDeltaRp($dOs) . ".";
-      }
+      if (!is_null($dOs))  $parts[] = "OS " . ($dOs >= 0 ? "naik " : "turun ") . $fmtDeltaRp($dOs) . ".";
+      if (!is_null($dL0))  $parts[] = "L0 " . ($dL0 >= 0 ? "membaik (naik) " : "memburuk (turun) ") . $fmtDeltaRp($dL0) . ".";
+      if (!is_null($dLt))  $parts[] = "LT " . ($dLt >= 0 ? "naik (memburuk) " : "turun (membaik) ") . $fmtDeltaRp($dLt) . ".";
 
-      // L0
-      if (!is_null($dL0)) {
-          $parts[] = "L0 " . ($dL0 >= 0 ? "membaik (naik) " : "memburuk (turun) ") . $fmtDeltaRp($dL0) . ".";
-      }
-
-      // LT
-      if (!is_null($dLt)) {
-          $parts[] = "LT " . ($dLt >= 0 ? "naik (memburuk) " : "turun (membaik) ") . $fmtDeltaRp($dLt) . ".";
-      }
-
-      // RR & %LT level + delta
       if (!is_null($latestRR)) {
           $rrTxt = $fmtPct($latestRR);
           $rrD   = is_null($dRr) ? '' : " (" . $fmtDeltaPts($dRr) . ")";
@@ -120,15 +162,25 @@
           $parts[] = "%LT {$plTxt}{$plD}.";
       }
 
-      // Bounce risk sentence
+      // Bounce risk sentence + NEW: LT→DPK
       $signalBounce = (bool)($bounce['signal_bounce_risk'] ?? false);
+
       $ltToL0Noa = (int)($bounce['lt_to_l0_noa'] ?? 0);
       $ltToL0Os  = (int)($bounce['lt_to_l0_os'] ?? 0);
+
+      // ✅ NEW: EOM LT→DPK
+      $ltToDpkNoa = (int)($bounce['lt_to_dpk_noa'] ?? 0);
+      $ltToDpkOs  = (int)($bounce['lt_to_dpk_os'] ?? 0);
+
       $jtNoa     = (int)($bounce['jt_next2_noa'] ?? 0);
       $jtOs      = (int)($bounce['jt_next2_os'] ?? 0);
 
       if ($ltToL0Noa > 0) {
           $parts[] = "Ada cure LT→L0: {$ltToL0Noa} NOA (±" . $fmtRpCompact($ltToL0Os) . ").";
+      }
+
+      if ($ltToDpkNoa > 0) {
+          $parts[] = "⚠️ EOM: LT→DPK (FT=2): {$ltToDpkNoa} NOA (±" . $fmtRpCompact($ltToDpkOs) . ").";
       }
 
       if ($jtNoa > 0) {
@@ -139,8 +191,7 @@
           $parts[] = "⚠️ Hati-hati bounce-back: L0 naik karena sebagian LT bayar, tapi masih ada JT dekat → besok bisa LT naik lagi & RR turun bila gagal bayar.";
       }
 
-      // closing action
-      $parts[] = "Aksi: prioritaskan kunjungan/penagihan untuk debitur JT dekat & yang baru cure agar tidak balik LT. Inputkan di LKH.";
+      $parts[] = "Aksi: prioritaskan kunjungan/penagihan debitur JT dekat & yang baru cure. Pantau yang mulai masuk DPK (FT=2). Inputkan di LKH.";
 
       return implode(' ', $parts);
   };
@@ -177,9 +228,7 @@
     </form>
   </div>
 
-  {{-- =============================
-      Summary Cards (value + growth)
-     ============================= --}}
+  {{-- Summary Cards --}}
   <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
     @php
       $cOs = $cards['os'] ?? null;
@@ -201,16 +250,11 @@
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
         {{ $fmtRpFull($cOs['value'] ?? 0) }}
       </div>
-
       <div class="mt-3">
         <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
         <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $osBg }}">
-          <span class="text-sm font-bold {{ $osText }}">
-            {{ $fmtDeltaRp($cOs['delta'] ?? null) }}
-          </span>
-          <span class="text-[11px] text-slate-500">
-            {{ $prevDate ? '' : '(prev n/a)' }}
-          </span>
+          <span class="text-sm font-bold {{ $osText }}">{{ $fmtDeltaRp($cOs['delta'] ?? null) }}</span>
+          <span class="text-[11px] text-slate-500">{{ $prevDate ? '' : '(prev n/a)' }}</span>
         </div>
       </div>
     </div>
@@ -221,13 +265,10 @@
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
         {{ $fmtRpFull($cL0['value'] ?? 0) }}
       </div>
-
       <div class="mt-3">
         <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
         <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $l0Bg }}">
-          <span class="text-sm font-bold {{ $l0Text }}">
-            {{ $fmtDeltaRp($cL0['delta'] ?? null) }}
-          </span>
+          <span class="text-sm font-bold {{ $l0Text }}">{{ $fmtDeltaRp($cL0['delta'] ?? null) }}</span>
           <span class="text-[11px] text-slate-500">L0 naik = membaik</span>
         </div>
       </div>
@@ -239,13 +280,10 @@
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
         {{ $fmtRpFull($cLt['value'] ?? 0) }}
       </div>
-
       <div class="mt-3">
         <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
         <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $ltBg }}">
-          <span class="text-sm font-bold {{ $ltText }}">
-            {{ $fmtDeltaRp($cLt['delta'] ?? null) }}
-          </span>
+          <span class="text-sm font-bold {{ $ltText }}">{{ $fmtDeltaRp($cLt['delta'] ?? null) }}</span>
           <span class="text-[11px] text-slate-500">LT naik = memburuk</span>
         </div>
       </div>
@@ -257,13 +295,10 @@
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
         {{ $fmtPct($cRr['value'] ?? null) }}
       </div>
-
       <div class="mt-3">
         <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
         <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $rrBg }}">
-          <span class="text-sm font-bold {{ $rrText }}">
-            {{ $fmtDeltaPts($cRr['delta'] ?? null) }}
-          </span>
+          <span class="text-sm font-bold {{ $rrText }}">{{ $fmtDeltaPts($cRr['delta'] ?? null) }}</span>
           <span class="text-[11px] text-slate-500">RR naik = membaik</span>
         </div>
       </div>
@@ -275,24 +310,19 @@
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
         {{ $fmtPct($cPL['value'] ?? null) }}
       </div>
-
       <div class="mt-3">
         <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
         <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $plBg }}">
-          <span class="text-sm font-bold {{ $plText }}">
-            {{ $fmtDeltaPts($cPL['delta'] ?? null) }}
-          </span>
+          <span class="text-sm font-bold {{ $plText }}">{{ $fmtDeltaPts($cPL['delta'] ?? null) }}</span>
           <span class="text-[11px] text-slate-500">%LT naik = memburuk</span>
         </div>
       </div>
     </div>
   </div>
 
-  {{-- =============================
-      TLRO Daily Narrative (copy WA)
-     ============================= --}}
+  {{-- TLRO Narrative --}}
   <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
-    <div class="font-extrabold text-slate-900 text-sm sm:text-base">📣 Narasi Harian TLRO (Copy untuk WA)</div>
+    <div class="font-extrabold text-slate-900 text-sm sm:text-base">📣 Pangandikanipun Pimpinan kangge Panjenengan </div>
     <div class="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
       <div class="text-sm text-slate-800 leading-relaxed whitespace-pre-line" id="tlroNarrative">
         {{ $tlroText() }}
@@ -345,8 +375,9 @@
         </ul>
       </div>
 
+      {{-- ✅ UPDATED RISK PANEL --}}
       <div class="rounded-2xl border border-amber-200 bg-amber-50 p-3">
-        <div class="text-[11px] font-extrabold text-amber-800 mb-2">⚠️ Risiko Besok (Bounce-back)</div>
+        <div class="text-[11px] font-extrabold text-amber-800 mb-2">⚠️ Risiko Besok (Bounce-back + EOM)</div>
         <ul class="text-sm text-amber-900 space-y-1 list-disc pl-5">
           @forelse(($insight['risk'] ?? []) as $t)
             <li>{{ $t }}</li>
@@ -355,8 +386,9 @@
           @endforelse
         </ul>
 
-        <div class="mt-3 text-[11px] text-amber-900/80">
-          Sinyal: <b>L0 naik & LT turun</b> + ada <b>JT angsuran 1–2 hari</b>.
+        <div class="mt-3 text-[11px] text-amber-900/80 space-y-1">
+          <div>Sinyal: <b>L0 naik & LT turun</b> + ada <b>JT angsuran 1–2 hari</b>.</div>
+          <div>Tambahan: <b>EOM LT→DPK</b> saat <b>FT Pokok/Bunga = 2</b> (indikasi mulai masuk bucket risiko lebih tinggi).</div>
         </div>
       </div>
     </div>
@@ -364,6 +396,7 @@
 
   {{-- Grafik --}}
   <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 space-y-3 sm:space-y-4">
+    {{-- ... bagian chart kamu BIARIN sama ... --}}
     <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
       <div>
         <div class="font-bold text-slate-900 text-sm sm:text-base">Grafik Harian (5 garis)</div>
@@ -443,6 +476,10 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">OS</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">DPD</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
+
+            {{-- ✅ NEW --}}
+            <th class="text-center px-3 py-2 whitespace-nowrap">Progres (H-1→H)</th>
+
             <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Aksi</th>
@@ -456,6 +493,9 @@
               $planVisit = !empty($planVisitDateRaw) ? \Carbon\Carbon::parse($planVisitDateRaw)->format('d/m/Y') : '-';
               $acc = (string)($r->account_no ?? '');
               $locked = (string)($r->plan_status ?? '') === 'done';
+
+              $prog = $progressText($r);
+              $progClass = $progressBadgeClass((string)$prog);
             @endphp
             <tr>
               <td class="px-3 py-2 whitespace-nowrap">{{ \Carbon\Carbon::parse($r->maturity_date)->format('d/m/Y') }}</td>
@@ -464,6 +504,13 @@
               <td class="px-3 py-2 text-right whitespace-nowrap">Rp {{ number_format((int)($r->outstanding ?? 0),0,',','.') }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ $r->kolek ?? '-' }}</td>
+
+              {{-- ✅ NEW --}}
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold {{ $progClass }}">
+                  {{ $prog }}
+                </span>
+              </td>
 
               <td class="px-3 py-2 text-center">
                 <label class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 border border-slate-200 bg-white">
@@ -489,11 +536,10 @@
                   Isi LKH
                 </a>
               </td>
-
             </tr>
           @empty
             <tr>
-              <td colspan="9" class="px-3 py-6 text-center text-slate-500">Tidak ada JT bulan ini.</td>
+              <td colspan="10" class="px-3 py-6 text-center text-slate-500">Tidak ada JT bulan ini.</td>
             </tr>
           @endforelse
         </tbody>
@@ -502,13 +548,15 @@
   </div>
 
   {{-- ===========================
-      2) LT posisi terakhir
+      2) LT EOM (cohort) -> posisi hari ini
       =========================== --}}
   <div class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
     <div class="p-3 sm:p-4 border-b border-slate-200">
-      <div class="font-bold text-slate-900 text-sm sm:text-base">LT (FT = 1) – Posisi Terakhir</div>
+      <div class="font-bold text-slate-900 text-sm sm:text-base">LT (EOM Bulan Lalu) → Posisi Hari Ini</div>
       <div class="text-[11px] sm:text-xs text-slate-500 mt-1">
-        Definisi: ft_pokok = 1 atau ft_bunga = 1. Posisi: <b>{{ $latestPosDate ?? '-' }}</b>.
+        Cohort: yang <b>LT (FT=1)</b> pada EOM (<b>{{ $prevSnapMonth ?? '-' }}</b>).
+        Status hari ini: <b>{{ $latestPosDate ?? '-' }}</b>.
+        <span class="ml-2">Catatan: <b>DPK</b> saat ft_pokok/ft_bunga = 2.</span>
       </div>
     </div>
 
@@ -523,22 +571,53 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">FT Bunga</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">DPD</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
+
+            {{-- ✅ Cohort progress --}}
+            <th class="text-center px-3 py-2 whitespace-nowrap">Progres (EOM→H)</th>
+
             <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Aksi</th>
           </tr>
         </thead>
+
         <tbody class="divide-y divide-slate-200">
           @forelse(($ltLatest ?? []) as $r)
             @php
-              $plannedToday = (int)($r->planned_today ?? 0) === 1;
-              $planVisitDateRaw = $r->plan_visit_date ?? null;
-              $planVisit = !empty($planVisitDateRaw) ? \Carbon\Carbon::parse($planVisitDateRaw)->format('d/m/Y') : '-';
+              $bucketFromFt = function($ftPokok, $ftBunga){
+                $fp = (int)($ftPokok ?? 0);
+                $fb = (int)($ftBunga ?? 0);
+                if ($fp === 2 || $fb === 2) return 'DPK';
+                if ($fp === 1 || $fb === 1) return 'LT';
+                return 'L0';
+              };
+
+              $progressBadge = function($from, $to){
+                if ($from === $to) return ['LT→LT', 'bg-slate-50 border-slate-200 text-slate-700'];
+                if ($to === 'DPK') return ['LT→DPK', 'bg-rose-50 border-rose-200 text-rose-700'];        // ✅ kritikal (migrasi FE)
+                if ($to === 'L0')  return ['LT→L0',  'bg-emerald-50 border-emerald-200 text-emerald-700']; // cure sementara (rawan bounce)
+                return ["LT→{$to}", 'bg-slate-50 border-slate-200 text-slate-700'];
+              };
+
+              // ✅ variabel yang tadinya undefined
               $acc = (string)($r->account_no ?? '');
-              $locked = (string)($r->plan_status ?? '') === 'done';
+              $meAo = str_pad(trim((string)(auth()->user()?->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
+
+              $plannedToday = (int)($r->planned_today ?? 0) === 1;
+              $planVisit = (string)($r->plan_visit_date ?? '');
+
+              // lock: kalau status done, checkbox disable
+              $planStatus = strtolower(trim((string)($r->plan_status ?? '')));
+              $locked = ($planStatus === 'done');
+
+              // progress EOM -> hari ini
+              $from = $bucketFromFt($r->eom_ft_pokok ?? 0, $r->eom_ft_bunga ?? 0); // harusnya LT semua
+              $to   = $bucketFromFt($r->ft_pokok ?? 0, $r->ft_bunga ?? 0);
+              [$txt, $cls] = $progressBadge($from, $to);
             @endphp
+
             <tr>
-              <td class="px-3 py-2 font-mono whitespace-nowrap">{{ $r->account_no ?? '-' }}</td>
+              <td class="px-3 py-2 font-mono whitespace-nowrap">{{ $acc !== '' ? $acc : '-' }}</td>
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">Rp {{ number_format((int)($r->os ?? 0),0,',','.') }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->ft_pokok ?? 0) }}</td>
@@ -546,14 +625,25 @@
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ $r->kolek ?? '-' }}</td>
 
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                <span class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold {{ $cls }}">
+                  {{ $txt }}
+                </span>
+
+                {{-- optional kecil: highlight bounce-risk note --}}
+                @if($txt === 'LT→L0')
+                  <div class="mt-1 text-[11px] text-slate-500">Cure sementara • rawan bounce</div>
+                @endif
+              </td>
+
               <td class="px-3 py-2 text-center">
                 <label class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 border border-slate-200 bg-white">
                   <input type="checkbox"
-                         class="ro-plan-checkbox h-4 w-4"
-                         data-account="{{ $acc }}"
-                         data-ao="{{ $meAo }}"
-                         {{ $plannedToday ? 'checked' : '' }}
-                         {{ $locked ? 'disabled' : '' }}>
+                        class="ro-plan-checkbox h-4 w-4"
+                        data-account="{{ $acc }}"
+                        data-ao="{{ $meAo }}"
+                        {{ $plannedToday ? 'checked' : '' }}
+                        {{ $locked ? 'disabled' : '' }}>
                   <span class="text-sm {{ $locked ? 'text-slate-400' : 'text-slate-700' }}">
                     {{ $locked ? 'Done' : ($plannedToday ? 'Ya' : 'Tidak') }}
                   </span>
@@ -561,7 +651,7 @@
               </td>
 
               <td class="px-3 py-2 whitespace-nowrap">
-                <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
+                <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit !== '' ? $planVisit : '-' }}</span>
               </td>
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
@@ -570,11 +660,12 @@
                   Isi LKH
                 </a>
               </td>
-
             </tr>
           @empty
             <tr>
-              <td colspan="10" class="px-3 py-6 text-center text-slate-500">Tidak ada LT pada posisi terakhir.</td>
+              <td colspan="11" class="px-3 py-6 text-center text-slate-500">
+                Tidak ada cohort LT pada EOM bulan lalu.
+              </td>
             </tr>
           @endforelse
         </tbody>
@@ -610,6 +701,10 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">FT Bunga</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">DPD</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
+
+            {{-- ✅ NEW --}}
+            <th class="text-center px-3 py-2 whitespace-nowrap">Progres (H-1→H)</th>
+
             <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Aksi</th>
@@ -626,6 +721,9 @@
               $planVisit = !empty($planVisitDateRaw) ? \Carbon\Carbon::parse($planVisitDateRaw)->format('d/m/Y') : '-';
               $acc = (string)($r->account_no ?? '');
               $locked = (string)($r->plan_status ?? '') === 'done';
+
+              $prog = $progressText($r);
+              $progClass = $progressBadgeClass((string)$prog);
             @endphp
             <tr>
               <td class="px-3 py-2 whitespace-nowrap">{{ $due ? $due->format('d/m/Y') : '-' }}</td>
@@ -636,6 +734,13 @@
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ $r->kolek ?? '-' }}</td>
+
+              {{-- ✅ NEW --}}
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold {{ $progClass }}">
+                  {{ $prog }}
+                </span>
+              </td>
 
               <td class="px-3 py-2 text-center">
                 <label class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 border border-slate-200 bg-white">
@@ -665,7 +770,7 @@
             </tr>
           @empty
             <tr>
-              <td colspan="11" class="px-3 py-6 text-center text-slate-500">Tidak ada JT angsuran minggu ini.</td>
+              <td colspan="12" class="px-3 py-6 text-center text-slate-500">Tidak ada JT angsuran minggu ini.</td>
             </tr>
           @endforelse
         </tbody>
@@ -695,6 +800,10 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">FT Bunga</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">DPD</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
+
+            {{-- ✅ NEW --}}
+            <th class="text-center px-3 py-2 whitespace-nowrap">Progres (H-1→H)</th>
+
             <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Aksi</th>
@@ -709,6 +818,9 @@
               $planVisit = !empty($planVisitDateRaw) ? \Carbon\Carbon::parse($planVisitDateRaw)->format('d/m/Y') : '-';
               $acc = (string)($r->account_no ?? '');
               $locked = (string)($r->plan_status ?? '') === 'done';
+
+              $prog = $progressText($r);
+              $progClass = $progressBadgeClass((string)$prog);
             @endphp
             <tr>
               <td class="px-3 py-2 font-mono whitespace-nowrap">{{ $r->account_no ?? '-' }}</td>
@@ -718,6 +830,13 @@
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{{ $r->kolek ?? '-' }}</td>
+
+              {{-- ✅ NEW --}}
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold {{ $progClass }}">
+                  {{ $prog }}
+                </span>
+              </td>
 
               <td class="px-3 py-2 text-center">
                 <label class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 border border-slate-200 bg-white">
@@ -736,6 +855,7 @@
               <td class="px-3 py-2 whitespace-nowrap">
                 <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
               </td>
+
               <td class="px-3 py-2 text-center whitespace-nowrap">
                 <a href="{{ route('ro_visits.create', ['account_no' => $acc, 'back' => request()->fullUrl()]) }}"
                   class="text-xs font-semibold underline text-slate-700">
@@ -746,7 +866,7 @@
             </tr>
           @empty
             <tr>
-              <td colspan="10" class="px-3 py-6 text-center text-slate-500">Tidak ada OS ≥ 500 juta.</td>
+              <td colspan="11" class="px-3 py-6 text-center text-slate-500">Tidak ada OS ≥ 500 juta.</td>
             </tr>
           @endforelse
         </tbody>
@@ -782,7 +902,6 @@
 
   function isMobile(){ return window.matchMedia('(max-width: 640px)').matches; }
 
-  console.log('ChartDataLabels:', typeof ChartDataLabels, ChartDataLabels);
   Chart.register(ChartDataLabels);
 
   let mode = 'value';
@@ -892,9 +1011,7 @@
 
   rebuild();
 
-  // =============================
-  // UI controls: mode & labels
-  // =============================
+  // UI controls
   const btnModeValue   = document.getElementById('btnModeValue');
   const btnModeGrowth  = document.getElementById('btnModeGrowth');
   const btnLabelsLast  = document.getElementById('btnLabelsLastOnly');
@@ -938,9 +1055,7 @@
     rebuild();
   });
 
-  // =============================
   // Copy TLRO narrative
-  // =============================
   const btnCopy = document.getElementById('btnCopyTlro');
   const hint = document.getElementById('copyHint');
   btnCopy?.addEventListener('click', async () => {
