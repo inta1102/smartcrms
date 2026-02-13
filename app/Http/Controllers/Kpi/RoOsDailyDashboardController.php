@@ -41,6 +41,7 @@ class RoOsDailyDashboardController extends Controller
             [$from, $to] = [$to->copy()->startOfDay(), $from->copy()->startOfDay()];
         }
 
+        
         // =============================
         // LABELS tanggal lengkap
         // =============================
@@ -51,6 +52,20 @@ class RoOsDailyDashboardController extends Controller
             $labels[] = $cursor->toDateString();
             $cursor->addDay();
         }
+
+        // =============================
+        // LATEST + PREV (yang benar-benar ada snapshot)
+        // =============================
+        $latestDate = count($labels) ? $labels[count($labels) - 1] : null;
+        
+        // =============================
+        // Posisi terakhir loan_accounts untuk tabel bawah
+        // =============================
+        $latestPosDate = $latestDate ? Carbon::parse($latestDate)->toDateString() : now()->toDateString();
+        $prevSnapMonth = Carbon::parse($latestPosDate)
+            ->subMonthNoOverflow()
+            ->startOfMonth()
+            ->toDateString(); 
 
         // =============================
         // DATA harian KPI (AO ini)
@@ -167,11 +182,86 @@ class RoOsDailyDashboardController extends Controller
         ];
 
         // =============================
-        // Posisi terakhir loan_accounts untuk tabel bawah
+        // Card Month to Date
         // =============================
-        $latestPosDate = $latestDate ? Carbon::parse($latestDate)->toDateString() : now()->toDateString();
-        $prevSnapMonth = Carbon::parse($latestPosDate)->subMonth()->startOfMonth()->toDateString();
+        $eomMonth = Carbon::parse($latestPosDate)
+            ->subMonthNoOverflow()
+            ->startOfMonth()
+            ->toDateString(); // YYYY-MM-01
 
+        $eomAgg = DB::table('loan_account_snapshots_monthly as m')
+            ->selectRaw("
+                ROUND(SUM(m.outstanding)) as os,
+                ROUND(SUM(CASE WHEN COALESCE(m.ft_pokok,0)=0 AND COALESCE(m.ft_bunga,0)=0 THEN m.outstanding ELSE 0 END)) as l0,
+                ROUND(SUM(CASE WHEN COALESCE(m.ft_pokok,0)=1 OR COALESCE(m.ft_bunga,0)=1 THEN m.outstanding ELSE 0 END)) as lt
+            ")
+            ->whereDate('m.snapshot_month', $prevSnapMonth) // pakai prevSnapMonth yg sudah dihitung
+            ->whereRaw("LPAD(TRIM(m.ao_code),6,'0') = ?", [$ao])
+            ->first();
+
+        $eomOs = (int)($eomAgg->os ?? 0);
+        $eomL0 = (int)($eomAgg->l0 ?? 0);
+        $eomLt = (int)($eomAgg->lt ?? 0);
+
+        $eomRr = $eomOs > 0 ? round(($eomL0 / $eomOs) * 100, 2) : null;
+        $eomPl = $eomOs > 0 ? round(($eomLt / $eomOs) * 100, 2) : null;
+
+        $lastAgg = DB::table('kpi_os_daily_aos as d')
+            ->selectRaw("
+                ROUND(SUM(d.os_total)) as os,
+                ROUND(SUM(d.os_l0)) as l0,
+                ROUND(SUM(d.os_lt)) as lt
+            ")
+            ->whereDate('d.position_date', $latestPosDate)
+            ->whereRaw("LPAD(TRIM(d.ao_code),6,'0') = ?", [$ao])
+            ->first();
+
+        $lastOs = (int)($lastAgg->os ?? 0);
+        $lastL0 = (int)($lastAgg->l0 ?? 0);
+        $lastLt = (int)($lastAgg->lt ?? 0);
+
+        $lastRr = $lastOs > 0 ? round(($lastL0 / $lastOs) * 100, 2) : null;
+        $lastPl = $lastOs > 0 ? round(($lastLt / $lastOs) * 100, 2) : null;
+
+        $cardsMtd = [
+        'os' => [
+            'value' => $lastOs,
+            'base'  => $eomOs,
+            'delta' => $lastOs - $eomOs,
+            'label' => 'Growth (MtoD)',
+        ],
+        'l0' => [
+            'value' => $lastL0,
+            'base'  => $eomL0,
+            'delta' => $lastL0 - $eomL0,
+            'label' => 'Growth (MtoD)',
+        ],
+        'lt' => [
+            'value' => $lastLt,
+            'base'  => $eomLt,
+            'delta' => $lastLt - $eomLt,
+            'label' => 'Growth (MtoD)',
+        ],
+        'rr' => [
+            'value' => $lastRr,
+            'base'  => $eomRr,
+            'delta' => (is_null($lastRr) || is_null($eomRr)) ? null : round($lastRr - $eomRr, 2), // points
+            'label' => 'Growth (MtoD)',
+        ],
+        'pct_lt' => [
+            'value' => $lastPl,
+            'base'  => $eomPl,
+            'delta' => (is_null($lastPl) || is_null($eomPl)) ? null : round($lastPl - $eomPl, 2), // points
+            'label' => 'Growth (MtoD)',
+        ],
+        ];
+
+        $cardsMtdMeta = [
+        'eomMonth' => $eomMonth,
+        'lastDate' => $latestPosDate,
+        ];
+
+        
         // =============================
         // Bounce compare date for per-account progress (H-1 snapshot available)
         // =============================
@@ -293,7 +383,7 @@ class RoOsDailyDashboardController extends Controller
                 $q->where('p.ft_pokok', 1)->orWhere('p.ft_bunga', 1);
             })
             ->where(function ($q) {
-                $q->where('t.ft_pokok', 2)->orWhere('t.ft_bunga', 2);
+                $q->where('t.ft_pokok', 2)->orWhere('t.ft_bunga', 2)->orWhere('t.kolek', 2);
             })
             ->first();
 
@@ -611,6 +701,13 @@ class RoOsDailyDashboardController extends Controller
             'cards'   => $cards,
             'bounce'  => $bounce,
             'insight' => $insight,
+
+            'cardsMtd' => $cardsMtd,                 // array 5 parameter
+            'cardsMtdMeta' => [
+            'eomMonth' => $eomMonth,              // 'YYYY-MM-01'
+            'lastDate' => $latestPosDate,         // 'YYYY-MM-DD'
+            ],
+
         ]);
     }
 

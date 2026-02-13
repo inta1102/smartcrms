@@ -209,6 +209,11 @@
       <p class="text-[11px] sm:text-xs text-slate-500 mt-1">
         Snapshot compare: <b>{{ $latestDate ?? '-' }}</b> vs <b>{{ $prevDate ?? '-' }}</b>.
       </p>
+      @if(request('mode')==='mtd')
+        <p class="text-[11px] sm:text-xs text-slate-500 mt-1">
+          Mode: <b>MtoD</b> (EOM bulan lalu → posisi terakhir).
+        </p>
+      @endif
     </div>
 
     <form method="GET" class="w-full sm:w-auto grid grid-cols-2 sm:flex sm:items-end gap-2">
@@ -222,51 +227,114 @@
         <input type="date" name="to" value="{{ $to }}"
                class="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm bg-white">
       </div>
+      @php
+        $mode = request('mode', 'daily'); // daily | mtd
+      @endphp
+
+      <input type="hidden" name="mode" value="{{ $mode }}">
+
       <button class="col-span-2 sm:col-auto w-full sm:w-auto rounded-xl bg-slate-900 px-4 py-2 text-white text-sm font-semibold hover:bg-slate-800">
         Tampilkan
       </button>
+
+      <div class="col-span-2 sm:col-auto flex gap-2">
+        <a href="{{ request()->fullUrlWithQuery(['mode'=>'daily']) }}"
+          class="w-full sm:w-auto rounded-xl border px-4 py-2 text-sm font-semibold
+              {{ $mode==='daily' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50' }}">
+          H vs H-1
+        </a>
+
+        <a href="{{ request()->fullUrlWithQuery(['mode'=>'mtd']) }}"
+          class="w-full sm:w-auto rounded-xl border px-4 py-2 text-sm font-semibold
+              {{ $mode==='mtd' ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50' }}">
+          MtoD (EOM→Latest)
+        </a>
+      </div>
+
     </form>
   </div>
 
   {{-- Summary Cards --}}
-  <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
-    @php
-      $cOs = $cards['os'] ?? null;
-      $cL0 = $cards['l0'] ?? null;
-      $cLt = $cards['lt'] ?? null;
-      $cRr = $cards['rr'] ?? null;
-      $cPL = $cards['pct_lt'] ?? null;
+  @php
+    $mode = request('mode', 'daily'); // daily | mtd
 
-      [$osText,$osBg] = $deltaTone('os', $cOs['delta'] ?? null);
-      [$l0Text,$l0Bg] = $deltaTone('l0', $cL0['delta'] ?? null);
-      [$ltText,$ltBg] = $deltaTone('lt', $cLt['delta'] ?? null);
-      [$rrText,$rrBg] = $deltaTone('rr', $cRr['delta'] ?? null);
-      [$plText,$plBg] = $deltaTone('pct_lt', $cPL['delta'] ?? null);
-    @endphp
+    // pilih sumber cards
+    $cardsSrc = ($mode === 'mtd' && isset($cardsMtd) && is_array($cardsMtd)) ? $cardsMtd : ($cards ?? []);
+
+    $cOs = $cardsSrc['os'] ?? null;
+    $cL0 = $cardsSrc['l0'] ?? null;
+    $cLt = $cardsSrc['lt'] ?? null;
+    $cRr = $cardsSrc['rr'] ?? null;
+    $cPL = $cardsSrc['pct_lt'] ?? null;
+
+    // delta tone tetap pakai helper kamu
+    [$osText,$osBg] = $deltaTone('os', $cOs['delta'] ?? null);
+    [$l0Text,$l0Bg] = $deltaTone('l0', $cL0['delta'] ?? null);
+    [$ltText,$ltBg] = $deltaTone('lt', $cLt['delta'] ?? null);
+    [$rrText,$rrBg] = $deltaTone('rr', $cRr['delta'] ?? null);
+    [$plText,$plBg] = $deltaTone('pct_lt', $cPL['delta'] ?? null);
+
+    $growthLabel = $mode === 'mtd' ? 'Growth (MtoD)' : 'Growth (H vs H-1)';
+
+    // baseline info (optional)
+    $eomMonth = $cardsMtdMeta['eomMonth'] ?? null;
+    $lastDate = $cardsMtdMeta['lastDate'] ?? null;
+
+    $baselineText = '';
+    if ($mode === 'mtd') {
+        $b1 = $eomMonth ? Carbon\Carbon::parse($eomMonth)->translatedFormat('M Y') : '-';
+        $b2 = $lastDate ? $lastDate : ($latestPosDate ?? '-');
+        $baselineText = "EOM {$b1} → Latest {$b2}";
+    }
+  @endphp
+
+  <div class="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
 
     {{-- OS --}}
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
-      <div class="text-[11px] sm:text-xs text-slate-500">Latest OS</div>
+      <div class="flex items-start justify-between gap-2">
+        <div class="text-[11px] sm:text-xs text-slate-500">
+          Latest OS
+          @if($mode==='mtd')
+            <div class="text-[10px] text-slate-400 mt-0.5">{{ $baselineText }}</div>
+          @endif
+        </div>
+      </div>
+
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
         {{ $fmtRpFull($cOs['value'] ?? 0) }}
       </div>
+
       <div class="mt-3">
-        <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
+        <div class="text-[11px] text-slate-500">{{ $growthLabel }}</div>
         <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $osBg }}">
           <span class="text-sm font-bold {{ $osText }}">{{ $fmtDeltaRp($cOs['delta'] ?? null) }}</span>
-          <span class="text-[11px] text-slate-500">{{ $prevDate ? '' : '(prev n/a)' }}</span>
+          <span class="text-[11px] text-slate-500">
+            @if($mode==='daily')
+              {{ $prevDate ? '' : '(prev n/a)' }}
+            @else
+              vs EOM
+            @endif
+          </span>
         </div>
       </div>
     </div>
 
     {{-- L0 --}}
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
-      <div class="text-[11px] sm:text-xs text-slate-500">Latest L0</div>
+      <div class="text-[11px] sm:text-xs text-slate-500">
+        Latest L0
+        @if($mode==='mtd')
+          <div class="text-[10px] text-slate-400 mt-0.5">{{ $baselineText }}</div>
+        @endif
+      </div>
+
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
         {{ $fmtRpFull($cL0['value'] ?? 0) }}
       </div>
+
       <div class="mt-3">
-        <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
+        <div class="text-[11px] text-slate-500">{{ $growthLabel }}</div>
         <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $l0Bg }}">
           <span class="text-sm font-bold {{ $l0Text }}">{{ $fmtDeltaRp($cL0['delta'] ?? null) }}</span>
           <span class="text-[11px] text-slate-500">L0 naik = membaik</span>
@@ -276,12 +344,19 @@
 
     {{-- LT --}}
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
-      <div class="text-[11px] sm:text-xs text-slate-500">Latest LT</div>
+      <div class="text-[11px] sm:text-xs text-slate-500">
+        Latest LT
+        @if($mode==='mtd')
+          <div class="text-[10px] text-slate-400 mt-0.5">{{ $baselineText }}</div>
+        @endif
+      </div>
+
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
         {{ $fmtRpFull($cLt['value'] ?? 0) }}
       </div>
+
       <div class="mt-3">
-        <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
+        <div class="text-[11px] text-slate-500">{{ $growthLabel }}</div>
         <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $ltBg }}">
           <span class="text-sm font-bold {{ $ltText }}">{{ $fmtDeltaRp($cLt['delta'] ?? null) }}</span>
           <span class="text-[11px] text-slate-500">LT naik = memburuk</span>
@@ -291,12 +366,19 @@
 
     {{-- RR --}}
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
-      <div class="text-[11px] sm:text-xs text-slate-500">RR (%L0)</div>
+      <div class="text-[11px] sm:text-xs text-slate-500">
+        RR (%L0)
+        @if($mode==='mtd')
+          <div class="text-[10px] text-slate-400 mt-0.5">{{ $baselineText }}</div>
+        @endif
+      </div>
+
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
         {{ $fmtPct($cRr['value'] ?? null) }}
       </div>
+
       <div class="mt-3">
-        <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
+        <div class="text-[11px] text-slate-500">{{ $growthLabel }}</div>
         <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $rrBg }}">
           <span class="text-sm font-bold {{ $rrText }}">{{ $fmtDeltaPts($cRr['delta'] ?? null) }}</span>
           <span class="text-[11px] text-slate-500">RR naik = membaik</span>
@@ -306,18 +388,26 @@
 
     {{-- %LT --}}
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 col-span-2 sm:col-span-1">
-      <div class="text-[11px] sm:text-xs text-slate-500">%LT</div>
+      <div class="text-[11px] sm:text-xs text-slate-500">
+        %LT
+        @if($mode==='mtd')
+          <div class="text-[10px] text-slate-400 mt-0.5">{{ $baselineText }}</div>
+        @endif
+      </div>
+
       <div class="text-base sm:text-lg font-extrabold text-slate-900 mt-1 leading-snug">
         {{ $fmtPct($cPL['value'] ?? null) }}
       </div>
+
       <div class="mt-3">
-        <div class="text-[11px] text-slate-500">Growth (H vs H-1)</div>
+        <div class="text-[11px] text-slate-500">{{ $growthLabel }}</div>
         <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $plBg }}">
           <span class="text-sm font-bold {{ $plText }}">{{ $fmtDeltaPts($cPL['delta'] ?? null) }}</span>
           <span class="text-[11px] text-slate-500">%LT naik = memburuk</span>
         </div>
       </div>
     </div>
+
   </div>
 
   {{-- TLRO Narrative --}}
@@ -556,7 +646,7 @@
       <div class="text-[11px] sm:text-xs text-slate-500 mt-1">
         Cohort: yang <b>LT (FT=1)</b> pada EOM (<b>{{ $prevSnapMonth ?? '-' }}</b>).
         Status hari ini: <b>{{ $latestPosDate ?? '-' }}</b>.
-        <span class="ml-2">Catatan: <b>DPK</b> saat ft_pokok/ft_bunga = 2.</span>
+        <span class="ml-2">Catatan: <b>DPK</b> saat ft_pokok/ft_bunga/kolek = 2.</span>
       </div>
     </div>
 
@@ -584,10 +674,11 @@
         <tbody class="divide-y divide-slate-200">
           @forelse(($ltLatest ?? []) as $r)
             @php
-              $bucketFromFt = function($ftPokok, $ftBunga){
+              $bucketFromFt = function($ftPokok, $ftBunga, $kolek){
                 $fp = (int)($ftPokok ?? 0);
                 $fb = (int)($ftBunga ?? 0);
-                if ($fp === 2 || $fb === 2) return 'DPK';
+                $k = (int)($kolek ?? 0);
+                if ($fp === 2 || $fb === 2 || $k === 2) return 'DPK';
                 if ($fp === 1 || $fb === 1) return 'LT';
                 return 'L0';
               };
@@ -611,8 +702,8 @@
               $locked = ($planStatus === 'done');
 
               // progress EOM -> hari ini
-              $from = $bucketFromFt($r->eom_ft_pokok ?? 0, $r->eom_ft_bunga ?? 0); // harusnya LT semua
-              $to   = $bucketFromFt($r->ft_pokok ?? 0, $r->ft_bunga ?? 0);
+              $from = $bucketFromFt($r->eom_ft_pokok ?? 1, $r->eom_ft_bunga ?? 0, $r->eom_kolek ?? null);
+              $to   = $bucketFromFt($r->ft_pokok ?? 0,      $r->ft_bunga ?? 0,      $r->kolek ?? null);
               [$txt, $cls] = $progressBadge($from, $to);
             @endphp
 
