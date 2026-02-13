@@ -148,12 +148,12 @@ class TlOsDailyDashboardController extends Controller
         $prevSnapMonth = Carbon::parse($latestPosDate)
             ->subMonthNoOverflow()
             ->startOfMonth()
-            ->toDateString(); // biasanya YYYY-MM-01
+            ->toDateString(); // YYYY-MM-01
 
         $osLastMonth = (int) DB::table('loan_account_snapshots_monthly as m')
             ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(m.ao_code),6,'0')"), $aoCodes))
             ->whereDate('m.snapshot_month', $prevSnapMonth)
-            ->sum('m.outstanding'); // ⚠️ ganti jika kolom snapshot berbeda
+            ->sum('m.outstanding');
 
         $prevOsLabel = Carbon::parse($prevSnapMonth)->translatedFormat('F Y');
 
@@ -170,7 +170,6 @@ class TlOsDailyDashboardController extends Controller
             return $u;
         })->sortByDesc('os_latest')->values();
 
-        // refresh aoCodes mengikuti urutan staff (legend lebih enak)
         $aoCodes = $staff->pluck('ao_code')->unique()->values()->all();
 
         /**
@@ -198,7 +197,6 @@ class TlOsDailyDashboardController extends Controller
                 $osL0    = $map[$u->ao_code][$d]['os_l0'] ?? null;
                 $osLT    = $map[$u->ao_code][$d]['os_lt'] ?? null;
 
-                // kalau tidak ada snapshot di hari itu: null (biar putus)
                 if ($osTotal === null && $osL0 === null && $osLT === null) {
                     $seriesTotal[] = null;
                     $seriesL0[]    = null;
@@ -235,16 +233,14 @@ class TlOsDailyDashboardController extends Controller
          * =========================================================
          */
         $subUserIds = $staff->pluck('id')->map(fn($v) => (int)$v)->values()->all();
-        $today = now()->toDateString(); // string utk whereDate
+        $today = now()->toDateString();
 
-        // 1) Last visit per account (GLOBAL)
         $lastVisitMap = RoVisit::query()
             ->selectRaw('account_no, MAX(visit_date) as last_visit_date')
             ->groupBy('account_no')
             ->pluck('last_visit_date', 'account_no')
             ->toArray();
 
-        // 2) Planned/done today oleh staff bawahan TL
         $plannedTodayMap = RoVisit::query()
             ->select(['account_no', 'status', 'visit_date', 'user_id'])
             ->whereDate('visit_date', $today)
@@ -253,19 +249,15 @@ class TlOsDailyDashboardController extends Controller
             ->groupBy('account_no')
             ->map(fn($rows) => $rows->first());
 
-        // helper inject meta ke rows
         $attachVisitMeta = function ($rows) use ($lastVisitMap, $plannedTodayMap) {
             return collect($rows)->map(function ($r) use ($lastVisitMap, $plannedTodayMap) {
                 $acc = (string)($r->account_no ?? '');
-
                 $r->last_visit_date = $acc !== '' ? ($lastVisitMap[$acc] ?? null) : null;
 
                 $row = ($acc !== '' && $plannedTodayMap->has($acc)) ? $plannedTodayMap->get($acc) : null;
-
                 $r->planned_today   = $row ? 1 : 0;
                 $r->plan_visit_date = $row ? (string)($row->visit_date ?? null) : null;
                 $r->plan_status     = $row ? (string)($row->status ?? 'planned') : null;
-
                 $r->planned_by_user_id = $row ? (int)($row->user_id ?? 0) : null;
 
                 return $r;
@@ -303,8 +295,16 @@ class TlOsDailyDashboardController extends Controller
 
         $dueThisMonth = $attachVisitMeta($dueThisMonth);
 
-        // 2) LT posisi terakhir
-        $ltLatest = DB::table('loan_accounts as la')
+        /**
+         * 2) ✅ LT EOM bulan lalu (snapshot cohort) -> status hari ini
+         *    Ini menggantikan "LT posisi terakhir"
+         */
+        $ltEom = DB::table('loan_account_snapshots_monthly as m')
+            ->join('loan_accounts as la', function ($j) use ($latestPosDate) {
+                $j->on('la.account_no', '=', 'm.account_no')
+                  ->whereDate('la.position_date', $latestPosDate);
+            })
+            ->leftJoin('users as u', DB::raw("LPAD(TRIM(u.ao_code),6,'0')"), '=', DB::raw("LPAD(TRIM(la.ao_code),6,'0')"))
             ->select([
                 'la.account_no',
                 'la.customer_name',
@@ -314,17 +314,33 @@ class TlOsDailyDashboardController extends Controller
                 'la.ft_bunga',
                 'la.dpd',
                 'la.kolek',
+
+                // ✅ snapshot EOM (basis cohort)
+                DB::raw("COALESCE(m.ft_pokok,0) as eom_ft_pokok"),
+                DB::raw("COALESCE(m.ft_bunga,0) as eom_ft_bunga"),
+
+                // optional: nama RO/AO pemilik ao_code (buat TL)
+                DB::raw("COALESCE(u.name,'') as ao_name"),
             ])
-            ->whereDate('la.position_date', $latestPosDate)
+            ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
             ->where(function ($q) {
-                $q->where('la.ft_pokok', 1)->orWhere('la.ft_bunga', 1);
+                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1); // cohort LT di EOM
             })
+            // ordering: DPK dulu, lalu LT, lalu L0 (biar TL langsung lihat migrasi FE)
+            ->orderByRaw("
+                CASE
+                  WHEN la.ft_pokok = 2 OR la.ft_bunga = 2 THEN 0
+                  WHEN la.ft_pokok = 1 OR la.ft_bunga = 1 THEN 1
+                  ELSE 2
+                END
+            ")
             ->orderByDesc('la.dpd')
-            ->limit(300)
+            ->orderByDesc('la.outstanding')
+            ->limit(400)
             ->get();
 
-        $ltLatest = $attachVisitMeta($ltLatest);
+        $ltEom = $attachVisitMeta($ltEom);
 
         // 3) L0 -> LT bulan ini (monthly snapshot bulan lalu vs posisi terakhir)
         $perPage = (int) $request->query('per_page', 25);
@@ -449,7 +465,8 @@ class TlOsDailyDashboardController extends Controller
             'dueThisMonth'   => $dueThisMonth,
             'dueMonthLabel'  => Carbon::parse($latestPosDate)->translatedFormat('F Y'),
 
-            'ltLatest' => $ltLatest,
+            // ✅ tetap pakai key lama biar blade tidak banyak ubah
+            'ltLatest' => $ltEom,
 
             'migrasiTunggakan' => $migrasiTunggakan,
             'prevSnapMonth'    => $prevSnapMonth,

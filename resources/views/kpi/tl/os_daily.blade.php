@@ -443,13 +443,15 @@
   </div>
 
   {{-- ===========================
-      2) LT posisi terakhir
+      2) LT EOM bulan lalu (snapshot) -> status hari ini
       =========================== --}}
   <div class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
     <div class="p-4 border-b border-slate-200">
-      <div class="font-bold text-slate-900">LT (FT = 1) – Posisi Terakhir</div>
+      <div class="font-bold text-slate-900">LT (EOM) → Posisi Hari Ini</div>
       <div class="text-xs text-slate-500 mt-1">
-        Definisi: LT = ft_pokok = 1 atau ft_bunga = 1. Posisi terakhir: <b>{{ $latestPosDate ?? '-' }}</b>.
+        Cohort: <b>LT di EOM</b> (snapshot bulan lalu) yaitu <code>m.ft_pokok = 1</code> atau <code>m.ft_bunga = 1</code>.
+        Posisi hari ini: <b>{{ $latestPosDate ?? '-' }}</b>.
+        <span class="ml-2">Catatan: <b>DPK</b> saat <code>ft_pokok/ft_bunga = 2</code> (potensi migrasi ke FE).</span>
       </div>
     </div>
 
@@ -461,10 +463,15 @@
             <th class="text-left px-3 py-2">Nama Debitur</th>
             <th class="text-left px-3 py-2">AO</th>
             <th class="text-right px-3 py-2">OS</th>
+
+            {{-- status hari ini --}}
             <th class="text-right px-3 py-2">FT Pokok</th>
             <th class="text-right px-3 py-2">FT Bunga</th>
             <th class="text-right px-3 py-2">DPD</th>
             <th class="text-right px-3 py-2">Kolek</th>
+
+            {{-- ✅ NEW: progres cohort --}}
+            <th class="text-center px-3 py-2 whitespace-nowrap">Progres (EOM→H)</th>
 
             <th class="text-left px-3 py-2 whitespace-nowrap">Risk</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
@@ -477,6 +484,7 @@
         <tbody class="divide-y divide-slate-200">
           @forelse(($ltLatest ?? []) as $r)
             @php
+              // ===== visit meta =====
               $lastVisitRaw = $r->last_visit_date ?? null;
               $lastVisit = $fmtDate($lastVisitRaw);
               $age = $visitAgeDays($lastVisitRaw);
@@ -490,17 +498,68 @@
 
               $acc = (string)($r->account_no ?? '');
               $ao  = (string)($r->ao_code ?? '');
+
+              // kalau controller join users as u dan select ao_name:
+              $aoName = trim((string)($r->ao_name ?? ''));
+
               $os  = (int)($r->os ?? 0);
+
+              // ===== bucket helper =====
+              $bucketFromFt = function($ftPokok, $ftBunga){
+                $fp = (int)($ftPokok ?? 0);
+                $fb = (int)($ftBunga ?? 0);
+                if ($fp === 2 || $fb === 2) return 'DPK';
+                if ($fp === 1 || $fb === 1) return 'LT';
+                return 'L0';
+              };
+
+              // cohort EOM (harusnya LT semua, tapi tetap aman)
+              $from = $bucketFromFt($r->eom_ft_pokok ?? 1, $r->eom_ft_bunga ?? 0);
+              // status hari ini
+              $to   = $bucketFromFt($r->ft_pokok ?? 0, $r->ft_bunga ?? 0);
+
+              // badge progres
+              $progressBadge = function($from, $to){
+                if ($from === $to) return ['LT→LT', 'bg-slate-50 border-slate-200 text-slate-700'];
+                if ($to === 'DPK') return ['LT→DPK', 'bg-rose-50 border-rose-200 text-rose-700'];       // ✅ KRITIKAL
+                if ($to === 'L0')  return ['LT→L0',  'bg-emerald-50 border-emerald-200 text-emerald-700']; // cure (rawan bounce)
+                return ["LT→{$to}", 'bg-slate-50 border-slate-200 text-slate-700'];
+              };
+
+              [$progTxt, $progCls] = $progressBadge($from, $to);
+
+              // row highlight: DPK paling merah, L0 hijau lembut, sisanya netral
+              $rowCls = ($to === 'DPK')
+                ? 'bg-rose-50/35'
+                : (($to === 'L0') ? 'bg-emerald-50/25' : 'bg-white');
             @endphp
-            <tr class="bg-rose-50/20">
+
+            <tr class="{{ $rowCls }}">
               <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td>
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
-              <td class="px-3 py-2 font-mono">{{ $r->ao_code ?? '-' }}</td>
+
+              {{-- AO: tampilkan nama jika ada, fallback ao_code --}}
+              <td class="px-3 py-2">
+                @if($aoName !== '')
+                  <div class="font-semibold text-slate-900">{{ $aoName }}</div>
+                  <div class="text-[11px] text-slate-500 font-mono">{{ $ao !== '' ? $ao : '-' }}</div>
+                @else
+                  <span class="font-mono">{{ $ao !== '' ? $ao : '-' }}</span>
+                @endif
+              </td>
+
               <td class="px-3 py-2 text-right">Rp {{ number_format($os,0,',','.') }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_pokok ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->ft_bunga ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($r->dpd ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ $r->kolek ?? '-' }}</td>
+
+              {{-- ✅ Progres EOM->H --}}
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                <span class="inline-flex items-center rounded-full border px-3 py-1 text-xs font-bold {{ $progCls }}">
+                  {{ $progTxt }}
+                </span>
+              </td>
 
               <td class="px-3 py-2 whitespace-nowrap">{!! $riskBadge($r->dpd ?? 0, $r->kolek ?? '-', true) !!}</td>
 
@@ -537,8 +596,8 @@
             </tr>
           @empty
             <tr>
-              <td colspan="13" class="px-3 py-6 text-center text-slate-500">
-                Tidak ada data LT untuk posisi terakhir.
+              <td colspan="14" class="px-3 py-6 text-center text-slate-500">
+                Tidak ada data <b>LT EOM</b> untuk snapshot bulan lalu.
               </td>
             </tr>
           @endforelse
