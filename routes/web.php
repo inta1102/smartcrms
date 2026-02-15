@@ -85,6 +85,37 @@ use App\Http\Controllers\RkhVisitController;
 use App\Http\Controllers\Kpi\RoOsDailyDashboardController;
 
 use App\Http\Controllers\RoVisitController;
+use App\Http\Controllers\Kpi\RoKpiController;
+use App\Http\Controllers\Kpi\KpiRoTargetController;
+use App\Http\Controllers\Kpi\FeKpiSheetController;
+use App\Http\Controllers\Kpi\FeTargetController;
+use App\Http\Controllers\Kpi\FeKpiRecalcController;
+
+Route::middleware(['auth'])->group(function () {
+
+    // ===============================
+    // KPI FE - Targets
+    // ===============================
+    Route::get('/kpi/fe/targets', [FeTargetController::class, 'index'])
+        ->name('kpi.fe.targets.index');
+
+    Route::post('/kpi/fe/targets', [FeTargetController::class, 'store'])
+        ->name('kpi.fe.targets.store');
+
+    // (opsional) edit page kalau mau
+    // Route::get('/kpi/fe/targets/{target}/edit', [FeTargetController::class, 'edit'])
+    //     ->name('kpi.fe.targets.edit');
+    // Route::put('/kpi/fe/targets/{target}', [FeTargetController::class, 'update'])
+    //     ->name('kpi.fe.targets.update');
+
+    // ===============================
+    // KPI FE - Recalc
+    // ===============================
+    Route::post('/kpi/recalc/fe', [KpiRecalcController::class, 'recalcFe'])
+        ->name('kpi.recalc.fe');
+
+});
+
 
 
 Route::model('action', LegalAction::class);
@@ -572,6 +603,9 @@ Route::middleware('auth')->group(function () {
 
     Route::post('/kpi/recalc/ao', [KpiRecalcController::class, 'recalcAo'])->name('kpi.recalc.ao');
     Route::post('/kpi/recalc/so', [KpiRecalcController::class, 'recalcSo'])->name('kpi.recalc.so');
+    Route::post('/kpi/recalc/ro', [\App\Http\Controllers\Kpi\KpiRecalcController::class, 'recalcRo'])
+        ->name('kpi.recalc.ro');
+
 
         // ===============================
         // RKH LKH
@@ -808,4 +842,24 @@ Route::get('/rkh/details/{detail}/visit-start', [\App\Http\Controllers\RkhVisitB
     ->name('rkh.details.visitStart');
 
 Route::get('/visits/loan/{loan}/start', [VisitController::class, 'startFromLoan'])->name('visits.loan.start');
+
+
+
+Route::middleware(['auth'])->prefix('kpi/ro')->name('kpi.ro.')->group(function () {
+    Route::get('/', [RoKpiController::class, 'index'])->name('index');
+
+    // ✅ static dulu
+    Route::get('/targets', [KpiRoTargetController::class, 'index'])->name('targets.index');
+    Route::post('/targets', [KpiRoTargetController::class, 'store'])->name('targets.store');
+
+    // ✅ wildcard paling bawah + constraint
+    Route::get('/{ao}', [RoKpiController::class, 'show'])
+        ->where('ao', '[0-9]{1,10}') // sesuaikan: misal 6 digit => [0-9]{6}
+        ->name('show');
+});
+
+// Route::middleware(['auth'])->prefix('kpi')->name('kpi.')->group(function () {
+//     // KPI FE Sheet
+//     Route::get('/fe/sheet', [FeKpiSheetController::class, 'index'])->name('fe.sheet');
+// });
 

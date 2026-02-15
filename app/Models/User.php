@@ -301,4 +301,14 @@ class User extends Authenticatable
         return strtoupper(trim((string)$lvl));
     }
 
+    public function kpiFeTargets()
+    {
+        return $this->hasMany(\App\Models\KpiFeTarget::class, 'fe_user_id');
+    }
+
+    public function kpiFeMonthlies()
+    {
+        return $this->hasMany(\App\Models\KpiFeMonthly::class, 'fe_user_id');
+    }
+
 }

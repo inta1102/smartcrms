@@ -28,6 +28,8 @@ class Kernel extends ConsoleKernel
         \App\Console\Commands\KpiAoBuild::class,
         \App\Console\Commands\KpiSoBuild::class,
         \App\Console\Commands\KpiOsDailySnapshot::class,
+        \App\Console\Commands\KpiRoRealtime::class,
+        \App\Console\Commands\KpiRoLock::class,
     ];
 
     protected function schedule(Schedule $schedule): void
@@ -94,6 +96,15 @@ class Kernel extends ConsoleKernel
             ->dailyAt('23:30')
             ->withoutOverlapping()
             ->onOneServer();
+
+        // Realtime: tiap 30 menit
+        $schedule->command('kpi:ro:realtime')->everyThirtyMinutes()->withoutOverlapping();
+
+        // Lock EOM: tiap tanggal 1 jam 01:10 (lock bulan lalu)
+        $schedule->command('kpi:ro:lock ' . now()->subMonth()->startOfMonth()->toDateString())
+            ->monthlyOn(1, '01:10')
+            ->withoutOverlapping();
+    
     }
 
     /**

@@ -127,5 +127,9 @@ class AuthServiceProvider extends ServiceProvider
             return in_array($roleValue, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM','KSL','KSM','KBL','KBO','KSA','DIR','PE','KOM'], true)
                 || in_array($level, ['TL','SO','AO'], true); // kalau level TL dipakai
         });
+
+        Gate::define('manageRoTargets', function ($user) {
+            return $user?->hasAnyRole(['KBL']) === true;
+        });
     }
 }

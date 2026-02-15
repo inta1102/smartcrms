@@ -526,7 +526,7 @@ class LoanImportController extends Controller
         $reimport = (bool)($validated['reimport'] ?? false);
         $reason   = trim((string)($validated['reimport_reason'] ?? ''));
 
-        // ✅ opsional: cegah double success posisi sama (kalau mau strict)
+        // ✅ cegah double success posisi sama (strict) kecuali reimport
         $exists = ImportLog::query()
             ->where('module', 'installments')
             ->where('status', 'success')
@@ -545,37 +545,60 @@ class LoanImportController extends Controller
                 ->withInput();
         }
 
-        $importer = new LoanInstallmentsImport($posDate); // sesuaikan constructor
+        // ✅ gunakan sourceFile supaya tercatat di loan_installments.source_file
+        // kalau constructor kamu mendukung parameter ke-3, pakai ini:
+        // $importer = new LoanInstallmentsImport($posDate, null, $fileName);
+        $importer = new LoanInstallmentsImport($posDate);
 
         try {
             Excel::import($importer, $file);
-            
-            // Artisan::call('kpi:os-daily-snapshot', ['--date' => $posDate]);
 
-            $s = $importer->summary();
+            $s = (array) $importer->summary();
+
+            // ✅ HARDEN: fallback keys (biar gak ada Undefined index lagi)
+            $total    = (int)($s['total'] ?? 0);
+
+            // inserted/updated dari importer baru
+            $inserted = (int)($s['inserted'] ?? 0);
+            $updated  = (int)($s['updated'] ?? 0);
+
+            // fallback untuk importer lama yang hanya punya upserted
+            $upserted = (int)($s['upserted'] ?? 0);
+            if ($inserted === 0 && $updated === 0 && $upserted > 0) {
+                // kita gak bisa bedain inserted vs updated, tapi minimal gak bikin angka 0 semua
+                $inserted = $upserted;
+                $updated  = 0;
+            }
+
+            $skipped  = (int)($s['skipped'] ?? 0);
 
             ImportLog::create([
                 'module'        => 'installments',
                 'position_date' => $posDate,
                 'run_type'      => $reimport ? 'reimport' : 'import',
                 'file_name'     => $fileName,
-                'rows_total'    => (int)($s['total'] ?? 0),
-                'rows_inserted' => (int)($s['inserted'] ?? 0),
-                'rows_updated'  => (int)($s['updated'] ?? 0),
-                'rows_skipped'  => (int)($s['skipped'] ?? 0),
+                'rows_total'    => $total,
+                'rows_inserted' => $inserted,
+                'rows_updated'  => $updated,
+                'rows_skipped'  => $skipped,
                 'status'        => 'success',
-                'message'       => ($reimport ? 'RE-IMPORT' : 'IMPORT') . " installment sukses | total={$s['total']} inserted={$s['inserted']} skipped={$s['skipped']}",
+                'message'       => ($reimport ? 'RE-IMPORT' : 'IMPORT')
+                    . " installment sukses | total={$total} inserted={$inserted} updated={$updated} skipped={$skipped}",
                 'reason'        => $reimport ? $reason : null,
                 'imported_by'   => auth()->id(),
             ]);
 
             return redirect()
                 ->route('loans.import.form')
-                ->with('status', "Import installment selesai. Posisi: {$posDate}. Total: {$s['total']} | Inserted: {$s['inserted']} | Skipped: {$s['skipped']}");
+                ->with('status', "Import installment selesai. Posisi: {$posDate}. Total: {$total} | Inserted: {$inserted} | Updated: {$updated} | Skipped: {$skipped}");
 
         } catch (ExcelValidationException $e) {
 
-            Log::error('[IMPORT INSTALLMENTS] ExcelValidationException', ['failures' => $e->failures()]);
+            Log::error('[IMPORT INSTALLMENTS] ExcelValidationException', [
+                'pos_date' => $posDate,
+                'file'     => $fileName,
+                'failures' => $e->failures(),
+            ]);
 
             ImportLog::create([
                 'module'        => 'installments',
@@ -588,14 +611,18 @@ class LoanImportController extends Controller
                 'imported_by'   => auth()->id(),
             ]);
 
-            return back()->with('error', 'Gagal import installment: header/kolom tidak sesuai template.')->withInput();
+            return back()
+                ->with('error', 'Gagal import installment: header/kolom tidak sesuai template.')
+                ->withInput();
 
         } catch (\Throwable $e) {
 
             Log::error('[IMPORT INSTALLMENTS] Throwable', [
-                'msg'  => $e->getMessage(),
-                'file' => $e->getFile(),
-                'line' => $e->getLine(),
+                'pos_date' => $posDate,
+                'file'     => $fileName,
+                'msg'      => $e->getMessage(),
+                'file_at'  => $e->getFile(),
+                'line'     => $e->getLine(),
             ]);
 
             ImportLog::create([
@@ -609,7 +636,9 @@ class LoanImportController extends Controller
                 'imported_by'   => auth()->id(),
             ]);
 
-            return back()->with('error', 'Gagal import installment. Detail ada di log.')->withInput();
+            return back()
+                ->with('error', 'Gagal import installment. Detail ada di log.')
+                ->withInput();
         }
     }
 
