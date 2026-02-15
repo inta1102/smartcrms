@@ -4,12 +4,31 @@ namespace App\Services\Kpi;
 
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class AoKpiMonthlyService
 {
+    /**
+     * KPI AO (DUAL MODE):
+     * A) MODE BARU (AO UMKM - score 1..6):
+     *    - Pertumbuhan NOA (count disbursement month)           bobot 30%
+     *    - Realisasi Bulanan (OS disbursement month, % target)  bobot 20%
+     *    - Kualitas Kredit (RR)                                bobot 25%
+     *    - Grab to Community (monthly - input/manual)          bobot 20%
+     *    - Daily Report (Kunjungan - input/manual)             bobot 5%
+     *
+     * B) MODE LAMA (legacy):
+     *    - OS Growth 35%
+     *    - NOA Growth 15%
+     *    - RR 25%
+     *    - Migrasi NPL 15%
+     *    - Activity 10%
+     *
+     * Auto-detect MODE BARU berdasarkan kolom target di kpi_ao_targets.
+     */
     public function buildForPeriod(string $periodYmd, ?int $userId = null): array
     {
-        $period     = Carbon::parse($periodYmd)->startOfMonth()->toDateString();
+        $period     = Carbon::parse($periodYmd)->startOfMonth()->toDateString(); // Y-m-01
         $periodEnd  = Carbon::parse($period)->endOfMonth()->toDateString();
         $prevPeriod = Carbon::parse($period)->subMonth()->startOfMonth()->toDateString();
 
@@ -21,18 +40,13 @@ class AoKpiMonthlyService
 
         $closingSource = $hasSnapshotPeriod ? 'snapshot' : 'live';
 
-        /**
-         * ✅ FIX UTAMA:
-         * Untuk mode LIVE, jangan pakai $period (awal bulan).
-         * Ambil position_date terakhir di bulan period (closing date).
-         */
+        // LIVE closing date (position_date terakhir dalam bulan tsb)
         $positionDate = null;
         if (!$hasSnapshotPeriod) {
             $positionDate = DB::table('loan_accounts')
                 ->whereBetween('position_date', [$period, $periodEnd])
                 ->max('position_date');
 
-            // fallback: kalau bulan tsb belum ada data sama sekali, pakai max <= periodEnd
             if (!$positionDate) {
                 $positionDate = DB::table('loan_accounts')
                     ->whereDate('position_date', '<=', $periodEnd)
@@ -40,69 +54,48 @@ class AoKpiMonthlyService
             }
         }
 
-        // AO list (from users with ao_code)
+        // Users (AO only)
         $usersQ = DB::table('users')
             ->select(['id', 'name', 'ao_code', 'level'])
             ->whereNotNull('ao_code')
-            ->where('ao_code', '!=', '');
+            ->where('ao_code', '!=', '')
+            ->whereIn('level', ['AO']);
 
-        if (!is_null($userId)) {
-            $usersQ->where('id', $userId);
-        }
-
-        // adjust levels if needed
-        $usersQ->whereIn('level', ['AO']);
-
+        if (!is_null($userId)) $usersQ->where('id', $userId);
         $users = $usersQ->get();
 
-        // Opening aggregate by ao_code
+        // Opening (prev snapshot)
         $openingAgg = DB::table('loan_account_snapshots_monthly')
-            ->selectRaw("ao_code, ROUND(SUM(outstanding)) as os_opening, COUNT(*) as noa_opening")
+            ->selectRaw("LPAD(TRIM(ao_code),6,'0') as ao_code, ROUND(SUM(outstanding)) as os_opening, COUNT(*) as noa_opening")
             ->where('snapshot_month', $prevPeriod)
             ->groupBy('ao_code');
 
-        // Closing aggregate by ao_code (live vs snapshot)
+        // Closing (snapshot vs live)
         $closingAgg = $hasSnapshotPeriod
             ? DB::table('loan_account_snapshots_monthly')
-                ->selectRaw("ao_code, ROUND(SUM(outstanding)) as os_closing, COUNT(*) as noa_closing")
+                ->selectRaw("LPAD(TRIM(ao_code),6,'0') as ao_code, ROUND(SUM(outstanding)) as os_closing, COUNT(*) as noa_closing")
                 ->where('snapshot_month', $period)
                 ->groupBy('ao_code')
             : DB::table('loan_accounts')
-                ->selectRaw("ao_code, ROUND(SUM(outstanding)) as os_closing, COUNT(*) as noa_closing")
-                ->whereDate('position_date', $positionDate) // ✅ pakai closing date
+                ->selectRaw("LPAD(TRIM(ao_code),6,'0') as ao_code, ROUND(SUM(outstanding)) as os_closing, COUNT(*) as noa_closing")
+                ->whereDate('position_date', $positionDate)
                 ->groupBy('ao_code');
 
-        // NPL migration by ao_code (prev snapshot join loan_accounts live)
-        $nplMigAgg = DB::table('loan_account_snapshots_monthly as prev')
-            ->join('loan_accounts as now', 'now.account_no', '=', 'prev.account_no')
+        // ✅ Disbursement bulan period (OS + NOA disbursement)
+        $disbAgg = DB::table('loan_disbursements')
             ->selectRaw("
-                prev.ao_code,
-                SUM(CASE WHEN prev.kolek < 3 AND now.kolek >= 3 THEN now.outstanding ELSE 0 END) as os_npl_migrated
+                LPAD(TRIM(ao_code),6,'0') as ao_code,
+                ROUND(SUM(amount)) as os_disbursement,
+                COUNT(DISTINCT account_no) as noa_disbursement
             ")
-            ->where('prev.snapshot_month', $prevPeriod)
-            ->when(!$hasSnapshotPeriod, function ($q) use ($positionDate) {
-                $q->whereDate('now.position_date', $positionDate); // ✅ selaraskan posisi (live)
-            })
-            ->when($hasSnapshotPeriod, function ($q) use ($period) {
-                /**
-                 * Kalau snapshot period ada:
-                 * sebenarnya idealnya join ke snapshot "now" (bulan period) bukan loan_accounts.
-                 * Tapi karena struktur kamu sekarang join ke loan_accounts, maka kita biarkan.
-                 * Kalau kamu mau bener-bener snapshot-only, nanti aku bikinin versi join snapshot vs snapshot.
-                 */
-                $q->whereDate('now.position_date', $period); // best-effort (kalau memang posisi = period)
-            })
-            ->groupBy('prev.ao_code');
+            ->where('period', $period)
+            ->groupBy('ao_code');
 
-        /**
-         * ✅ RR (Repayment Rate) versi baru:
-         * RR = OS lancar tanpa tunggakan / Total OS
-         * Lancar tanpa tunggakan: ft_pokok = 0 AND ft_bunga = 0
-         */
+        // ✅ RR (OS lancar tanpa tunggakan / total OS)
         $rrAgg = $hasSnapshotPeriod
             ? DB::table('loan_account_snapshots_monthly')
                 ->selectRaw("
-                    ao_code,
+                    LPAD(TRIM(ao_code),6,'0') as ao_code,
                     ROUND(SUM(outstanding)) as rr_os_total,
                     ROUND(SUM(CASE WHEN COALESCE(ft_pokok,0)=0 AND COALESCE(ft_bunga,0)=0 THEN outstanding ELSE 0 END)) as rr_os_current
                 ")
@@ -110,15 +103,21 @@ class AoKpiMonthlyService
                 ->groupBy('ao_code')
             : DB::table('loan_accounts')
                 ->selectRaw("
-                    ao_code,
+                    LPAD(TRIM(ao_code),6,'0') as ao_code,
                     ROUND(SUM(outstanding)) as rr_os_total,
                     ROUND(SUM(CASE WHEN COALESCE(ft_pokok,0)=0 AND COALESCE(ft_bunga,0)=0 THEN outstanding ELSE 0 END)) as rr_os_current
                 ")
-                ->whereDate('position_date', $positionDate) // ✅ pakai closing date
+                ->whereDate('position_date', $positionDate)
                 ->groupBy('ao_code');
 
-        // Targets (approved preferred; if not exists still ok)
+        // Targets
         $targets = DB::table('kpi_ao_targets')
+            ->where('period', $period)
+            ->get()
+            ->keyBy('user_id');
+
+        // ✅ input manual AO: community + daily report
+        $inputs = DB::table('kpi_ao_activity_inputs')
             ->where('period', $period)
             ->get()
             ->keyBy('user_id');
@@ -129,75 +128,74 @@ class AoKpiMonthlyService
             $users,
             $openingAgg,
             $closingAgg,
-            $nplMigAgg,
+            $disbAgg,
             $rrAgg,
             $targets,
+            $inputs,
             $period,
-            $prevPeriod,
             $closingSource,
             $hasSnapshotPeriod,
             &$count
         ) {
             foreach ($users as $u) {
-                $aoCode = (string) ($u->ao_code ?? '');
-                if ($aoCode === '') {
-                    continue;
-                }
+                $aoCode = str_pad(trim((string)($u->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
+                if ($aoCode === '' || $aoCode === '000000') continue;
 
-                // fetch agg rows using subqueries
                 $open  = DB::query()->fromSub($openingAgg, 'o')->where('o.ao_code', $aoCode)->first();
                 $close = DB::query()->fromSub($closingAgg, 'c')->where('c.ao_code', $aoCode)->first();
-                $mig   = DB::query()->fromSub($nplMigAgg, 'm')->where('m.ao_code', $aoCode)->first();
+                $disb  = DB::query()->fromSub($disbAgg, 'd')->where('d.ao_code', $aoCode)->first();
                 $rr    = DB::query()->fromSub($rrAgg, 'r')->where('r.ao_code', $aoCode)->first();
 
+                // info portfolio
                 $osOpening  = (int) ($open->os_opening ?? 0);
                 $noaOpening = (int) ($open->noa_opening ?? 0);
-
                 $osClosing  = (int) ($close->os_closing ?? 0);
                 $noaClosing = (int) ($close->noa_closing ?? 0);
 
-                $osGrowth  = $osClosing - $osOpening;
-                $noaGrowth = $noaClosing - $noaOpening;
+                // ✅ KPI utama baru
+                $osDisb   = (int) ($disb->os_disbursement ?? 0);
+                $noaDisb  = (int) ($disb->noa_disbursement ?? 0);
 
-                $osNplMigrated   = (int) ($mig->os_npl_migrated ?? 0);
-                $nplMigrationPct = KpiScoreHelper::safePct((float) $osNplMigrated, (float) max($osOpening, 0));
-
-                // ✅ RR baru (OS basis)
+                // RR
                 $rrOsTotal   = (int) ($rr->rr_os_total ?? 0);
                 $rrOsCurrent = (int) ($rr->rr_os_current ?? 0);
                 $rrPct       = $rrOsTotal > 0 ? round(100.0 * $rrOsCurrent / $rrOsTotal, 2) : 0.0;
 
-                // kolom lama tetap diisi 0 supaya schema lama tidak pecah
-                $rrDue    = 0;
-                $rrOntime = 0;
-
+                // targets
                 $t = $targets->get($u->id);
 
                 $targetId       = $t->id ?? null;
-                $targetOs       = (int) ($t->target_os_growth ?? 0);
-                $targetNoa      = (int) ($t->target_noa_growth ?? 0);
-                $targetActivity = (int) ($t->target_activity ?? 0);
+                $targetOsDisb   = (int) ($t->target_os_disbursement ?? 0);
+                $targetNoaDisb  = (int) ($t->target_noa_disbursement ?? 0);
+                $targetRr       = (float)($t->target_rr ?? 100);
+                $targetCommunity= (int) ($t->target_community ?? 0);
+                $targetDaily    = (int) ($t->target_daily_report ?? 0);
 
-                // achievements
-                $osAchPct       = KpiScoreHelper::safePct((float) $osGrowth, (float) $targetOs);
-                $noaAchPct      = KpiScoreHelper::safePct((float) $noaGrowth, (float) $targetNoa);
-                $activityActual = 0; // TODO
-                $activityPct    = KpiScoreHelper::safePct((float) $activityActual, (float) $targetActivity);
+                // manual inputs
+                $inp = $inputs->get($u->id);
+                $communityActual = (int)($inp->community_actual ?? 0);
+                $dailyActual     = (int)($inp->daily_report_actual ?? 0);
 
-                // scores
-                $scoreOs       = KpiScoreHelper::scoreFromAchievementPct($osAchPct);
-                $scoreNoa      = KpiScoreHelper::scoreFromAchievementPct($noaAchPct);
-                $scoreRr       = KpiScoreHelper::scoreFromRepaymentRate($rrPct);
-                $scoreKolek    = KpiScoreHelper::scoreFromNplMigration($nplMigrationPct);
-                $scoreActivity = KpiScoreHelper::scoreFromAchievementPct($activityPct);
+                // pct utk display
+                $osPct   = KpiScoreHelper::safePct((float)$osDisb, (float)$targetOsDisb);
+                $noaPct  = KpiScoreHelper::safePct((float)$noaDisb, (float)$targetNoaDisb);
+                $comPct  = KpiScoreHelper::safePct((float)$communityActual, (float)$targetCommunity);
+                $dayPct  = KpiScoreHelper::safePct((float)$dailyActual, (float)$targetDaily);
 
-                // weights (AO): OS 35, NOA 15, RR 25, Kolek 15, Activity 10
+                // ✅ scoring sesuai rubrik AO (1..6)
+                $scoreNoa  = KpiScoreHelper::scoreFromAoNoaGrowth6($noaDisb);
+                $scoreOs   = KpiScoreHelper::scoreFromAoOsRealisasiPct6($osPct);
+                $scoreRr   = KpiScoreHelper::scoreFromRepaymentRateAo6($rrPct);
+                $scoreCom  = KpiScoreHelper::scoreFromAoCommunity6($communityActual);
+                $scoreDay  = KpiScoreHelper::scoreFromAoDailyReport6($dailyActual);
+
+                // ✅ bobot sesuai slide AO: NOA30, OS20, RR25, Community20, Daily5
                 $total = round(
-                    $scoreOs * 0.35 +
-                    $scoreNoa * 0.15 +
-                    $scoreRr * 0.25 +
-                    $scoreKolek * 0.15 +
-                    $scoreActivity * 0.10,
+                    $scoreNoa * 0.30 +
+                    $scoreOs  * 0.20 +
+                    $scoreRr  * 0.25 +
+                    $scoreCom * 0.20 +
+                    $scoreDay * 0.05,
                     2
                 );
 
@@ -207,43 +205,55 @@ class AoKpiMonthlyService
                     'ao_code'   => $aoCode,
                     'target_id' => $targetId,
 
+                    // info portfolio tetap disimpan (biar dashboard lama gak pecah)
                     'os_opening' => $osOpening,
                     'os_closing' => $osClosing,
-                    'os_growth'  => $osGrowth,
+                    'os_growth'  => ($osClosing - $osOpening),
+                    'noa_opening'=> $noaOpening,
+                    'noa_closing'=> $noaClosing,
+                    'noa_growth' => ($noaClosing - $noaOpening),
 
-                    'noa_opening' => $noaOpening,
-                    'noa_closing' => $noaClosing,
-                    'noa_growth'  => $noaGrowth,
+                    // ✅ KPI baru
+                    'os_disbursement'      => $osDisb,
+                    'noa_disbursement'     => $noaDisb,
+                    'os_disbursement_pct'  => round($osPct, 2),
+                    'noa_disbursement_pct' => round($noaPct, 2),
 
-                    'os_npl_migrated'   => $osNplMigrated,
-                    'npl_migration_pct' => $nplMigrationPct,
+                    // RR
+                    'rr_due_count'         => 0,
+                    'rr_paid_ontime_count' => 0,
+                    'rr_pct'               => $rrPct,
 
-                    // legacy cols (keep)
-                    'rr_due_count'         => $rrDue,
-                    'rr_paid_ontime_count' => $rrOntime,
+                    // community + daily
+                    'community_target' => $targetCommunity,
+                    'community_actual' => $communityActual,
+                    'community_pct'    => round($comPct, 2),
 
-                    // ✅ rr_pct tetap dipakai tapi maknanya sekarang OS-based
-                    'rr_pct' => $rrPct,
+                    'daily_report_target' => $targetDaily,
+                    'daily_report_actual' => $dailyActual,
+                    'daily_report_pct'    => round($dayPct, 2),
 
-                    'activity_target' => $targetActivity,
-                    'activity_actual' => $activityActual,
-                    'activity_pct'    => $activityPct,
+                    // legacy activity_* biarkan (0) kalau kamu gak pakai lagi
+                    'activity_target' => 0,
+                    'activity_actual' => 0,
+                    'activity_pct'    => 0,
 
                     'is_final'      => $hasSnapshotPeriod,
                     'data_source'   => $closingSource,
                     'calculated_at' => now(),
 
-                    'score_os'       => $scoreOs,
-                    'score_noa'      => $scoreNoa,
-                    'score_rr'       => $scoreRr,
-                    'score_kolek'    => $scoreKolek,
-                    'score_activity' => $scoreActivity,
-                    'score_total'    => $total,
+                    // scores
+                    'score_os'        => $scoreOs,
+                    'score_noa'       => $scoreNoa,
+                    'score_rr'        => $scoreRr,
+                    'score_activity'  => 0,
+                    'score_community' => $scoreCom,
+                    'score_daily_report'     => $scoreDay,
+                    'score_total'     => $total,
 
                     'updated_at' => now(),
                 ];
 
-                // ✅ FIX: jangan overwrite created_at saat update
                 $exists = DB::table('kpi_ao_monthlies')->where($key)->exists();
                 if ($exists) {
                     DB::table('kpi_ao_monthlies')->where($key)->update($payload);
@@ -261,7 +271,7 @@ class AoKpiMonthlyService
             'prevPeriod'    => $prevPeriod,
             'source'        => $closingSource,
             'is_final'      => $hasSnapshotPeriod,
-            'position_date' => $positionDate, // ✅ biar kebaca saat debug (null kalau snapshot)
+            'position_date' => $positionDate,
             'rows'          => $count,
         ];
     }

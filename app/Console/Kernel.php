@@ -69,12 +69,12 @@ class Kernel extends ConsoleKernel
             ->withoutOverlapping();
 
         $schedule->command('wa:restruktur-due-h5')
-            ->dailyAt('08:00')
+            ->dailyAt('09:00')
             ->withoutOverlapping()
             ->runInBackground();
 
         $schedule->command('kpi:calc-marketing-achievements --period='.now()->format('Y-m').' --force')
-            ->dailyAt('20:30')
+            ->dailyAt('09:00')
             ->withoutOverlapping()
             ->runInBackground();
 
@@ -93,7 +93,7 @@ class Kernel extends ConsoleKernel
 
             // ambil position_date terbaru otomatis
         $schedule->command('kpi:os-daily-snapshot')
-            ->dailyAt('23:30')
+            ->dailyAt('09:00')
             ->withoutOverlapping()
             ->onOneServer();
 
@@ -102,8 +102,13 @@ class Kernel extends ConsoleKernel
 
         // Lock EOM: tiap tanggal 1 jam 01:10 (lock bulan lalu)
         $schedule->command('kpi:ro:lock ' . now()->subMonth()->startOfMonth()->toDateString())
-            ->monthlyOn(1, '01:10')
+            ->monthlyOn(1, '09:00')
             ->withoutOverlapping();
+
+        $schedule->command('kpi:be-build-monthly --source=auto')
+            ->dailyAt('09:00')
+            ->withoutOverlapping()
+            ->onOneServer();
     
     }
 

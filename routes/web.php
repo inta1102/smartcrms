@@ -90,6 +90,22 @@ use App\Http\Controllers\Kpi\KpiRoTargetController;
 use App\Http\Controllers\Kpi\FeKpiSheetController;
 use App\Http\Controllers\Kpi\FeTargetController;
 use App\Http\Controllers\Kpi\FeKpiRecalcController;
+use App\Http\Controllers\Kpi\BeKpiTargetController;
+
+
+use App\Http\Controllers\Kpi\KpiAoTargetController;
+use App\Http\Controllers\Kpi\KpiAoActivityInputController;
+
+Route::prefix('kpi/ao')->group(function () {
+
+    Route::get('/targets', [\App\Http\Controllers\Kpi\AoTargetController::class, 'index'])->name('kpi.ao.targets');
+    Route::post('/targets', [\App\Http\Controllers\Kpi\AoTargetController::class, 'store'])->name('kpi.ao.targets.store');
+
+    Route::get('/activity-inputs', [\App\Http\Controllers\Kpi\AoActivityInputController::class, 'index'])->name('kpi.ao.activity_inputs');
+    Route::post('/activity-inputs', [\App\Http\Controllers\Kpi\AoActivityInputController::class, 'store'])->name('kpi.ao.activity_inputs.store');
+
+});
+
 
 Route::middleware(['auth'])->group(function () {
 
@@ -102,12 +118,7 @@ Route::middleware(['auth'])->group(function () {
     Route::post('/kpi/fe/targets', [FeTargetController::class, 'store'])
         ->name('kpi.fe.targets.store');
 
-    // (opsional) edit page kalau mau
-    // Route::get('/kpi/fe/targets/{target}/edit', [FeTargetController::class, 'edit'])
-    //     ->name('kpi.fe.targets.edit');
-    // Route::put('/kpi/fe/targets/{target}', [FeTargetController::class, 'update'])
-    //     ->name('kpi.fe.targets.update');
-
+    
     // ===============================
     // KPI FE - Recalc
     // ===============================
@@ -115,6 +126,16 @@ Route::middleware(['auth'])->group(function () {
         ->name('kpi.recalc.fe');
 
 });
+
+Route::get('/kpi/be', [\App\Http\Controllers\Kpi\MarketingKpiSheetController::class, 'index'])
+    ->name('kpi.be.index');
+
+
+Route::post('/kpi/be/recalc', [KpiRecalcController::class, 'recalcBe'])
+    ->name('kpi.recalc.be');
+
+Route::get('/kpi/be/targets',  [BeKpiTargetController::class, 'index'])->name('kpi.be.targets.index');
+Route::post('/kpi/be/targets', [BeKpiTargetController::class, 'store'])->name('kpi.be.targets.store');
 
 
 

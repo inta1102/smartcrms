@@ -59,7 +59,7 @@
             📄 KPI Sheet FE
         </a>
 
-        <a href="{{ route('kpi.marketing.sheet', ['role'=>'FE', 'period'=>$period->format('Y-m'), 'mode'=>$mode ?? 'realtime']) }}"
+        <a href="{{ route('kpi.marketing.sheet', ['role'=>'BE', 'period'=>$period->format('Y-m'), 'mode'=>$mode ?? 'realtime']) }}"
             class="rounded-xl bg-white border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-50">
             📄 KPI Sheet BE
         </a>

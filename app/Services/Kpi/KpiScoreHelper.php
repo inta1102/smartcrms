@@ -4,6 +4,18 @@ namespace App\Services\Kpi;
 
 class KpiScoreHelper
 {
+    // ==========================================================
+    // UTIL
+    // ==========================================================
+    public static function safePct(float $num, float $den): float
+    {
+        if ($den <= 0) return 0.0;
+        return ($num / $den) * 100.0;
+    }
+
+    // ==========================================================
+    // LEGACY (1..5) — jangan diubah (BE lama masih pakai ini)
+    // ==========================================================
     /**
      * Convert achievement percent (0..∞) into score 1..5 using standard band:
      * <25 => 1; 25-49 => 2; 50-74 => 3; 75-99 => 4; >=100 => 5
@@ -18,8 +30,8 @@ class KpiScoreHelper
     }
 
     /**
-     * For repayment rate 0..100 (typical):
-     * <90 =>1; 90-94 =>2; 95-97 =>3; 98-99 =>4; 100 =>5
+     * Legacy repayment (1..5)
+     * <70 =>1; 70-79 =>2; 80-89 =>3; 90-99 =>4; 100 =>5
      */
     public static function scoreFromRepaymentRate(float $rr): int
     {
@@ -31,8 +43,8 @@ class KpiScoreHelper
     }
 
     /**
-     * For NPL migration percent (lower is better)
-     * 0 =>5; <=1 =>4; <=2 =>3; <=3 =>2; >3 =>1
+     * For NPL migration percent (lower is better) — legacy
+     * <1 =>5; <=2 =>4; <=3 =>3; <=4 =>2; >4 =>1
      */
     public static function scoreFromNplMigration(float $pct): int
     {
@@ -43,9 +55,128 @@ class KpiScoreHelper
         return 1;
     }
 
-    public static function safePct(float $num, float $den): float
+    // ==========================================================
+    // NEW (1..6) — sesuai rubrik SO/AO yang user minta
+    // ==========================================================
+
+    /**
+     * Generic achievement % => score 1..6
+     * 0-24 =>1; 25-49 =>2; 50-74 =>3; 75-99 =>4; 100 =>5; >100 =>6
+     */
+    public static function scoreFromAchievementPct6(float $pct): int
     {
-        if ($den <= 0) return 0.0;
-        return ($num / $den) * 100.0;
+        if ($pct < 25) return 1;
+        if ($pct < 50) return 2;
+        if ($pct < 75) return 3;
+        if ($pct < 100) return 4;
+        if ($pct == 100.0) return 5;
+        return 6;
     }
+
+    /**
+     * Repayment Rate (SO rubric):
+     * <70 =>1; 70-79.9 =>2; 80-89.9 =>3; 90-94.9 =>4; 95-99.9 =>5; 100 =>6
+     */
+    public static function scoreFromRepaymentRateSo6(float $rr): int
+    {
+        if ($rr < 70) return 1;
+        if ($rr < 80) return 2;
+        if ($rr < 90) return 3;
+        if ($rr < 95) return 4;
+        if ($rr < 100) return 5;
+        return 6;
+    }
+
+    /**
+     * Repayment Rate (AO rubric) — sesuai gambar:
+     * <70 =>1; 70-79.9 =>2; 80-89.9 =>3; 90-97.5 =>4; 97.5-99.9 =>5; 100 =>6
+     */
+    public static function scoreFromRepaymentRateAo6(float $rr): int
+    {
+        if ($rr < 70) return 1;
+        if ($rr < 80) return 2;
+        if ($rr < 90) return 3;
+        if ($rr < 97.5) return 4;
+        if ($rr < 100) return 5;
+        return 6;
+    }
+
+    /**
+     * NOA (SO rubric):
+     * 1=>1, 2=>2, 3=>3, 4=>4, 5=>5, >5=>6
+     */
+    public static function scoreFromSoNoa6(int $noa): int
+    {
+        if ($noa <= 1) return 1;
+        if ($noa === 2) return 2;
+        if ($noa === 3) return 3;
+        if ($noa === 4) return 4;
+        if ($noa === 5) return 5;
+        return 6;
+    }
+
+    /**
+     * Handling Komunitas (SO rubric):
+     * 0=>1, 1=>4, 2=>5, >=3=>6
+     * (karena kolom 2 & 3 di rubrik memang "-" / tidak dipakai)
+     */
+    public static function scoreFromHandlingKomunitasSo6(int $n): int
+    {
+        if ($n <= 0) return 1;
+        if ($n === 1) return 4;
+        if ($n === 2) return 5;
+        return 6;
+    }
+
+    /**
+     * Pertumbuhan NOA (AO rubric):
+     * <4=>1; 4-6=>2; 7-9=>3; 10-12=>4; 13-15=>5; >15=>6
+     */
+    public static function scoreFromAoNoaGrowth6(int $growth): int
+    {
+        if ($growth < 4) return 1;
+        if ($growth <= 6) return 2;
+        if ($growth <= 9) return 3;
+        if ($growth <= 12) return 4;
+        if ($growth <= 15) return 5;
+        return 6;
+    }
+
+    /**
+     * Grab to Community (AO rubric):
+     * 0=>1, 1=>4, 2=>5, >=3=>6
+     */
+    public static function scoreFromAoCommunity6(int $n): int
+    {
+        if ($n <= 0) return 1;
+        if ($n === 1) return 4;
+        if ($n === 2) return 5;
+        return 6;
+    }
+
+    /**
+     * Daily Report / Kunjungan (AO rubric):
+     * 1=>1, 2=>2, 3=>3, 4=>4, 5=>5, >5=>6
+     */
+    public static function scoreFromAoDailyReport6(int $n): int
+    {
+        if ($n <= 1) return 1;
+        if ($n === 2) return 2;
+        if ($n === 3) return 3;
+        if ($n === 4) return 4;
+        if ($n === 5) return 5;
+        return 6;
+    }
+
+    public static function scoreFromAoOsRealisasiPct6(float $pct): int
+    {
+        // AO OS Realisasi rubric: <70, 70-79, 80-89, 90-99, 100, >100
+        if ($pct < 70) return 1;
+        if ($pct < 80) return 2;
+        if ($pct < 90) return 3;
+        if ($pct < 100) return 4;
+        if ($pct == 100.0) return 5;
+        return 6;
+    }
+
 }

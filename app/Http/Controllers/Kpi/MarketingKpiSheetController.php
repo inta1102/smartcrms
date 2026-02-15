@@ -6,6 +6,8 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Services\Kpi\FeKpiMonthlyService;
+use App\Services\Kpi\BeKpiMonthlyService;
+
 
 class MarketingKpiSheetController
 {
@@ -59,31 +61,55 @@ class MarketingKpiSheetController
     // =========================
     // Scope org_assignments
     // =========================
-    private function resolveTlScopeUserIds(string $leaderRole, int $leaderId, string $periodDate): array
+    private function resolveTlScopeUserIds(string $leaderRole, int $leaderId, ?string $periodDate): array
     {
         $leaderRole = strtoupper(trim((string) $leaderRole));
 
-        // ✅ role alias / normalisasi (biar TLRO tetap kebaca walau disimpan TL)
         $roleAliases = match ($leaderRole) {
-            'TLRO' => ['tlro', 'tl', 'teamleader', 'leader'], // tambah kalau di data kamu ada varian lain
+            'TLRO' => ['tlro', 'tl', 'teamleader', 'leader'],
             'KSL'  => ['ksl', 'kasi', 'kasi lending'],
             'KBL'  => ['kbl', 'kabag', 'kabag lending'],
             default => [strtolower($leaderRole)],
         };
 
-        return DB::table('org_assignments')
+        // 1) query dasar: leader + role + aktif
+        $baseQ = DB::table('org_assignments')
             ->where('leader_id', $leaderId)
-            ->whereIn(DB::raw('LOWER(leader_role)'), $roleAliases)
             ->where('is_active', 1)
-            ->whereDate('effective_from', '<=', $periodDate)
-            ->where(function ($q) use ($periodDate) {
-                $q->whereNull('effective_to')
-                ->orWhereDate('effective_to', '>=', $periodDate);
-            })
-            ->pluck('user_id')
-            ->map(fn ($x) => (int)$x)
+            // ✅ TRIM + LOWER biar "TLRO " tetap match
+            ->whereIn(DB::raw('LOWER(TRIM(leader_role))'), $roleAliases);
+
+        // 2) kalau periodDate ada, pakai effective range
+        $q = clone $baseQ;
+        if (!empty($periodDate)) {
+            $q->whereDate('effective_from', '<=', $periodDate)
+            ->where(function ($qq) use ($periodDate) {
+                $qq->whereNull('effective_to')
+                    ->orWhereDate('effective_to', '>=', $periodDate);
+            });
+        }
+
+        $ids = $q->pluck('user_id')
+            ->filter()
+            ->map(fn ($x) => (int) $x)
+            ->unique()
             ->values()
             ->all();
+
+        // 3) ✅ fallback: kalau kosong di periode tsb, ambil assignment terbaru yg aktif
+        //    Ini menyelesaikan kasus "Feb ada, Jan kosong" kalau scope dianggap current
+        if (!empty($periodDate) && empty($ids)) {
+            $ids = (clone $baseQ)
+                ->orderByDesc('effective_from')
+                ->pluck('user_id')
+                ->filter()
+                ->map(fn ($x) => (int) $x)
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        return $ids;
     }
 
     private function leaderRoleValue($user): string
@@ -223,7 +249,17 @@ class MarketingKpiSheetController
                     COALESCE(k.dpk_total_os_akhir, 0) as dpk_total_os_akhir,
 
                     COALESCE(k.baseline_ok, 0) as baseline_ok,
-                    k.baseline_note as baseline_note
+                    k.baseline_note as baseline_note,
+
+                    -- ✅ TAMBAHAN (agar TL recap & detail topup/RR bisa informatif)
+                    COALESCE(k.topup_cif_count, 0) as topup_cif_count,
+                    COALESCE(k.topup_cif_new_count, 0) as topup_cif_new_count,
+                    COALESCE(k.topup_max_cif_amount, 0) as topup_max_cif_amount,
+                    COALESCE(k.topup_concentration_pct, 0) as topup_concentration_pct,
+                    k.topup_top3_json as topup_top3_json,
+
+                    COALESCE(k.repayment_total_os, 0) as repayment_total_os,
+                    COALESCE(k.repayment_os_lancar, 0) as repayment_os_lancar
                 ")
                 ->orderBy('u.name')
                 ->get();
@@ -319,6 +355,27 @@ class MarketingKpiSheetController
                 $sumMigrasiOs   = (float) $scoped->sum('dpk_migrasi_os');
                 $sumOsAkhir     = (float) $scoped->sum('dpk_total_os_akhir');
 
+                $sumTopupCifCount = (int) $scoped->sum('topup_cif_count');
+                $sumTopupCifNew   = (int) $scoped->sum('topup_cif_new_count');
+                $maxTopupMaxCif   = (float) $scoped->max('topup_max_cif_amount');
+
+                // konsentrasi TL: ambil kontribusi top1 terbesar dari seluruh scope / total topup
+                // cara simpel: cari AO dengan topup_max_cif_amount terbesar
+                $globalTop1 = (float) $scoped->max('topup_max_cif_amount');
+                $tlConcentration = $sumTopupActual > 0 ? round(($globalTop1 / $sumTopupActual) * 100.0, 2) : 0.0;
+
+                // top3 TL: gabungkan semua top3 AO, urutkan, ambil 3 terbesar
+                $all = [];
+                foreach ($scoped as $it) {
+                    $arr = [];
+                    if (!empty($it->topup_top3_json)) {
+                        $arr = json_decode($it->topup_top3_json, true) ?: [];
+                    }
+                    foreach ($arr as $x) $all[] = $x;
+                }
+                usort($all, fn($a,$b) => (float)($b['delta'] ?? 0) <=> (float)($a['delta'] ?? 0));
+                $tlTop3 = array_slice($all, 0, 3);
+
                 // RR: avg scope
                 $rrAvg = $scoped->count() > 0
                     ? round((float)$scoped->avg('repayment_pct_display'), 2)
@@ -405,6 +462,22 @@ class MarketingKpiSheetController
                     'pi_noa'       => $piNoa,
                     'pi_dpk'       => $piDpk,
                     'pi_total'     => round($piRepay + $piTopup + $piNoa + $piDpk, 2),
+
+                    'topup_cif_count' => $sumTopupCifCount,
+                    'topup_cif_new_count' => $sumTopupCifNew,
+                    'topup_max_amount' => $maxTopupMaxCif,
+                    'topup_concentration_pct' => $tlConcentration,
+                    'topup_top3' => array_map(function($x){
+                        $cif = $x['cif'] ?? '-';
+                        $delta = (int)($x['delta'] ?? 0);
+                        return "{$cif} – Rp " . number_format($delta,0,',','.');
+                    }, $tlTop3),
+
+                    // RR meta
+                    'rr_os_exposure' => (float) $scoped->sum('repayment_total_os'),
+                    'rr_paid_amount' => 0, // (nggak ada karena RR kamu basis FT, bukan pembayaran)
+                    'rr_account_count' => 0, // optional kalau nanti ada
+
                 ];
             }
 
@@ -509,6 +582,23 @@ class MarketingKpiSheetController
                 'weights'   => $res['weights'],
                 'items'     => $res['items'],
                 'tlRecap' => $res['tlFeRecap'] ?? null,
+            ]);
+        }
+
+        // ========= BE =========
+        if ($role === 'BE') {
+            $svc = app(\App\Services\Kpi\BeKpiMonthlyService::class);
+
+            $res = $svc->buildForPeriod($periodYm, auth()->user());
+
+            return view('kpi.marketing.sheet', [
+                'role'     => $role,
+                'periodYm' => $periodYm,
+                'period'   => $res['period'],
+                'mode'     => $res['mode'] ?? null,
+                'weights'  => $res['weights'],
+                'items'    => $res['items'],
+                'tlRecap'  => $res['tlBeRecap'] ?? null,
             ]);
         }
 

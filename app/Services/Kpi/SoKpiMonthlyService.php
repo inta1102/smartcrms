@@ -10,9 +10,15 @@ use App\Models\Kpi\KpiSoCommunityInput;
 class SoKpiMonthlyService
 {
     /**
-     * SO KPI:
-     * - OS/NOA = disbursement bulan period
-     * - RR (COHORT) = OS current (ft_pokok=0 & ft_bunga=0) / total OS
+     * SO KPI (NEW - 1..6):
+     * - OS Realisasi (55%)  : score by achievement % (0-24=1, 25-49=2, 50-74=3, 75-99=4, 100=5, >100=6)
+     * - NOA Realisasi (15%) : score by count (1..5, >5=6)
+     * - Repayment Rate (20%): score by RR% (<70=1, 70-79.9=2, 80-89.9=3, 90-94.9=4, 95-99.9=5, 100=6)
+     * - Handling Komunitas (10%): score by count (0=1, 1=4, 2=5, >2=6)  [level 2-3 di tabel "-" -> skip]
+     *
+     * Data:
+     * - OS/NOA: loan_disbursements (period = Y-m-01)
+     * - RR (COHORT): OS current (ft_pokok=0 & ft_bunga=0) / total OS
      *   ✅ hanya untuk rekening yang DISBURSE mulai 1 Jan 2026 s/d period KPI (kumulatif)
      *   ✅ khusus KPI Jan 2026: RR dipastikan 100% (business rule)
      *
@@ -21,8 +27,8 @@ class SoKpiMonthlyService
      * - OS Adjustment (os_adjustment) -> mengurangi OS disbursement (raw) sebelum scoring
      *
      * Rule sumber data RR:
-     * - Kalau period = bulan berjalan => ambil dari loan_accounts pada position_date terakhir
-     * - Kalau period < bulan berjalan => ambil dari loan_account_snapshots_monthly pada snapshot_month = period
+     * - Kalau period = bulan berjalan => ambil loan_accounts pada position_date terakhir
+     * - Kalau period < bulan berjalan => ambil loan_account_snapshots_monthly pada snapshot_month = period
      */
     public function buildForPeriod(string $periodYmd, ?int $userId = null): array
     {
@@ -117,7 +123,6 @@ class SoKpiMonthlyService
                 // ✅ ambil adjustment & handling manual (KBL)
                 $adj = $adjRows->get($u->id);
                 $osAdj = (int) ($adj->os_adjustment ?? 0);
-
                 $handlingManual = $adj ? (int)($adj->handling_actual ?? 0) : null; // null jika tidak ada row
 
                 // OS NETTO untuk scoring (tidak boleh negatif)
@@ -131,7 +136,6 @@ class SoKpiMonthlyService
                 $rrOsCurrent = 0;
                 $rrPct       = 0.0;
 
-                // kalau period sebelum cohort start, RR = 0 (tidak ada cohort)
                 if ($period >= $rrCohortStart) {
                     $accountNos = DB::table('loan_disbursements')
                         ->whereBetween('period', [$rrCohortStart, $period]) // ✅ kumulatif sejak Jan 2026
@@ -199,7 +203,7 @@ class SoKpiMonthlyService
                 $targetId       = $t->id ?? null;
                 $targetOs       = (int) ($t->target_os_disbursement ?? 0);
                 $targetNoa      = (int) ($t->target_noa_disbursement ?? 0);
-                $targetRr       = (float)($t->target_rr ?? 100);
+                $targetRr       = (float)($t->target_rr ?? 100); // hanya untuk display/cek, scoring pakai rrPct table
                 $targetHandling = (int) ($t->target_activity ?? 0);
 
                 // ====== existing monthly row (fallback utk handling kalau belum ada input KBL) ======
@@ -209,26 +213,76 @@ class SoKpiMonthlyService
                     ->first();
 
                 $handlingActual = is_null($handlingManual)
-                    ? (int)($existing->activity_actual ?? 0) // fallback data lama
-                    : (int)$handlingManual;                  // ✅ dari input KBL
+                    ? (int)($existing->activity_actual ?? 0)
+                    : (int)$handlingManual;
 
-                // ====== pct & scores ======
-                // ✅ OS achievement harus pakai NETTO
-                $osAchPct       = KpiScoreHelper::safePct((float)$osNet, (float)$targetOs);
-                $noaAchPct      = KpiScoreHelper::safePct((float)$noaDisb, (float)$targetNoa);
-                $handlingPct    = KpiScoreHelper::safePct((float)$handlingActual, (float)$targetHandling);
+                // =========================
+                // Helpers (local, no impact to other KPI)
+                // =========================
+                $safePct = function (float $actual, float $target): float {
+                    if ($target <= 0) return 0.0;
+                    return round(100.0 * $actual / $target, 2);
+                };
 
-                $scoreOs        = KpiScoreHelper::scoreFromAchievementPct($osAchPct);
-                $scoreNoa       = KpiScoreHelper::scoreFromAchievementPct($noaAchPct);
+                $scoreByAchPct = function (?float $achPct): int {
+                    if ($achPct === null) return 1;
+                    if ($achPct < 25) return 1;
+                    if ($achPct < 50) return 2;
+                    if ($achPct < 75) return 3;
+                    if ($achPct < 100) return 4;
+                    if ($achPct <= 100.0000001) return 5;
+                    return 6;
+                };
 
-                // RR scoring: pakai rrPct actual (0..100)
-                $scoreRr        = KpiScoreHelper::scoreFromRepaymentRate($rrPct);
-                $scoreHandling  = KpiScoreHelper::scoreFromAchievementPct($handlingPct);
+                $scoreByNoa = function (int $n): int {
+                    if ($n <= 1) return 1;
+                    if ($n === 2) return 2;
+                    if ($n === 3) return 3;
+                    if ($n === 4) return 4;
+                    if ($n === 5) return 5;
+                    return 6;
+                };
 
-                // total (SO): OS 40, NOA 30, RR 20, Handling 10
+                // RR untuk SO: <70, 70-79.9, 80-89.9, 90-94.9, 95-99.9, 100
+                $scoreByRrSo = function (?float $rr): int {
+                    if ($rr === null) return 1;
+                    if ($rr < 70) return 1;
+                    if ($rr < 80) return 2;
+                    if ($rr < 90) return 3;
+                    if ($rr < 95) return 4;
+                    if ($rr < 100) return 5;
+                    return 6; // 100
+                };
+
+                // Handling komunitas: 0=1, 1=4, 2=5, >2=6
+                $scoreByHandling = function (int $n): int {
+                    if ($n <= 0) return 1;
+                    if ($n === 1) return 4;
+                    if ($n === 2) return 5;
+                    return 6; // >2
+                };
+
+                // ====== pct (untuk display) ======
+                $osAchPct       = $safePct((float)$osNet, (float)$targetOs);
+                $noaAchPct      = $safePct((float)$noaDisb, (float)$targetNoa);
+                $handlingPct    = $safePct((float)$handlingActual, (float)$targetHandling);
+
+                // ====== scores (NEW 1..6) ======
+                $scoreOs        = $scoreByAchPct($osAchPct);
+
+                // ✅ sesuai tabel SO: NOA score berdasar jumlah NOA realisasi (bukan %)
+                $scoreNoa       = $scoreByNoa($noaDisb);
+
+                // ✅ RR score berdasar rrPct
+                $scoreRr        = $scoreByRrSo($rrPct);
+
+                // ✅ handling score berdasar jumlah handling
+                $scoreHandling  = $scoreByHandling($handlingActual);
+
+                // ✅ total (SO NEW): OS 55, NOA 15, RR 20, Handling 10
                 $total = round(
-                    $scoreOs * 0.40 +
-                    $scoreNoa * 0.30 +
+                    $scoreOs * 0.55 +
+                    $scoreNoa * 0.15 +
                     $scoreRr * 0.20 +
                     $scoreHandling * 0.10,
                     2
@@ -241,7 +295,7 @@ class SoKpiMonthlyService
                     'ao_code'   => $aoCode,
                     'target_id' => $targetId,
 
-                    // ✅ simpan NET untuk konsistensi dashboard/ranking
+                    // ✅ simpan NET untuk scoring
                     'os_disbursement'  => $osNet,
                     'noa_disbursement' => $noaDisb,
 
@@ -257,10 +311,14 @@ class SoKpiMonthlyService
                     'activity_actual' => $handlingActual,
                     'activity_pct'    => $handlingPct,
 
+                    // (optional) simpan juga achievement lain kalau kolommu ada di db (kalau belum, aman diabaikan)
+                    // 'os_pct'  => $osAchPct,
+                    // 'noa_pct' => $noaAchPct,
+
                     'is_final'      => true,
                     'calculated_at' => now(),
 
-                    // scores
+                    // scores (NEW 1..6)
                     'score_os'       => $scoreOs,
                     'score_noa'      => $scoreNoa,
                     'score_rr'       => $scoreRr,

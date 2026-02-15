@@ -16,7 +16,7 @@
 
   // akses input komunitas only KBL & SO
   $canInputSoCommunity = ($roleSel === 'SO') && auth()->user()?->hasAnyRole(['KBL']);
-  $canManageRoTargets = auth()->user()?->hasAnyRole(['KBL']);
+  $canManageTargets = auth()->user()?->hasAnyRole(['KBL']);
 @endphp
 
 
@@ -74,16 +74,22 @@
             ✍️ Buat Target SO
           </a>
         @endif
-        @if($roleSel === 'RO' && $canManageRoTargets)
+        @if($roleSel === 'RO' && $canManageTargets)
           <a href="{{ route('kpi.ro.targets.index', ['period' => $periodYm]) }}"
             class="rounded-xl bg-emerald-600 px-4 py-2 text-white text-sm font-semibold hover:bg-emerald-700">
             🎯 Input Target RO
           </a>
         @endif
-        @if($roleSel === 'FE' && $canManageRoTargets)
+        @if($roleSel === 'FE' && $canManageTargets)
           <a href="{{ route('kpi.fe.targets.index', ['period' => $periodYm]) }}"
             class="rounded-xl bg-emerald-600 px-4 py-2 text-white text-sm font-semibold hover:bg-emerald-700">
             🎯 Input Target FE
+          </a>
+        @endif
+        @if($roleSel === 'BE' && $canManageTargets)
+          <a href="{{ route('kpi.be.targets.index', ['period' => $periodYm]) }}"
+            class="rounded-xl bg-emerald-600 px-4 py-2 text-white text-sm font-semibold hover:bg-emerald-700">
+            🎯 Input Target BE
           </a>
         @endif
         {{-- Input Komunitas & Adjustment (KBL only, SO only) --}}
@@ -138,6 +144,17 @@
                 🔄 Recalc FE
               </button>
             </form>
+          
+          @elseif($roleSel === 'BE')
+            {{-- ✅ Recalc FE (mode auto: bulan ini realtime, bulan lalu kebawah eom) --}}
+            <form method="POST" action="{{ route('kpi.recalc.be') }}"
+                  onsubmit="return confirm('Recalc KPI BE untuk periode ini?')">
+              @csrf
+              <input type="hidden" name="period" value="{{ $periodYm ?? now()->format('Y-m') }}">
+              <button class="rounded-xl bg-orange-600 px-4 py-2 text-white text-sm font-semibold hover:bg-orange-700">
+                🔄 Recalc BE
+              </button>
+            </form>
           @endif
         @endcan
 
@@ -160,6 +177,8 @@
       @include('kpi.marketing.partials.sheet_ro')
     @elseif($roleSel === 'FE')
       @include('kpi.marketing.partials.sheet_fe')
+    @elseif($roleSel === 'BE')
+      @include('kpi.marketing.partials.sheet_be')
     @endif
   @endif
 

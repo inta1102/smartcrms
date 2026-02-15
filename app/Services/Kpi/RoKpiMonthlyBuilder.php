@@ -6,7 +6,6 @@ use App\Models\KpiRoMonthly;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
-
 class RoKpiMonthlyBuilder
 {
     public function __construct(
@@ -33,8 +32,10 @@ class RoKpiMonthlyBuilder
         float $topupTarget = 750_000_000
     ): array {
         $period = Carbon::parse($periodYmd)->startOfMonth();
-        $periodMonth = $period->toDateString();                 // YYYY-MM-01
-        $snapPrev    = $period->copy()->subMonth()->toDateString(); // prev YYYY-MM-01
+        $periodMonth = $period->toDateString();                      // YYYY-MM-01
+        $snapPrev    = $period->copy()->subMonth()->toDateString();  // prev YYYY-MM-01
+
+        // baseline AO set (prev snapshot)
         $baselineAos = array_flip($this->baselineAoSet($snapPrev, $branchCode, $aoCode));
 
         // ---- 1) TopUp (pakai service yang sudah “kuat”)
@@ -68,7 +69,6 @@ class RoKpiMonthlyBuilder
         $skippedLocked = 0;
 
         foreach ($aoCodes as $ao) {
-            // ambil existing row (kalau ada)
             $row = KpiRoMonthly::query()
                 ->whereDate('period_month', $periodMonth)
                 ->where('ao_code', $ao)
@@ -80,31 +80,44 @@ class RoKpiMonthlyBuilder
                 continue;
             }
 
+            $hasBaseline = isset($baselineAos[$ao]);
+
             // meta dari topup service (kalau ada)
             $meta = $topupByAo[$ao] ?? null;
-
-            // default meta: tetap isi audit trail semampunya
             $startSnapshotMonth = $meta['start_snapshot_month'] ?? $snapPrev;
             $endSnapshotMonth   = $meta['end_snapshot_month'] ?? ($mode === 'eom' ? $periodMonth : null);
             $srcPosDate         = $meta['latest_position_date'] ?? null;
-            $hasBaseline = isset($baselineAos[$ao]);
-            $baselineOk = $hasBaseline ? 1 : 0;
+
+            $baselineOk   = $hasBaseline ? 1 : 0;
             $baselineNote = $hasBaseline ? null : "Snapshot prev not found: {$snapPrev}";
 
-            // if (!$hasBaseline) {
-            //     // konservatif: jangan hitung topup & migrasi DPK tanpa baseline
-            //     $topup = ['realisasi_topup'=>0.0,'target'=>$topupTarget,'pct'=>0.0,'score'=>1];
-            //     $dpk   = ['pct'=>0.0,'score'=>1]; // atau score terendah biar tidak “bagus palsu”
-
-            //     // OPTIONAL: kalau mau terlihat jelas di UI, kita bisa simpan catatan/flag (lihat rekomendasi kolom di bawah)
-            // }
-
-            // komponen default
+            // ===== default komponen =====
             $topup = $topupByAo[$ao] ?? [
                 'realisasi_topup' => 0.0,
                 'target' => $topupTarget,
                 'pct' => 0.0,
                 'score' => 1,
+
+                'topup_cif_count' => 0,
+                'topup_cif_new_count' => 0,
+                'topup_max_cif_amount' => 0.0,
+                'topup_concentration_pct' => 0.0,
+                'topup_top3' => [],
+            ];
+
+            $repay = $repaymentByAo[$ao] ?? [
+                'rate'  => 0.0,
+                'pct'   => 0.0,
+                'score' => 1,
+                'total_os' => 0.0,
+                'os_lancar' => 0.0,
+            ];
+
+            $noa = $noaByAo[$ao] ?? [
+                'realisasi' => 0,
+                'target'    => 2,
+                'pct'       => 0.0,
+                'score'     => 1,
             ];
 
             $dpk = $dpkByAo[$ao] ?? [
@@ -115,19 +128,27 @@ class RoKpiMonthlyBuilder
                 'total_os_akhir' => 0.0,
             ];
 
-            // RULE A: kalau baseline kosong, jangan percaya TopUp & DPK migrasi
+            // RULE A: kalau baseline kosong, jangan percaya TopUp & DPK migrasi & NOA
             if (!$hasBaseline) {
                 $topup = [
                     'realisasi_topup' => 0.0,
                     'target' => $topupTarget,
                     'pct' => 0.0,
                     'score' => 1,
+
+                    'topup_cif_count' => 0,
+                    'topup_cif_new_count' => 0,
+                    'topup_max_cif_amount' => 0.0,
+                    'topup_concentration_pct' => 0.0,
+                    'topup_top3' => [],
                 ];
 
-                // konservatif: kasih score terendah supaya tidak “aman palsu”
                 $dpk = [
                     'pct' => 0.0,
                     'score' => 1,
+                    'migrasi_count' => 0,
+                    'migrasi_os' => 0.0,
+                    'total_os_akhir' => 0.0,
                 ];
 
                 $noa = [
@@ -136,21 +157,7 @@ class RoKpiMonthlyBuilder
                     'pct'       => 0.0,
                     'score'     => 1,
                 ];
-
             }
-
-            $repay = $repaymentByAo[$ao] ?? [
-                'rate'  => 0.0,
-                'pct'   => 0.0,
-                'score' => 1,
-            ];
-
-            $noa = $noaByAo[$ao] ?? [
-                'realisasi' => 0,
-                'target'    => 2,
-                'pct'       => 0.0,
-                'score'     => 1,
-            ];
 
             // weighted score sesuai bobot slide
             $totalWeighted =
@@ -159,33 +166,48 @@ class RoKpiMonthlyBuilder
                 ($noa['score']   * 0.10) +
                 ($dpk['score']   * 0.30);
 
-           
-
             $payload = [
                 'period_month' => $periodMonth,
                 'branch_code'  => $branchCode,
                 'ao_code'      => $ao,
 
                 // TopUp
-                'topup_realisasi' => (float) $topup['realisasi_topup'],
+                'topup_realisasi' => (float) ($topup['realisasi_topup'] ?? 0),
                 'topup_target'    => (float) ($topup['target'] ?? $topupTarget),
-                'topup_pct'       => (float) $topup['pct'],
-                'topup_score'     => (int)   $topup['score'],
+                'topup_pct'       => (float) ($topup['pct'] ?? 0),
+                'topup_score'     => (int)   ($topup['score'] ?? 1),
+
+                // ✅ TopUp detail
+                'topup_cif_count' => (int)   ($topup['topup_cif_count'] ?? 0),
+                'topup_cif_new_count' => (int) ($topup['topup_cif_new_count'] ?? 0),
+                'topup_max_cif_amount' => (float) ($topup['topup_max_cif_amount'] ?? 0),
+                'topup_concentration_pct' => (float) ($topup['topup_concentration_pct'] ?? 0),
+                'topup_top3_json' => !empty($topup['topup_top3'])
+                    ? json_encode($topup['topup_top3'])
+                    : null,
 
                 // Repayment
-                'repayment_rate'  => (float) $repay['rate'],   // 0..1
-                'repayment_pct'   => (float) $repay['pct'],    // 0..100
-                'repayment_score' => (int)   $repay['score'],
+                'repayment_rate'  => (float) ($repay['rate'] ?? 0),   // 0..1
+                'repayment_pct'   => (float) ($repay['pct'] ?? 0),    // 0..100
+                'repayment_score' => (int)   ($repay['score'] ?? 1),
+
+                // ✅ Repayment detail
+                'repayment_total_os' => (float) ($repay['total_os'] ?? 0),
+                'repayment_os_lancar'=> (float) ($repay['os_lancar'] ?? 0),
 
                 // NOA
-                'noa_realisasi' => (int)   $noa['realisasi'],
+                'noa_realisasi' => (int)   ($noa['realisasi'] ?? 0),
                 'noa_target'    => (int)   ($noa['target'] ?? 2),
-                'noa_pct'       => (float) $noa['pct'],
-                'noa_score'     => (int)   $noa['score'],
+                'noa_pct'       => (float) ($noa['pct'] ?? 0),
+                'noa_score'     => (int)   ($noa['score'] ?? 1),
 
                 // DPK
-                'dpk_pct'   => (float) $dpk['pct'],    // 0..100 (percent)
-                'dpk_score' => (int)   $dpk['score'],
+                'dpk_pct'   => (float) ($dpk['pct'] ?? 0),    // 0..100
+                'dpk_score' => (int)   ($dpk['score'] ?? 1),
+
+                'dpk_migrasi_count' => (int)   ($dpk['migrasi_count'] ?? 0),
+                'dpk_migrasi_os'    => (float) ($dpk['migrasi_os'] ?? 0),
+                'dpk_total_os_akhir'=> (float) ($dpk['total_os_akhir'] ?? 0),
 
                 'total_score_weighted' => (float) round($totalWeighted, 2),
 
@@ -195,18 +217,13 @@ class RoKpiMonthlyBuilder
                 'end_snapshot_month'      => $endSnapshotMonth,
                 'calc_source_position_date' => $srcPosDate ? Carbon::parse($srcPosDate)->toDateString() : null,
 
-                'baseline_ok' => $baselineOk,
+                'baseline_ok'   => $baselineOk,
                 'baseline_note' => $baselineNote,
-
-                'dpk_migrasi_count' => (int) ($dpk['migrasi_count'] ?? 0),
-                'dpk_migrasi_os'    => (float)($dpk['migrasi_os'] ?? 0),
-                'dpk_total_os_akhir'=> (float)($dpk['total_os_akhir'] ?? 0),
-
             ];
 
             // mode eom => set locked_at
             if ($mode === 'eom') {
-                $payload['locked_at'] = $row?->locked_at ?? now(); // kalau belum locked, lock sekarang
+                $payload['locked_at'] = $row?->locked_at ?? now();
                 $payload['end_snapshot_month'] = $periodMonth;
             }
 
@@ -232,11 +249,7 @@ class RoKpiMonthlyBuilder
 
     /**
      * Repayment Rate = OS lancar / Total OS
-     * - Lancar: dpd = 0 (simple & bankable)
-     *
-     * Sumber:
-     * - mode=eom: snapshots_monthly (snapshot_month=periodMonth)
-     * - mode=realtime: loan_accounts (latest position_date)
+     * - Lancar: ft_pokok=0 AND ft_bunga=0
      */
     protected function calcRepaymentRateByAo(string $periodMonth, string $mode, ?string $branchCode, ?string $aoCode): array
     {
@@ -260,8 +273,8 @@ class RoKpiMonthlyBuilder
 
         $out = [];
         foreach ($rows as $r) {
-            $total  = (float) $r->total_os;
-            $lancar = (float) $r->os_lancar;
+            $total  = (float) ($r->total_os ?? 0);
+            $lancar = (float) ($r->os_lancar ?? 0);
 
             $rate = $total > 0 ? ($lancar / $total) : 0.0;
             $pct  = $rate * 100.0;
@@ -270,23 +283,19 @@ class RoKpiMonthlyBuilder
                 'rate'  => $rate,
                 'pct'   => $pct,
                 'score' => $this->scoreRepaymentPct($pct),
+                'total_os'  => $total,
+                'os_lancar' => $lancar,
             ];
         }
 
         return $out;
     }
 
-    /**
-     * NOA Pengembangan = jumlah CIF yang "baru aktif" di bulan KPI:
-     * - os_awal(prev_snapshot) = 0
-     * - os_akhir(endset) > 0
-     */
     protected function calcNoaPengembanganByAo(string $periodMonth, string $mode, ?string $branchCode, ?string $aoCode): array
     {
         $period = Carbon::parse($periodMonth)->startOfMonth();
         $snapPrev = $period->copy()->subMonth()->toDateString();
 
-        // OS awal per CIF (prev snapshot)
         $startQ = DB::table('loan_account_snapshots_monthly')
             ->select([
                 'ao_code',
@@ -301,7 +310,6 @@ class RoKpiMonthlyBuilder
         if ($aoCode)     $startQ->where('ao_code', $aoCode);
         $startQ->groupBy('ao_code','cif');
 
-        // OS akhir per CIF (endset)
         [$endTable, $endDateField, $endDateValue] = $this->resolveEndSet($periodMonth, $mode, $branchCode);
         if (!$endTable) return [];
 
@@ -319,7 +327,6 @@ class RoKpiMonthlyBuilder
         if ($aoCode) $endQ->where('ao_code', $aoCode);
         $endQ->groupBy('ao_code','cif');
 
-        // end-driven join, CIF baru masuk, os_awal null => 0
         $rows = DB::query()
             ->fromSub($endQ, 'e')
             ->leftJoinSub($startQ, 's', function ($join) {
@@ -335,7 +342,7 @@ class RoKpiMonthlyBuilder
 
         $out = [];
         foreach ($rows as $r) {
-            $noa = (int) $r->noa_baru;
+            $noa = (int) ($r->noa_baru ?? 0);
             $target = 2;
             $pct = $target > 0 ? ($noa / $target) * 100.0 : 0.0;
 
@@ -350,19 +357,11 @@ class RoKpiMonthlyBuilder
         return $out;
     }
 
-    /**
-     * Pemburukan Kualitas (LT -> DPK):
-     * - LT  : ft_pokok=1 OR ft_bunga=1   (snapshot prev)
-     * - DPK : kolek=2 OR ft_pokok=2 OR ft_bunga=2 (endset)
-     *
-     * pct = SUM(os_akhir rekening yang LT->DPK) / SUM(total os_akhir AO) * 100
-     */
     protected function calcPemburukanDpkByAo(string $periodMonth, string $mode, ?string $branchCode, ?string $aoCode): array
     {
         $period   = Carbon::parse($periodMonth)->startOfMonth();
         $snapPrev = $period->copy()->subMonth()->toDateString();
 
-        // START prev snapshot: ambil hanya rekening yang LT (ft=1)
         $startQ = DB::table('loan_account_snapshots_monthly')
             ->select([
                 'account_no',
@@ -373,13 +372,12 @@ class RoKpiMonthlyBuilder
             ->whereNotNull('account_no')->where('account_no','!=','')
             ->where(function ($q) {
                 $q->where('ft_pokok', 1)
-                ->orWhere('ft_bunga', 1);
+                  ->orWhere('ft_bunga', 1);
             });
 
         if ($branchCode) $startQ->where('branch_code', $branchCode);
         if ($aoCode)     $startQ->where('ao_code', $aoCode);
 
-        // END endset: status akhir + OS akhir
         [$endTable, $endDateField, $endDateValue] = $this->resolveEndSet($periodMonth, $mode, $branchCode);
         if (!$endTable) return [];
 
@@ -401,15 +399,12 @@ class RoKpiMonthlyBuilder
 
         $rows = DB::query()
             ->fromSub($endQ, 'e')
-            // JOIN by account_no (AO bisa berubah, kita tetap ikat rekeningnya)
             ->leftJoinSub($startQ, 's', function ($join) {
                 $join->on('s.account_no','=','e.account_no');
             })
             ->select([
                 'e.ao_code',
                 DB::raw('SUM(e.os_akhir_acc) AS total_os_akhir'),
-
-                // Numerator: LT (start=1) -> DPK (end=2)
                 DB::raw("
                     SUM(
                         CASE
@@ -426,7 +421,6 @@ class RoKpiMonthlyBuilder
                         END
                     ) AS os_migrasi_lt_ke_dpk
                 "),
-
                 DB::raw("
                     SUM(
                         CASE
@@ -458,8 +452,6 @@ class RoKpiMonthlyBuilder
             $out[(string)$r->ao_code] = [
                 'pct' => $pct,
                 'score' => $this->scoreDpkPct($pct),
-
-                // transparency untuk sheet
                 'migrasi_count' => $migCnt,
                 'migrasi_os'    => $migOs,
                 'total_os_akhir'=> $total,
@@ -469,34 +461,22 @@ class RoKpiMonthlyBuilder
         return $out;
     }
 
-    /**
-     * resolve end set (table & date) untuk komponen yang butuh endset:
-     * - eom: loan_account_snapshots_monthly snapshot_month = periodMonth
-     * - realtime: loan_accounts position_date = latest position_date (scope branch)
-     */
     protected function resolveEndSet(string $periodMonth, string $mode, ?string $branchCode): array
     {
         if ($mode === 'eom') {
             return ['loan_account_snapshots_monthly', 'snapshot_month', $periodMonth];
         }
 
-        // ✅ gunakan global latest position_date (bankable, konsisten)
-        $latest = DB::table('loan_accounts')->max('position_date');
+        $q = DB::table('loan_accounts');
+        if ($branchCode) $q->where('branch_code', $branchCode);
 
+        $latest = $q->max('position_date');
         if (!$latest) return [null, null, null];
 
         return ['loan_accounts', 'position_date', $latest];
     }
 
-    // ========= SCORE MAPPING =========
 
-    // Repayment Rate score (pct)
-    // 1 <70
-    // 2 70-79.9
-    // 3 80-89.9
-    // 4 90-94.9
-    // 5 95-99.9
-    // 6 100
     protected function scoreRepaymentPct(float $pct): int
     {
         if ($pct < 70) return 1;
@@ -507,7 +487,6 @@ class RoKpiMonthlyBuilder
         return 6;
     }
 
-    // NOA score (sesuai tabel: 0 => 1, 1 => 4, 2 => 5, >2 => 6)
     protected function scoreNoa(int $noa): int
     {
         if ($noa <= 0) return 1;
@@ -516,13 +495,6 @@ class RoKpiMonthlyBuilder
         return 6;
     }
 
-    // DPK score (pct migrasi)
-    // 1 >4%
-    // 2 3-3.99
-    // 3 2-2.99
-    // 4 1-1.99
-    // 5 <1%
-    // 6 0%
     protected function scoreDpkPct(float $pct): int
     {
         if ($pct <= 0) return 6;
@@ -533,9 +505,6 @@ class RoKpiMonthlyBuilder
         return 1;
     }
 
-    /**
-     * helper: cek kolom ada (biar aman kalau tabel berbeda struktur)
-     */
     protected function hasColumn(string $table, string $column): bool
     {
         static $cache = [];
@@ -560,5 +529,4 @@ class RoKpiMonthlyBuilder
 
         return $q->pluck('ao_code')->map(fn($x) => (string)$x)->all();
     }
-
 }

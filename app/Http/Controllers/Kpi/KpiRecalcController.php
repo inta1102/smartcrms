@@ -112,6 +112,39 @@ class KpiRecalcController extends Controller
             ->with('success', "Recalc FE untuk periode {$periodYm} berhasil.");
     }
 
+    public function recalcBe(Request $request)
+    {
+        $user = $request->user();
+        abort_if(!$user, 401);
+
+        // ✅ role KBL (support enum/string)
+        $lvl = strtoupper(trim((string)($user->roleValue() ?? '')));
+        if ($lvl === '') {
+            $raw = $user->level ?? null;
+            $lvl = strtoupper(trim((string)($raw instanceof \BackedEnum ? $raw->value : $raw)));
+        }
+        abort_if($lvl !== 'KBL', 403);
+
+        $periodYm = (string)($request->input('period') ?? now()->format('Y-m'));
+        abort_if(!preg_match('/^\d{4}-\d{2}$/', $periodYm), 422);
+
+        // optional: recalc untuk 1 BE tertentu
+        $only = $request->input('only');
+        $only = $only !== null && $only !== '' ? (int)$only : null;
+
+        $args = [
+            '--period' => $periodYm,
+            '--source' => 'recalc',
+        ];
+        if ($only) $args['--only'] = $only;
+
+        Artisan::call('kpi:be-build-monthly', $args);
+
+        return redirect()
+            ->back()
+            ->with('success', 'Recalc KPI BE berhasil dijalankan (KBL).');
+    }
+    
     private function resolveRoMode(Carbon $period): string
     {
         $thisMonth = now()->startOfMonth();
