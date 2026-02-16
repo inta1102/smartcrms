@@ -30,11 +30,19 @@ class SoCommunityInputController extends Controller
             ->get()
             ->keyBy('user_id');
 
-        return view('kpi.so.community_input.index', [
-            'period' => $period,
-            'users'  => $users,
-            'inputs' => $inputs,
-        ]);
+        $targetsByUserId = DB::table('kpi_so_targets')
+            ->where('period', Carbon::parse($period)->startOfMonth()->toDateString())
+            ->get()
+            ->keyBy('user_id');
+
+        return view('kpi.so.community_input.index', compact('period','users','inputs','targetsByUserId'));
+
+
+        // return view('kpi.so.community_input.index', [
+        //     'period' => $period,
+        //     'users'  => $users,
+        //     'inputs' => $inputs,
+        // ]);
     }
 
     public function store(Request $request)

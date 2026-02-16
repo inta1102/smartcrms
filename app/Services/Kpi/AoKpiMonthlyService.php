@@ -4,27 +4,21 @@ namespace App\Services\Kpi;
 
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 
 class AoKpiMonthlyService
 {
     /**
-     * KPI AO (DUAL MODE):
-     * A) MODE BARU (AO UMKM - score 1..6):
-     *    - Pertumbuhan NOA (count disbursement month)           bobot 30%
-     *    - Realisasi Bulanan (OS disbursement month, % target)  bobot 20%
-     *    - Kualitas Kredit (RR)                                bobot 25%
-     *    - Grab to Community (monthly - input/manual)          bobot 20%
-     *    - Daily Report (Kunjungan - input/manual)             bobot 5%
+     * KPI AO UMKM (single mode):
+     * - Pertumbuhan NOA (count disbursement month)           bobot 30%
+     * - Realisasi Bulanan (OS disbursement month, % target)  bobot 20%
+     * - Kualitas Kredit (RR)                                bobot 25%
+     * - Grab to Community (AUTO dari community_handlings)   bobot 20%
+     * - Daily Report (Kunjungan - input/manual)             bobot 5%
      *
-     * B) MODE LAMA (legacy):
-     *    - OS Growth 35%
-     *    - NOA Growth 15%
-     *    - RR 25%
-     *    - Migrasi NPL 15%
-     *    - Activity 10%
-     *
-     * Auto-detect MODE BARU berdasarkan kolom target di kpi_ao_targets.
+     * NOTE:
+     * - Actual Community sekarang dihitung AUTO dari tabel community_handlings (role=AO, aktif di periode).
+     * - Tabel kpi_ao_activity_inputs.community_actual dipakai sebagai ADJUSTMENT (delta) saja.
+     * - Daily report tetap dari kpi_ao_activity_inputs.daily_report_actual.
      */
     public function buildForPeriod(string $periodYmd, ?int $userId = null): array
     {
@@ -64,7 +58,27 @@ class AoKpiMonthlyService
         if (!is_null($userId)) $usersQ->where('id', $userId);
         $users = $usersQ->get();
 
-        // Opening (prev snapshot)
+        // ✅ AUTO Community actual dari community_handlings (role=AO)
+        // Count DISTINCT community_id yang aktif di periode
+        $communityAutoMap = [];
+        $userIds = $users->pluck('id')->map(fn($v) => (int)$v)->all();
+        if (!empty($userIds)) {
+            $communityAutoMap = DB::table('community_handlings')
+                ->selectRaw('user_id, COUNT(DISTINCT community_id) as cnt')
+                ->where('role', 'AO')
+                ->whereIn('user_id', $userIds)
+                ->whereDate('period_from', '<=', $period)
+                ->where(function ($q) use ($period) {
+                    $q->whereNull('period_to')
+                      ->orWhereDate('period_to', '>=', $period);
+                })
+                ->groupBy('user_id')
+                ->pluck('cnt', 'user_id')
+                ->map(fn($v) => (int)$v)
+                ->all();
+        }
+
+        // Opening (prev snapshot) - tetap ada buat info portfolio
         $openingAgg = DB::table('loan_account_snapshots_monthly')
             ->selectRaw("LPAD(TRIM(ao_code),6,'0') as ao_code, ROUND(SUM(outstanding)) as os_opening, COUNT(*) as noa_opening")
             ->where('snapshot_month', $prevPeriod)
@@ -88,10 +102,13 @@ class AoKpiMonthlyService
                 ROUND(SUM(amount)) as os_disbursement,
                 COUNT(DISTINCT account_no) as noa_disbursement
             ")
-            ->where('period', $period)
+            ->where(function($q) use ($period, $periodEnd) {
+                $q->whereDate('period', $period)
+                    ->orWhereBetween('disb_date', [$period, $periodEnd]);
+            })
             ->groupBy('ao_code');
 
-        // ✅ RR (OS lancar tanpa tunggakan / total OS)
+        // ✅ RR (OS lancar tanpa tunggakan / total OS) => simpan TOTAL & CURRENT untuk weighted TLUM
         $rrAgg = $hasSnapshotPeriod
             ? DB::table('loan_account_snapshots_monthly')
                 ->selectRaw("
@@ -116,7 +133,8 @@ class AoKpiMonthlyService
             ->get()
             ->keyBy('user_id');
 
-        // ✅ input manual AO: community + daily report
+        // ✅ input manual AO: (sekarang) community_adjustment + daily report
+        // - community_actual => diperlakukan sebagai ADJUSTMENT (delta) terhadap AUTO dari community_handlings
         $inputs = DB::table('kpi_ao_activity_inputs')
             ->where('period', $period)
             ->get()
@@ -126,6 +144,7 @@ class AoKpiMonthlyService
 
         DB::transaction(function () use (
             $users,
+            $communityAutoMap,
             $openingAgg,
             $closingAgg,
             $disbAgg,
@@ -152,11 +171,11 @@ class AoKpiMonthlyService
                 $osClosing  = (int) ($close->os_closing ?? 0);
                 $noaClosing = (int) ($close->noa_closing ?? 0);
 
-                // ✅ KPI utama baru
+                // KPI utama UMKM
                 $osDisb   = (int) ($disb->os_disbursement ?? 0);
                 $noaDisb  = (int) ($disb->noa_disbursement ?? 0);
 
-                // RR
+                // RR totals (penting untuk weighted TLUM)
                 $rrOsTotal   = (int) ($rr->rr_os_total ?? 0);
                 $rrOsCurrent = (int) ($rr->rr_os_current ?? 0);
                 $rrPct       = $rrOsTotal > 0 ? round(100.0 * $rrOsCurrent / $rrOsTotal, 2) : 0.0;
@@ -164,32 +183,43 @@ class AoKpiMonthlyService
                 // targets
                 $t = $targets->get($u->id);
 
-                $targetId       = $t->id ?? null;
-                $targetOsDisb   = (int) ($t->target_os_disbursement ?? 0);
-                $targetNoaDisb  = (int) ($t->target_noa_disbursement ?? 0);
-                $targetRr       = (float)($t->target_rr ?? 100);
-                $targetCommunity= (int) ($t->target_community ?? 0);
-                $targetDaily    = (int) ($t->target_daily_report ?? 0);
+                $targetId        = $t->id ?? null;
+                $targetOsDisb    = (int) ($t->target_os_disbursement ?? 0);
+                $targetNoaDisb   = (int) ($t->target_noa_disbursement ?? 0);
+                $targetRr        = (float)($t->target_rr ?? 100);
+                $targetCommunity = (int) ($t->target_community ?? 0);
+                $targetDaily     = (int) ($t->target_daily_report ?? 0);
 
-                // manual inputs
+                // manual inputs (adjustment + daily)
                 $inp = $inputs->get($u->id);
-                $communityActual = (int)($inp->community_actual ?? 0);
-                $dailyActual     = (int)($inp->daily_report_actual ?? 0);
+
+                // ✅ AUTO community count (distinct komunitas aktif di periode)
+                $communityAuto = (int) ($communityAutoMap[$u->id] ?? 0);
+
+                // ✅ community_actual dari inputs dipakai sebagai ADJUSTMENT (delta)
+                $communityAdj  = (int) ($inp->community_actual ?? 0);
+
+                // final actual (tidak boleh negatif)
+                $communityActual = $communityAuto + $communityAdj;
+                if ($communityActual < 0) $communityActual = 0;
+
+                // daily report tetap manual
+                $dailyActual = (int) ($inp->daily_report_actual ?? 0);
 
                 // pct utk display
-                $osPct   = KpiScoreHelper::safePct((float)$osDisb, (float)$targetOsDisb);
-                $noaPct  = KpiScoreHelper::safePct((float)$noaDisb, (float)$targetNoaDisb);
-                $comPct  = KpiScoreHelper::safePct((float)$communityActual, (float)$targetCommunity);
-                $dayPct  = KpiScoreHelper::safePct((float)$dailyActual, (float)$targetDaily);
+                $osPct  = KpiScoreHelper::safePct((float)$osDisb, (float)$targetOsDisb);
+                $noaPct = KpiScoreHelper::safePct((float)$noaDisb, (float)$targetNoaDisb);
+                $comPct = KpiScoreHelper::safePct((float)$communityActual, (float)$targetCommunity);
+                $dayPct = KpiScoreHelper::safePct((float)$dailyActual, (float)$targetDaily);
 
-                // ✅ scoring sesuai rubrik AO (1..6)
-                $scoreNoa  = KpiScoreHelper::scoreFromAoNoaGrowth6($noaDisb);
-                $scoreOs   = KpiScoreHelper::scoreFromAoOsRealisasiPct6($osPct);
-                $scoreRr   = KpiScoreHelper::scoreFromRepaymentRateAo6($rrPct);
-                $scoreCom  = KpiScoreHelper::scoreFromAoCommunity6($communityActual);
-                $scoreDay  = KpiScoreHelper::scoreFromAoDailyReport6($dailyActual);
+                // scoring rubrik AO UMKM (1..6)
+                $scoreNoa = KpiScoreHelper::scoreFromAoNoaGrowth6($noaDisb);
+                $scoreOs  = KpiScoreHelper::scoreFromAoOsRealisasiPct6($osPct);
+                $scoreRr  = KpiScoreHelper::scoreFromRepaymentRateAo6($rrPct);
+                $scoreCom = KpiScoreHelper::scoreFromAoCommunity6($communityActual);
+                $scoreDay = KpiScoreHelper::scoreFromAoDailyReport6($dailyActual);
 
-                // ✅ bobot sesuai slide AO: NOA30, OS20, RR25, Community20, Daily5
+                // bobot AO UMKM: NOA30, OS20, RR25, Community20, Daily5
                 $total = round(
                     $scoreNoa * 0.30 +
                     $scoreOs  * 0.20 +
@@ -202,10 +232,11 @@ class AoKpiMonthlyService
                 $key = ['period' => $period, 'user_id' => $u->id];
 
                 $payload = [
+                    'scheme'    => 'AO_UMKM',
                     'ao_code'   => $aoCode,
                     'target_id' => $targetId,
 
-                    // info portfolio tetap disimpan (biar dashboard lama gak pecah)
+                    // info portfolio (biar legacy UI lain gak pecah)
                     'os_opening' => $osOpening,
                     'os_closing' => $osClosing,
                     'os_growth'  => ($osClosing - $osOpening),
@@ -213,27 +244,30 @@ class AoKpiMonthlyService
                     'noa_closing'=> $noaClosing,
                     'noa_growth' => ($noaClosing - $noaOpening),
 
-                    // ✅ KPI baru
+                    // KPI UMKM
                     'os_disbursement'      => $osDisb,
                     'noa_disbursement'     => $noaDisb,
                     'os_disbursement_pct'  => round($osPct, 2),
                     'noa_disbursement_pct' => round($noaPct, 2),
 
                     // RR
+                    'rr_os_total'          => $rrOsTotal,
+                    'rr_os_current'        => $rrOsCurrent,
                     'rr_due_count'         => 0,
                     'rr_paid_ontime_count' => 0,
                     'rr_pct'               => $rrPct,
 
-                    // community + daily
+                    // community (AUTO + adjustment)
                     'community_target' => $targetCommunity,
                     'community_actual' => $communityActual,
                     'community_pct'    => round($comPct, 2),
 
+                    // daily report
                     'daily_report_target' => $targetDaily,
                     'daily_report_actual' => $dailyActual,
                     'daily_report_pct'    => round($dayPct, 2),
 
-                    // legacy activity_* biarkan (0) kalau kamu gak pakai lagi
+                    // legacy activity_* diset 0
                     'activity_target' => 0,
                     'activity_actual' => 0,
                     'activity_pct'    => 0,
@@ -242,14 +276,17 @@ class AoKpiMonthlyService
                     'data_source'   => $closingSource,
                     'calculated_at' => now(),
 
-                    // scores
-                    'score_os'        => $scoreOs,
-                    'score_noa'       => $scoreNoa,
-                    'score_rr'        => $scoreRr,
-                    'score_activity'  => 0,
-                    'score_community' => $scoreCom,
-                    'score_daily_report'     => $scoreDay,
-                    'score_total'     => $total,
+                    // scores (UMKM)
+                    'score_os'           => $scoreOs,
+                    'score_noa'          => $scoreNoa,
+                    'score_rr'           => $scoreRr,
+                    'score_community'    => $scoreCom,
+                    'score_daily_report' => $scoreDay,
+                    'score_total'        => $total,
+
+                    // legacy score yg gak dipakai
+                    'score_kolek'    => 0,
+                    'score_activity' => 0,
 
                     'updated_at' => now(),
                 ];

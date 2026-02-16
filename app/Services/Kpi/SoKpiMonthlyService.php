@@ -14,7 +14,7 @@ class SoKpiMonthlyService
      * - OS Realisasi (55%)  : score by achievement % (0-24=1, 25-49=2, 50-74=3, 75-99=4, 100=5, >100=6)
      * - NOA Realisasi (15%) : score by count (1..5, >5=6)
      * - Repayment Rate (20%): score by RR% (<70=1, 70-79.9=2, 80-89.9=3, 90-94.9=4, 95-99.9=5, 100=6)
-     * - Handling Komunitas (10%): score by count (0=1, 1=4, 2=5, >2=6)  [level 2-3 di tabel "-" -> skip]
+     * - Handling Komunitas (10%): score by count (0=1, 1=4, 2=5, >2=6)
      *
      * Data:
      * - OS/NOA: loan_disbursements (period = Y-m-01)
@@ -22,9 +22,13 @@ class SoKpiMonthlyService
      *   ✅ hanya untuk rekening yang DISBURSE mulai 1 Jan 2026 s/d period KPI (kumulatif)
      *   ✅ khusus KPI Jan 2026: RR dipastikan 100% (business rule)
      *
-     * Input manual (KBL):
-     * - Handling Komunitas (handling_actual) -> dipetakan ke activity_actual
+     * Input manual (KBL) - sekarang fungsi ADJUSTMENT:
+     * - Handling Komunitas (handling_actual) -> dianggap "adjustment" (+/-) terhadap hasil AUTO dari community_handlings
      * - OS Adjustment (os_adjustment) -> mengurangi OS disbursement (raw) sebelum scoring
+     *
+     * Sumber data Handling Komunitas (AUTO):
+     * - community_handlings: count DISTINCT community_id yang aktif pada periode untuk role SO + user_id
+     *   aktif = period_from <= period AND (period_to is null OR period_to >= period)
      *
      * Rule sumber data RR:
      * - Kalau period = bulan berjalan => ambil loan_accounts pada position_date terakhir
@@ -67,11 +71,33 @@ class SoKpiMonthlyService
 
         $users = $usersQ->get();
 
-        // ✅ Input manual KBL (handling + OS adjustment)
+        // ✅ Input manual KBL (ADJUSTMENT handling + OS adjustment)
+        // NOTE: handling_actual disini dianggap adjustment (+/-) terhadap AUTO dari community_handlings
         $adjRows = KpiSoCommunityInput::query()
             ->where('period', $period)
             ->get()
             ->keyBy('user_id');
+
+        // ✅ AUTO actual komunitas dari community_handlings (role=SO)
+        // Count DISTINCT community_id yang aktif pada periode
+        $userIds = $users->pluck('id')->map(fn($v) => (int)$v)->all();
+
+        $handlingAutoMap = [];
+        if (!empty($userIds)) {
+            $handlingAutoMap = DB::table('community_handlings')
+                ->selectRaw('user_id, COUNT(DISTINCT community_id) as cnt')
+                ->where('role', 'SO')
+                ->whereIn('user_id', $userIds)
+                ->whereDate('period_from', '<=', $period)
+                ->where(function ($q) use ($period) {
+                    $q->whereNull('period_to')
+                      ->orWhereDate('period_to', '>=', $period);
+                })
+                ->groupBy('user_id')
+                ->pluck('cnt', 'user_id')
+                ->map(fn($v) => (int)$v)
+                ->all();
+        }
 
         // Disbursement agg by ao_code (normalized)
         $disbAgg = DB::table('loan_disbursements')
@@ -100,6 +126,7 @@ class SoKpiMonthlyService
             $targets,
             $disbAgg,
             $adjRows,
+            $handlingAutoMap,
             $period,
             $periodEnd,
             $rrCohortStart,
@@ -120,10 +147,17 @@ class SoKpiMonthlyService
                 $osRaw   = (int) ($d->os_disbursement ?? 0);
                 $noaDisb = (int) ($d->noa_disbursement ?? 0);
 
-                // ✅ ambil adjustment & handling manual (KBL)
+                // ✅ ambil adjustment KBL
                 $adj = $adjRows->get($u->id);
                 $osAdj = (int) ($adj->os_adjustment ?? 0);
-                $handlingManual = $adj ? (int)($adj->handling_actual ?? 0) : null; // null jika tidak ada row
+
+                // Handling:
+                // - AUTO dari community_handlings
+                // - + adjustment KBL (handling_actual) (bisa kamu jadikan delta)
+                $handlingAuto = (int) ($handlingAutoMap[$u->id] ?? 0);
+                $handlingAdj  = (int) ($adj->handling_actual ?? 0); // dianggap adjustment
+                $handlingActual = $handlingAuto + $handlingAdj;
+                if ($handlingActual < 0) $handlingActual = 0;
 
                 // OS NETTO untuk scoring (tidak boleh negatif)
                 $osNet = $osRaw - $osAdj;
@@ -203,18 +237,8 @@ class SoKpiMonthlyService
                 $targetId       = $t->id ?? null;
                 $targetOs       = (int) ($t->target_os_disbursement ?? 0);
                 $targetNoa      = (int) ($t->target_noa_disbursement ?? 0);
-                $targetRr       = (float)($t->target_rr ?? 100); // hanya untuk display/cek, scoring pakai rrPct table
+                $targetRr       = (float)($t->target_rr ?? 100); // hanya display/cek
                 $targetHandling = (int) ($t->target_activity ?? 0);
-
-                // ====== existing monthly row (fallback utk handling kalau belum ada input KBL) ======
-                $existing = DB::table('kpi_so_monthlies')
-                    ->where('period', $period)
-                    ->where('user_id', $u->id)
-                    ->first();
-
-                $handlingActual = is_null($handlingManual)
-                    ? (int)($existing->activity_actual ?? 0)
-                    : (int)$handlingManual;
 
                 // =========================
                 // Helpers (local, no impact to other KPI)
@@ -276,7 +300,7 @@ class SoKpiMonthlyService
                 // ✅ RR score berdasar rrPct
                 $scoreRr        = $scoreByRrSo($rrPct);
 
-                // ✅ handling score berdasar jumlah handling
+                // ✅ handling score berdasar jumlah handling (AUTO + adjustment)
                 $scoreHandling  = $scoreByHandling($handlingActual);
 
                 // ✅ total (SO NEW): OS 55, NOA 15, RR 20, Handling 10
@@ -310,10 +334,6 @@ class SoKpiMonthlyService
                     'activity_target' => $targetHandling,
                     'activity_actual' => $handlingActual,
                     'activity_pct'    => $handlingPct,
-
-                    // (optional) simpan juga achievement lain kalau kolommu ada di db (kalau belum, aman diabaikan)
-                    // 'os_pct'  => $osAchPct,
-                    // 'noa_pct' => $noaAchPct,
 
                     'is_final'      => true,
                     'calculated_at' => now(),

@@ -64,16 +64,19 @@ class User extends Authenticatable
      */
     public function roleValue(): string
     {
-        $v = $this->level;
+        $v = $this->level ?? null;
 
-        // kalau enum
-        if ($v instanceof \BackedEnum) return strtoupper((string)$v->value);
-        if ($v instanceof \UnitEnum)   return strtoupper((string)$v->name);
+        if ($v instanceof \BackedEnum) {
+            return strtoupper($v->value);
+        }
 
-        // kalau string biasa
-        return strtoupper((string)$v);
-        // return $this->role()?->value ?? UserRole::STAFF->value;
+        if ($v instanceof \UnitEnum) {
+            return strtoupper($v->name);
+        }
+
+        return strtoupper((string) $v);
     }
+
 
     /**
      * Accessor: $user->role_value
@@ -309,6 +312,11 @@ class User extends Authenticatable
     public function kpiFeMonthlies()
     {
         return $this->hasMany(\App\Models\KpiFeMonthly::class, 'fe_user_id');
+    }
+
+    public function isRole(string $role): bool
+    {
+        return $this->roleValue() === strtoupper($role);
     }
 
 }

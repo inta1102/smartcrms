@@ -3,15 +3,38 @@
 namespace App\Http\Controllers\Kpi;
 
 use App\Http\Controllers\Controller;
-use App\Models\MarketingKpiMonthly;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use App\Services\Kpi\MarketingKpiMonthlyService;
 
 class MarketingKpiRankingController extends Controller
 {
+    public function goto(Request $request)
+    {
+        $me = auth()->user();
+        abort_unless($me, 403);
+
+        $level = $this->normalizeLevel($me->level ?? null);
+        $role  = $this->baseRoleFromViewerLevel($level);
+
+        $period = $request->filled('period')
+            ? Carbon::parse($request->period)->startOfMonth()->format('Y-m')
+            : now()->startOfMonth()->format('Y-m');
+
+        $tab = $request->get('tab', 'score');
+        if (!in_array($tab, ['score', 'growth'], true)) $tab = 'score';
+
+        return redirect()->route('kpi.marketing.ranking.index', [
+            'role'         => $role,
+            'period'       => $period,
+            'tab'          => $tab,
+            'viewer_level' => $level,
+        ]);
+    }
+
     public function index(Request $request)
     {
         $me = auth()->user();
@@ -21,34 +44,34 @@ class MarketingKpiRankingController extends Controller
             ? Carbon::parse($request->period)->startOfMonth()
             : now()->startOfMonth();
 
-        $tab = $request->get('tab', 'score'); // score | growth
+        $tab = $request->get('tab', 'score');
         if (!in_array($tab, ['score', 'growth'], true)) $tab = 'score';
 
-        // ✅ role selector: AO|SO|RO (default AO)
-        $role = strtoupper(trim((string) $request->get('role', 'AO')));
-        if (!in_array($role, ['AO', 'SO', 'RO'], true)) $role = 'AO';
+        $viewerLevel = $request->filled('viewer_level')
+            ? strtoupper(trim((string)$request->get('viewer_level')))
+            : $this->normalizeLevel($me->level ?? null);
+
+        $isTlMode = Str::startsWith($viewerLevel, 'TL');
+
+        $defaultRole = $this->baseRoleFromViewerLevel($viewerLevel);
+        $role = strtoupper(trim((string)$request->get('role', $defaultRole)));
+        if (!in_array($role, ['AO', 'SO', 'RO', 'FE', 'BE'], true)) $role = $defaultRole;
 
         $prevPeriod = $period->copy()->subMonth()->startOfMonth();
 
         // ==========================================================
-        // ROLE RO: ambil dari kpi_ro_monthly (score & growth versi RO)
-        // Mode RO AUTO:
-        // - bulan ini => realtime
-        // - bulan lalu ke bawah => eom
+        // RO
         // ==========================================================
         if ($role === 'RO') {
             $mode = $this->resolveRoMode($period);
 
-            // =========================
-            // TAB A: Ranking KPI (Score) - RO
-            // =========================
             $scoreRows = DB::table('kpi_ro_monthly as k')
                 ->join('users as u', function ($join) {
                     $join->on('u.ao_code', '=', 'k.ao_code');
                 })
                 ->whereDate('k.period_month', $period->toDateString())
                 ->where('k.calc_mode', $mode)
-                ->where('u.level', 'RO') // ✅ hanya RO beneran
+                ->whereRaw("UPPER(TRIM(u.level)) = 'RO'")
                 ->selectRaw("
                     NULL as target_id,
                     u.id as user_id,
@@ -57,23 +80,10 @@ class MarketingKpiRankingController extends Controller
 
                     k.total_score_weighted as score_total,
 
-                    k.repayment_rate,
                     k.repayment_pct,
-                    k.repayment_score,
-
                     k.topup_realisasi,
-                    k.topup_target,
-                    k.topup_pct,
-                    k.topup_score,
-
                     k.noa_realisasi,
-                    k.noa_target,
-                    k.noa_pct,
-                    k.noa_score,
-
                     k.dpk_pct,
-                    k.dpk_score,
-
                     k.dpk_migrasi_count,
                     k.dpk_migrasi_os,
                     k.dpk_total_os_akhir,
@@ -85,30 +95,22 @@ class MarketingKpiRankingController extends Controller
                 ->orderBy('k.ao_code')
                 ->get()
                 ->values()
-                ->map(function ($r, $idx) {
-                    $r->rank = $idx + 1;
-                    return $r;
-                });
+                ->map(function ($r, $idx) { $r->rank = $idx + 1; return $r; });
 
-            // =========================
-            // TAB B: Ranking Growth (Realisasi) - RO
-            // =========================
-            // Untuk RO: growth = realisasi KPI bulan berjalan:
-            // urut: TopUp → NOA
             $growthRows = DB::table('kpi_ro_monthly as k')
                 ->join('users as u', function ($join) {
                     $join->on('u.ao_code', '=', 'k.ao_code');
                 })
                 ->whereDate('k.period_month', $period->toDateString())
                 ->where('k.calc_mode', $mode)
-                ->where('u.level', 'RO') // ✅ hanya RO beneran
+                ->whereRaw("UPPER(TRIM(u.level)) = 'RO'")
                 ->selectRaw("
                     NULL as target_id,
                     u.id as user_id,
                     k.ao_code,
                     COALESCE(u.name, CONCAT('RO ', k.ao_code)) as ao_name,
 
-                    k.topup_realisasi as os_growth,   -- reuse kolom growth existing blade
+                    k.topup_realisasi as os_growth,
                     k.noa_realisasi  as noa_growth,
 
                     k.repayment_pct,
@@ -126,109 +128,284 @@ class MarketingKpiRankingController extends Controller
                 ->orderBy('k.ao_code')
                 ->get()
                 ->values()
-                ->map(function ($r, $idx) {
-                    $r->rank = $idx + 1;
-                    return $r;
-                });
+                ->map(function ($r, $idx) { $r->rank = $idx + 1; return $r; });
 
-            return view('kpi.marketing.ranking.index', [
-                'period'     => $period,
-                'prevPeriod' => $prevPeriod,
-                'tab'        => $tab,
-                'role'       => $role,
-                'mode'       => $mode, // boleh tetap dikirim untuk info kecil (tanpa dropdown)
-                'scoreRows'  => $scoreRows,
-                'growthRows' => $growthRows,
-            ]);
+            return view('kpi.marketing.ranking.index', compact(
+                'period','prevPeriod','tab','role','viewerLevel','isTlMode','mode','scoreRows','growthRows'
+            ));
         }
 
         // ==========================================================
-        // ROLE AO / SO: Marketing KPI Monthly
+        // SO (kpi_so_monthlies)
         // ==========================================================
+        if ($role === 'SO') {
+            $scoreRows = DB::table('kpi_so_monthlies as m')
+                ->join('users as u', 'u.id', '=', 'm.user_id')
+                ->whereDate('m.period', $period->toDateString())
+                ->whereRaw("UPPER(TRIM(u.level)) = 'SO'")
+                ->selectRaw("
+                    NULL as target_id,
+                    u.id as user_id,
+                    u.ao_code as ao_code,
+                    u.name as ao_name,
 
-        // =========================
-        // TAB A: Ranking KPI (Score)
-        // =========================
-        $scoreRows = MarketingKpiMonthly::query()
-            ->with(['user:id,name,ao_code,level'])
-            ->whereDate('period', $period->toDateString())
-            ->whereNotNull('target_id')
-            ->whereHas('user', function ($q) use ($role) {
-                $q->where('level', $role);
-            })
-            ->orderByDesc('score_total')
-            ->orderByDesc('score_os')
-            ->orderByDesc('score_noa')
-            ->orderByDesc('os_growth')
-            ->get()
-            ->values()
-            ->map(function ($r, $idx) {
-                $r->rank = $idx + 1;
-                $r->user_id = $r->user?->id;
-                $r->ao_name = $r->user?->name ?? '-';
-                $r->ao_code = $r->user?->ao_code ?? ($r->ao_code ?? null);
-                return $r;
-            });
+                    m.score_total as score_total,
 
-        // =========================
-        // TAB B: Ranking Growth (Realisasi)
-        // =========================
-        $prevAgg = DB::table('loan_account_snapshots_monthly')
-            ->selectRaw('ao_code, ROUND(SUM(outstanding)) as os_prev, COUNT(*) as noa_prev')
-            ->where('snapshot_month', $prevPeriod->toDateString())
-            ->groupBy('ao_code');
+                    m.os_disbursement as os_disb,
+                    m.noa_disbursement as noa_disb,
+                    m.rr_pct as rr_pct,
 
-        $nowAgg = DB::table('loan_accounts')
-            ->selectRaw('ao_code, ROUND(SUM(outstanding)) as os_now, COUNT(*) as noa_now')
-            ->groupBy('ao_code');
+                    m.score_os as score_os,
+                    m.score_noa as score_noa,
+                    m.score_rr as score_rr
+                ")
+                ->orderByDesc('m.score_total')
+                ->orderByDesc('m.score_os')
+                ->orderByDesc('m.score_noa')
+                ->orderBy('u.name')
+                ->get()
+                ->values()
+                ->map(function ($r, $idx) { $r->rank = $idx + 1; return $r; });
 
-        $roleLabel = $role; // AO / SO (whitelist)
+            // growth SO (optional) – kalau mau, bisa pakai os_disbursement/noa_disbursement sebagai “realisasi”
+            $growthRows = DB::table('kpi_so_monthlies as m')
+                ->join('users as u', 'u.id', '=', 'm.user_id')
+                ->whereDate('m.period', $period->toDateString())
+                ->whereRaw("UPPER(TRIM(u.level)) = 'SO'")
+                ->selectRaw("
+                    NULL as target_id,
+                    u.id as user_id,
+                    u.ao_code as ao_code,
+                    u.name as ao_name,
 
-        $growthRows = DB::query()
-            ->fromSub($nowAgg, 'n')
-            ->leftJoinSub($prevAgg, 'p', function ($join) {
-                $join->on('p.ao_code', '=', 'n.ao_code');
-            })
-            ->leftJoin('users as u', 'u.ao_code', '=', 'n.ao_code')
-            ->whereNotNull('u.id')
-            ->where('u.level', $role)
-            ->leftJoin('marketing_kpi_targets as t', function ($join) use ($period) {
-                $join->on('t.user_id', '=', 'u.id')
-                    ->whereDate('t.period', '=', $period->toDateString());
-            })
-            ->selectRaw("
-                t.id as target_id,
-                u.id as user_id,
-                n.ao_code,
-                COALESCE(u.name, CONCAT('$roleLabel ', n.ao_code)) as ao_name,
+                    0 as os_prev,
+                    0 as os_now,
+                    m.os_disbursement as os_growth,
 
-                COALESCE(p.os_prev, 0) as os_prev,
-                COALESCE(n.os_now, 0) as os_now,
-                (COALESCE(n.os_now,0) - COALESCE(p.os_prev,0)) as os_growth,
+                    0 as noa_prev,
+                    0 as noa_now,
+                    m.noa_disbursement as noa_growth,
+                    
+                    m.score_total as score_total,
 
-                COALESCE(p.noa_prev, 0) as noa_prev,
-                COALESCE(n.noa_now, 0) as noa_now,
-                (COALESCE(n.noa_now,0) - COALESCE(p.noa_prev,0)) as noa_growth
-            ")
-            ->orderByDesc('os_growth')
-            ->orderByDesc('noa_growth')
-            ->orderBy('n.ao_code')
-            ->get()
-            ->values()
-            ->map(function ($r, $idx) {
-                $r->rank = $idx + 1;
-                return $r;
-            });
+                    m.os_disbursement as os_growth,
+                    m.noa_disbursement as noa_growth,
 
-        return view('kpi.marketing.ranking.index', [
-            'period'     => $period,
-            'prevPeriod' => $prevPeriod,
-            'tab'        => $tab,
-            'role'       => $role,
-            'mode'       => null, // ✅ tidak dipakai lagi untuk dropdown
-            'scoreRows'  => $scoreRows,
-            'growthRows' => $growthRows,
-        ]);
+                    m.rr_pct as rr_pct
+                ")
+                ->orderByDesc('m.os_disbursement')
+                ->orderByDesc('m.noa_disbursement')
+                ->orderBy('u.name')
+                ->get()
+                ->values()
+                ->map(function ($r, $idx) { $r->rank = $idx + 1; return $r; });
+
+            $mode = null;
+
+            return view('kpi.marketing.ranking.index', compact(
+                'period','prevPeriod','tab','role','viewerLevel','isTlMode','mode','scoreRows','growthRows'
+            ));
+        }
+
+        // ==========================================================
+        // AO (kpi_ao_monthlies – scheme AO_UMKM)
+        // ==========================================================
+        if ($role === 'AO') {
+            $scoreRows = DB::table('kpi_ao_monthlies as m')
+                ->join('users as u', 'u.id', '=', 'm.user_id')
+                ->whereDate('m.period', $period->toDateString())
+                ->whereRaw("UPPER(TRIM(u.level)) = 'AO'")
+                ->where('m.scheme', 'AO_UMKM')
+                ->selectRaw("
+                    NULL as target_id,
+                    u.id as user_id,
+                    u.ao_code as ao_code,
+                    u.name as ao_name,
+
+                    m.score_total as score_total,
+
+                    m.os_disbursement as os_disb,
+                    m.noa_disbursement as noa_disb,
+                    m.rr_pct as rr_pct,
+
+                    m.score_os as score_os,
+                    m.score_noa as score_noa,
+                    m.score_rr as score_rr,
+                    m.score_community as score_community
+                ")
+                ->orderByDesc('m.score_total')
+                ->orderByDesc('m.score_os')
+                ->orderByDesc('m.score_noa')
+                ->orderBy('u.name')
+                ->get()
+                ->values()
+                ->map(function ($r, $idx) { $r->rank = $idx + 1; return $r; });
+
+            // growth AO: pakai os_disbursement/noa_disbursement sebagai realisasi pertumbuhan
+            $growthRows = DB::table('kpi_ao_monthlies as m')
+                ->join('users as u', 'u.id', '=', 'm.user_id')
+                ->whereDate('m.period', $period->toDateString())
+                ->whereRaw("UPPER(TRIM(u.level)) = 'AO'")
+                ->where('m.scheme', 'AO_UMKM')
+                ->selectRaw("
+                    NULL as target_id,
+                    u.id as user_id,
+                    u.ao_code as ao_code,
+                    u.name as ao_name,
+
+                    m.os_disbursement as os_growth,
+                    m.noa_disbursement as noa_growth,
+
+                    m.rr_pct as rr_pct
+                ")
+                ->orderByDesc('m.os_disbursement')
+                ->orderByDesc('m.noa_disbursement')
+                ->orderBy('u.name')
+                ->get()
+                ->values()
+                ->map(function ($r, $idx) { $r->rank = $idx + 1; return $r; });
+
+            $mode = null;
+
+            return view('kpi.marketing.ranking.index', compact(
+                'period','prevPeriod','tab','role','viewerLevel','isTlMode','mode','scoreRows','growthRows'
+            ));
+        }
+
+        // ==========================================================
+        // FE (kpi_fe_monthlies)
+        // ==========================================================
+        if ($role === 'FE') {
+            $scoreRows = DB::table('kpi_fe_monthlies as k')
+                ->join('users as u', 'u.id', '=', 'k.fe_user_id')
+                ->whereDate('k.period', $period->toDateString())
+                ->whereRaw("UPPER(TRIM(u.level)) = 'FE'")
+                ->selectRaw("
+                    NULL as target_id,
+                    u.id as user_id,
+                    COALESCE(k.ao_code, u.ao_code) as ao_code,
+                    COALESCE(u.name, CONCAT('FE ', COALESCE(k.ao_code, u.ao_code))) as ao_name,
+
+                    k.total_score_weighted as score_total,
+
+                    k.os_kol2_turun_murni,
+                    k.os_kol2_turun_pct,
+                    k.migrasi_npl_os,
+                    k.migrasi_npl_pct,
+                    k.penalty_paid_total,
+
+                    k.baseline_ok,
+                    k.baseline_note
+                ")
+                ->orderByDesc('k.total_score_weighted')
+                ->orderByDesc('k.os_kol2_turun_murni')
+                // ✅ FIX: bukan orderByAsc()
+                ->orderBy('k.migrasi_npl_os', 'asc')
+                ->orderBy('u.name')
+                ->get()
+                ->values()
+                ->map(function ($r, $idx) { $r->rank = $idx + 1; return $r; });
+
+            // growth FE: ranking “hasil kerja” (os turun terbesar, migrasi terkecil)
+            $growthRows = DB::table('kpi_fe_monthlies as k')
+                ->join('users as u', 'u.id', '=', 'k.fe_user_id')
+                ->whereDate('k.period', $period->toDateString())
+                ->whereRaw("UPPER(TRIM(u.level)) = 'FE'")
+                ->selectRaw("
+                    NULL as target_id,
+                    u.id as user_id,
+                    COALESCE(k.ao_code, u.ao_code) as ao_code,
+                    COALESCE(u.name, CONCAT('FE ', COALESCE(k.ao_code, u.ao_code))) as ao_name,
+
+                    k.os_kol2_turun_murni as os_growth,
+                    0 as noa_growth,
+
+                    k.migrasi_npl_os,
+                    k.penalty_paid_total
+                ")
+                ->orderByDesc('k.os_kol2_turun_murni')
+                ->orderBy('k.migrasi_npl_os', 'asc')
+                ->orderBy('u.name')
+                ->get()
+                ->values()
+                ->map(function ($r, $idx) { $r->rank = $idx + 1; return $r; });
+
+            $mode = null;
+
+            return view('kpi.marketing.ranking.index', compact(
+                'period','prevPeriod','tab','role','viewerLevel','isTlMode','mode','scoreRows','growthRows'
+            ));
+        }
+
+        // ==========================================================
+        // BE (kpi_be_monthlies)
+        // ==========================================================
+        if ($role === 'BE') {
+            $scoreRows = DB::table('kpi_be_monthlies as k')
+                ->join('users as u', 'u.id', '=', 'k.be_user_id')
+                ->whereDate('k.period', $period->toDateString())
+                ->whereRaw("UPPER(TRIM(u.level)) = 'BE'")
+                ->selectRaw("
+                    NULL as target_id,
+                    u.id as user_id,
+                    u.ao_code as ao_code,
+                    u.name as ao_name,
+
+                    k.total_pi as score_total,
+
+                    k.actual_os_selesai,
+                    k.actual_noa_selesai,
+                    k.actual_bunga_masuk,
+                    k.actual_denda_masuk,
+
+                    k.net_npl_drop,
+                    k.os_npl_prev,
+                    k.os_npl_now,
+
+                    k.status
+                ")
+                ->orderByDesc('k.total_pi')
+                ->orderByDesc('k.actual_os_selesai')
+                ->orderByDesc('k.actual_noa_selesai')
+                ->orderBy('u.name')
+                ->get()
+                ->values()
+                ->map(function ($r, $idx) { $r->rank = $idx + 1; return $r; });
+
+            // growth BE: fokus “hasil” (net_npl_drop terbesar / os_selesai terbesar)
+            $growthRows = DB::table('kpi_be_monthlies as k')
+                ->join('users as u', 'u.id', '=', 'k.be_user_id')
+                ->whereDate('k.period', $period->toDateString())
+                ->whereRaw("UPPER(TRIM(u.level)) = 'BE'")
+                ->selectRaw("
+                    NULL as target_id,
+                    u.id as user_id,
+                    u.ao_code as ao_code,
+                    u.name as ao_name,
+
+                    k.net_npl_drop as os_growth,
+                    k.actual_noa_selesai as noa_growth,
+
+                    k.actual_bunga_masuk,
+                    k.actual_denda_masuk,
+                    k.status
+                ")
+                ->orderByDesc('k.net_npl_drop')
+                ->orderByDesc('k.actual_noa_selesai')
+                ->orderBy('u.name')
+                ->get()
+                ->values()
+                ->map(function ($r, $idx) { $r->rank = $idx + 1; return $r; });
+
+            $mode = null;
+
+            return view('kpi.marketing.ranking.index', compact(
+                'period','prevPeriod','tab','role','viewerLevel','isTlMode','mode','scoreRows','growthRows'
+            ));
+        }
+
+        // fallback (harusnya gak kepakai)
+        abort(404);
     }
 
     public function recalcAll(Request $request, MarketingKpiMonthlyService $svc)
@@ -261,5 +438,39 @@ class MarketingKpiRankingController extends Controller
     {
         $thisMonth = now()->startOfMonth();
         return $period->greaterThanOrEqualTo($thisMonth) ? 'realtime' : 'eom';
+    }
+
+    private function normalizeLevel($level): string
+    {
+        $raw = $level;
+        $val = (string)($raw instanceof \BackedEnum ? $raw->value : $raw);
+        return strtoupper(trim($val));
+    }
+
+    private function baseRoleFromViewerLevel(string $viewerLevel): string
+    {
+        $viewerLevel = strtoupper(trim($viewerLevel));
+
+        $map = [
+            'AO'   => 'AO',
+            'SO'   => 'SO',
+            'RO'   => 'RO',
+            'FE'   => 'FE',
+            'BE'   => 'BE',
+
+            'TLRO' => 'RO',
+            'TLSO' => 'SO',
+            'TLFE' => 'FE',
+            'TLBE' => 'BE',
+        ];
+
+        if (!isset($map[$viewerLevel]) && Str::startsWith($viewerLevel, 'TL')) {
+            if (Str::contains($viewerLevel, 'RO')) return 'RO';
+            if (Str::contains($viewerLevel, 'SO')) return 'SO';
+            if (Str::contains($viewerLevel, 'FE')) return 'FE';
+            if (Str::contains($viewerLevel, 'BE')) return 'BE';
+        }
+
+        return $map[$viewerLevel] ?? 'AO';
     }
 }

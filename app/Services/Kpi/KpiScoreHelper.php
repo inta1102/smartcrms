@@ -101,6 +101,34 @@ class KpiScoreHelper
         return 6;
     }
 
+        /**
+     * TLUM NOA rubric (sesuai slide TL UMKM):
+     * 1-6 =>1, 7-12=>2, 13-18=>3, 19-24=>4, 25-30=>5, >30=>6
+     */
+    public static function scoreFromTlumNoaGrowth6(int $noa): int
+    {
+        if ($noa <= 6) return 1;
+        if ($noa <= 12) return 2;
+        if ($noa <= 18) return 3;
+        if ($noa <= 24) return 4;
+        if ($noa <= 30) return 5;
+        return 6;
+    }
+
+    /**
+     * TLUM Community rubric (sesuai slide TL UMKM):
+     * 1=>1, 2=>2, 3=>3, 4=>4, 5=>5, >5=>6
+     */
+    public static function scoreFromTlumCommunity6(int $n): int
+    {
+        if ($n <= 1) return 1;
+        if ($n === 2) return 2;
+        if ($n === 3) return 3;
+        if ($n === 4) return 4;
+        if ($n === 5) return 5;
+        return 6;
+    }
+
     /**
      * NOA (SO rubric):
      * 1=>1, 2=>2, 3=>3, 4=>4, 5=>5, >5=>6

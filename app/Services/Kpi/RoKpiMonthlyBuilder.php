@@ -38,7 +38,7 @@ class RoKpiMonthlyBuilder
         // baseline AO set (prev snapshot)
         $baselineAos = array_flip($this->baselineAoSet($snapPrev, $branchCode, $aoCode));
 
-        // ---- 1) TopUp (pakai service yang sudah “kuat”)
+        // ---- 1) TopUp (✅ by disbursement bulan KPI)
         $topupByAo = $this->topupService->buildForMonth(
             $periodMonth,
             $topupTarget,
@@ -50,7 +50,7 @@ class RoKpiMonthlyBuilder
         // ---- 2) Repayment Rate (OS lancar / total OS) + Score
         $repaymentByAo = $this->calcRepaymentRateByAo($periodMonth, $mode, $branchCode, $aoCode);
 
-        // ---- 3) NOA pengembangan (CIF baru: os_awal=0 -> os_akhir>0) + Score
+        // ---- 3) ✅ NOA pengembangan (FIX): disbursement NEW bulan KPI (bukan snapshot delta)
         $noaByAo = $this->calcNoaPengembanganByAo($periodMonth, $mode, $branchCode, $aoCode);
 
         // ---- 4) Pemburukan DPK (kolek 1 -> kolek 2) / total OS akhir + Score
@@ -291,59 +291,104 @@ class RoKpiMonthlyBuilder
         return $out;
     }
 
+    /**
+     * ✅ FIX NOA Pengembangan (anti mutasi / limpahan):
+     * dihitung dari DISBURSEMENT bulan KPI saja, dan yang dihitung = NEW (non-topup).
+     *
+     * Default count = COUNT(DISTINCT account_no) per AO.
+     * Jika account_no tidak ada, fallback ke COUNT(DISTINCT cif).
+     */
     protected function calcNoaPengembanganByAo(string $periodMonth, string $mode, ?string $branchCode, ?string $aoCode): array
     {
         $period = Carbon::parse($periodMonth)->startOfMonth();
-        $snapPrev = $period->copy()->subMonth()->toDateString();
+        $periodStart = $period->toDateString();
+        $periodEnd   = $period->copy()->endOfMonth()->toDateString();
 
-        $startQ = DB::table('loan_account_snapshots_monthly')
+        $q = DB::table('loan_disbursements');
+
+        // filter branch (kalau kolom ada)
+        if ($branchCode && $this->hasColumn('loan_disbursements', 'branch_code')) {
+            $q->where('branch_code', $branchCode);
+        }
+
+        // filter AO
+        if ($aoCode) {
+            $q->whereRaw("LPAD(TRIM(ao_code),6,'0') = ?", [str_pad(trim((string)$aoCode), 6, '0', STR_PAD_LEFT)]);
+        }
+
+        // filter bulan KPI (utama pakai period)
+        if ($this->hasColumn('loan_disbursements', 'period')) {
+            $q->whereDate('period', $periodMonth);
+        }
+
+        // perketat pakai tanggal kalau ada
+        $dateCol = $this->firstExistingColumn('loan_disbursements', [
+            'disbursed_at',
+            'disbursement_date',
+            'tanggal_disbursement',
+            'disb_date',
+            'trx_date',
+            'created_at',
+        ]);
+        if ($dateCol) {
+            $q->whereBetween(DB::raw("DATE($dateCol)"), [$periodStart, $periodEnd]);
+        }
+
+        // ✅ NOA pengembangan = NEW (non-topup)
+        $q->where(function ($qq) {
+            $has = false;
+
+            if ($this->hasColumn('loan_disbursements', 'is_topup')) {
+                $qq->orWhere('is_topup', 0);
+                $has = true;
+            }
+
+            if ($this->hasColumn('loan_disbursements', 'disbursement_type')) {
+                // paling aman: exclude TOPUP
+                $qq->orWhere('disbursement_type', '!=', 'TOPUP');
+                $has = true;
+            }
+
+            if ($this->hasColumn('loan_disbursements', 'trx_type')) {
+                $qq->orWhere('trx_type', '!=', 'TOPUP');
+                $has = true;
+            }
+
+            if ($this->hasColumn('loan_disbursements', 'purpose')) {
+                $qq->orWhereNotIn('purpose', ['TOPUP', 'TU', 'TOP UP', 'TOP-UP']);
+                $has = true;
+            }
+
+            // kalau tidak ada indikator jenis sama sekali, jangan filter biar tidak kosong
+            if (!$has) {
+                $qq->whereRaw('1=1');
+            }
+        });
+
+        // basic sanity
+        $q->whereNotNull('ao_code')->where('ao_code', '!=', '');
+
+        // hitung distinct by account_no kalau ada; kalau tidak, fallback cif
+        $useAccount = $this->hasColumn('loan_disbursements', 'account_no');
+
+        $rows = (clone $q)
             ->select([
-                'ao_code',
-                'cif',
-                DB::raw('SUM(outstanding) AS os_awal'),
+                DB::raw("LPAD(TRIM(ao_code),6,'0') as ao_code"),
+                $useAccount
+                    ? DB::raw("COUNT(DISTINCT account_no) as noa_new")
+                    : DB::raw("COUNT(DISTINCT cif) as noa_new"),
             ])
-            ->whereDate('snapshot_month', $snapPrev)
-            ->whereNotNull('ao_code')->where('ao_code', '!=', '')
-            ->whereNotNull('cif')->where('cif', '!=', '');
-
-        if ($branchCode) $startQ->where('branch_code', $branchCode);
-        if ($aoCode)     $startQ->where('ao_code', $aoCode);
-        $startQ->groupBy('ao_code','cif');
-
-        [$endTable, $endDateField, $endDateValue] = $this->resolveEndSet($periodMonth, $mode, $branchCode);
-        if (!$endTable) return [];
-
-        $endQ = DB::table($endTable)
-            ->select([
-                'ao_code',
-                'cif',
-                DB::raw('SUM(outstanding) AS os_akhir'),
-            ])
-            ->whereDate($endDateField, $endDateValue)
-            ->whereNotNull('ao_code')->where('ao_code', '!=', '')
-            ->whereNotNull('cif')->where('cif', '!=', '');
-
-        if ($branchCode && $this->hasColumn($endTable, 'branch_code')) $endQ->where('branch_code', $branchCode);
-        if ($aoCode) $endQ->where('ao_code', $aoCode);
-        $endQ->groupBy('ao_code','cif');
-
-        $rows = DB::query()
-            ->fromSub($endQ, 'e')
-            ->leftJoinSub($startQ, 's', function ($join) {
-                $join->on('e.ao_code','=','s.ao_code')
-                     ->on('e.cif','=','s.cif');
-            })
-            ->select([
-                'e.ao_code',
-                DB::raw("SUM(CASE WHEN IFNULL(s.os_awal,0)=0 AND e.os_akhir>0 THEN 1 ELSE 0 END) AS noa_baru"),
-            ])
-            ->groupBy('e.ao_code')
+            ->groupBy('ao_code')
             ->get();
 
         $out = [];
         foreach ($rows as $r) {
-            $noa = (int) ($r->noa_baru ?? 0);
+            $noa = (int) ($r->noa_new ?? 0);
+
+            // NOTE: target masih hardcoded 2 sesuai versi kamu sebelumnya.
+            // Kalau target NOA RO seharusnya dinamis (misal 4 seperti screenshot), nanti kita pindahkan ke table/setting.
             $target = 2;
+
             $pct = $target > 0 ? ($noa / $target) * 100.0 : 0.0;
 
             $out[(string)$r->ao_code] = [
@@ -476,7 +521,6 @@ class RoKpiMonthlyBuilder
         return ['loan_accounts', 'position_date', $latest];
     }
 
-
     protected function scoreRepaymentPct(float $pct): int
     {
         if ($pct < 70) return 1;
@@ -513,6 +557,14 @@ class RoKpiMonthlyBuilder
 
         $cols = DB::getSchemaBuilder()->getColumnListing($table);
         return $cache[$k] = in_array($column, $cols, true);
+    }
+
+    protected function firstExistingColumn(string $table, array $candidates): ?string
+    {
+        foreach ($candidates as $c) {
+            if ($this->hasColumn($table, $c)) return $c;
+        }
+        return null;
     }
 
     protected function baselineAoSet(string $snapshotMonth, ?string $branchCode = null, ?string $aoCode = null): array

@@ -9,70 +9,95 @@ use Illuminate\Support\Facades\DB;
 
 class KpiAoTargetController extends Controller
 {
+    private function normPeriod(?string $raw): string
+    {
+        $raw = trim((string)$raw);
+        if ($raw === '') return now()->startOfMonth()->toDateString();
+
+        // support input type="month" => "YYYY-MM"
+        if (preg_match('/^\d{4}-\d{2}$/', $raw)) $raw .= '-01';
+
+        return Carbon::parse($raw)->startOfMonth()->toDateString();
+    }
+
+    private function toIntMoney($v): int
+    {
+        // aman untuk: "Rp 1.500.000.000" / "1,500,000,000" / "1500000000"
+        $s = preg_replace('/[^\d\-]/', '', (string)($v ?? '0'));
+        if ($s === '' || $s === '-') return 0;
+        return (int)$s;
+    }
+
+    private function toInt($v): int
+    {
+        if ($v === null || $v === '') return 0;
+        return (int)$v;
+    }
+
+    private function toPct($v, float $default = 100.0): float
+    {
+        if ($v === null || $v === '') return $default;
+        $x = (float)$v;
+        if ($x < 0) $x = 0;
+        if ($x > 100) $x = 100;
+        return $x;
+    }
+
     public function index(Request $request)
     {
-        $period = $request->get('period')
-            ? Carbon::parse($request->get('period'))->startOfMonth()->toDateString()
-            : now()->startOfMonth()->toDateString();
+        $periodYmd = $this->normPeriod($request->get('period'));
 
         $users = DB::table('users')
             ->select(['id','name','ao_code','level'])
-            ->whereIn('level', ['AO'])
+            ->where('level', 'AO')
             ->whereNotNull('ao_code')->where('ao_code','!=','')
             ->orderBy('name')
             ->get();
 
         $targets = DB::table('kpi_ao_targets')
-            ->where('period', $period)
+            ->where('period', $periodYmd)
             ->get()
             ->keyBy('user_id');
 
-        return view('kpi.ao.targets', compact('period','users','targets'));
+        return view('kpi.ao.targets.index', compact('periodYmd','users','targets'));
     }
 
     public function store(Request $request)
     {
-        $period = Carbon::parse($request->string('period'))->startOfMonth()->toDateString();
+        $periodYmd = $this->normPeriod($request->string('period'));
 
-        $rows = (array) $request->input('rows', []);
+        // ✅ SESUAI blade: name="targets[userId][field]"
+        $rows = (array) $request->input('targets', []);
 
-        DB::transaction(function () use ($rows, $period) {
+        DB::transaction(function () use ($rows, $periodYmd) {
             foreach ($rows as $userId => $r) {
-                $userId = (int) $userId;
+                $userId = (int)$userId;
 
-                $aoCode = str_pad(trim((string)($r['ao_code'] ?? '')), 6, '0', STR_PAD_LEFT);
+                // ✅ ambil ao_code dari master users (lebih valid)
+                $aoCodeDb = (string) DB::table('users')->where('id', $userId)->value('ao_code');
+                $aoCode = str_pad(trim($aoCodeDb), 6, '0', STR_PAD_LEFT);
 
                 $payload = [
-                    'period' => $period,
+                    'period'  => $periodYmd,
                     'user_id' => $userId,
                     'ao_code' => $aoCode,
 
-                    // ✅ target KPI AO versi baru
-                    'target_os_disbursement'  => (int)($r['target_os_disbursement'] ?? 0),
-                    'target_noa_disbursement' => (int)($r['target_noa_disbursement'] ?? 0),
-                    'target_rr'               => (float)($r['target_rr'] ?? 100),
-                    'target_community'        => (int)($r['target_community'] ?? 0),
-                    'target_daily_report'     => (int)($r['target_daily_report'] ?? 0),
+                    // ✅ target AO UMKM (baru)
+                    'target_os_disbursement'  => $this->toIntMoney($r['target_os_disbursement'] ?? 0),
+                    'target_noa_disbursement' => $this->toInt($r['target_noa_disbursement'] ?? 0),
+                    'target_rr'               => $this->toPct($r['target_rr'] ?? null, 90.0),
+                    'target_community'        => $this->toInt($r['target_community'] ?? 0),
+                    'target_daily_report'     => $this->toInt($r['target_daily_report'] ?? 0),
 
-                    // status flow (opsional, menyesuaikan pola kamu)
-                    'status' => (string)($r['status'] ?? 'draft'),
+                    // optional flow
+                    'status'     => (string)($r['status'] ?? 'draft'),
                     'updated_at' => now(),
                 ];
 
-                $exists = DB::table('kpi_ao_targets')
-                    ->where('period', $period)
-                    ->where('user_id', $userId)
-                    ->exists();
-
-                if ($exists) {
-                    DB::table('kpi_ao_targets')
-                        ->where('period', $period)
-                        ->where('user_id', $userId)
-                        ->update($payload);
-                } else {
-                    $payload['created_at'] = now();
-                    DB::table('kpi_ao_targets')->insert($payload);
-                }
+                DB::table('kpi_ao_targets')->updateOrInsert(
+                    ['period' => $periodYmd, 'user_id' => $userId],
+                    $payload + ['created_at' => now()]
+                );
             }
         });
 

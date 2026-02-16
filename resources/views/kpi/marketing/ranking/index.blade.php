@@ -4,16 +4,21 @@
 <div class="max-w-6xl mx-auto p-4">
 
     @php
-        // default safety
         $role = strtoupper(trim((string)($role ?? request('role','AO'))));
-        $mode = strtolower(trim((string)($mode ?? request('mode','realtime'))));
+
+        // ✅ mode hanya relevan untuk RO
+        $mode = null;
+        if ($role === 'RO') {
+            $mode = strtolower(trim((string)($mode ?? request('mode','realtime'))));
+            if (!in_array($mode, ['realtime','eom'], true)) $mode = 'realtime';
+        }
+
         $tab  = $tab ?? request('tab','score');
+        if (!in_array($tab, ['score','growth'], true)) $tab = 'score';
 
-        $rows = $tab==='score' ? $scoreRows : $growthRows;
+        $rows = $tab==='score' ? ($scoreRows ?? collect()) : ($growthRows ?? collect());
 
-        /**
-         * Resolver aman untuk semua row (Eloquent vs stdClass)
-         */
+        // Resolver aman untuk semua row (Eloquent vs stdClass)
         $resolveRow = function ($r) {
             $uid    = $r->user?->id ?? ($r->user_id ?? null);
             $name   = $r->user?->name ?? ($r->ao_name ?? '-');

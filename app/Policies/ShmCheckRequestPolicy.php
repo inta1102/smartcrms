@@ -23,7 +23,7 @@ class ShmCheckRequestPolicy
 
         return in_array($rv, [
             'AO','RO','SO','BE','FE',
-            'KSA','KBO','SAD',
+            'KSA','KBO','SAD','TLRO','TLSO','TLAO','TLBE','TLFE','TLUM',
         ], true);
     }
 
@@ -32,7 +32,7 @@ class ShmCheckRequestPolicy
         $rv = $this->rv($user);
 
         // admin scope
-        if (in_array($rv, ['KSA','KBO','SAD'], true)) return true;
+        if (in_array($rv, ['KSA','KBO','SAD','TLRO','TLSO','TLAO','TLBE','TLFE','TLUM'], true)) return true;
 
         // pemohon hanya miliknya sendiri
         if (in_array($rv, ['AO','RO','SO','BE','FE'], true)) {

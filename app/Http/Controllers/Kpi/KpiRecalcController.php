@@ -10,17 +10,42 @@ use App\Services\Kpi\RoKpiMonthlyBuilder;
 
 class KpiRecalcController extends Controller
 {
+    /**
+     * Terima period dari form:
+     * - "YYYY-MM"     (input type=month)
+     * - "YYYY-MM-01"  (hidden/legacy)
+     *
+     * return: [$periodYm, $periodYmd]
+     * - $periodYm  => "YYYY-MM"
+     * - $periodYmd => "YYYY-MM-01"
+     */
+    private function parsePeriod(Request $request, string $field = 'period'): array
+    {
+        $raw = trim((string) $request->input($field, ''));
+
+        // terima YYYY-MM
+        if (preg_match('/^\d{4}-\d{2}$/', $raw)) {
+            $period = Carbon::createFromFormat('Y-m', $raw)->startOfMonth();
+            return [$period->format('Y-m'), $period->toDateString()];
+        }
+
+        // terima YYYY-MM-DD (kita normalisasi ke startOfMonth)
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+            $period = Carbon::parse($raw)->startOfMonth();
+            return [$period->format('Y-m'), $period->toDateString()];
+        }
+
+        abort(422, "Invalid period format. Use YYYY-MM or YYYY-MM-01.");
+    }
+
     public function recalcSo(Request $request)
     {
-        $data = $request->validate([
-            'period' => ['required', 'date_format:Y-m'],
-        ]);
+        // samakan governance dengan RO/FE (kalau kamu sudah punya gate ini)
+        $this->authorize('recalcMarketingKpi');
 
-        $periodYmd = Carbon::createFromFormat('Y-m', $data['period'])
-            ->startOfMonth()
-            ->toDateString();
+        [$periodYm, $periodYmd] = $this->parsePeriod($request);
 
-        // 🔥 panggil command yang BENAR
+        // panggil command yang benar
         Artisan::call('kpi:so-build', [
             '--period' => $periodYmd,
         ]);
@@ -28,20 +53,16 @@ class KpiRecalcController extends Controller
         return redirect()
             ->route('kpi.marketing.sheet', [
                 'role'   => 'SO',
-                'period' => $data['period'],
+                'period' => $periodYm,
             ])
-            ->with('success', 'Recalc KPI SO berhasil dijalankan.');
+            ->with('success', "Recalc KPI SO berhasil dijalankan ({$periodYm}).");
     }
 
     public function recalcAo(Request $request)
     {
-        $data = $request->validate([
-            'period' => ['required', 'date_format:Y-m'],
-        ]);
+        $this->authorize('recalcMarketingKpi');
 
-        $periodYmd = Carbon::createFromFormat('Y-m', $data['period'])
-            ->startOfMonth()
-            ->toDateString();
+        [$periodYm, $periodYmd] = $this->parsePeriod($request);
 
         Artisan::call('kpi:ao-build', [
             '--period' => $periodYmd,
@@ -50,31 +71,21 @@ class KpiRecalcController extends Controller
         return redirect()
             ->route('kpi.marketing.sheet', [
                 'role'   => 'AO',
-                'period' => $data['period'],
+                'period' => $periodYm,
             ])
-            ->with('success', 'Recalc KPI AO berhasil dijalankan.');
+            ->with('success', "Recalc KPI AO berhasil dijalankan ({$periodYm}).");
     }
 
     public function recalcRo(Request $request, RoKpiMonthlyBuilder $builder)
     {
         $this->authorize('recalcMarketingKpi');
 
-        $data = $request->validate([
-            'period' => ['required', 'date_format:Y-m'],
-            'force'  => ['nullable', 'boolean'],
-        ]);
+        [$periodYm, $periodYmd] = $this->parsePeriod($request);
 
-        $period = Carbon::createFromFormat('Y-m', $data['period'])->startOfMonth();
+        $force = filter_var($request->input('force', false), FILTER_VALIDATE_BOOL);
 
-        // ✅ AUTO mode:
-        // - bulan ini => realtime
-        // - bulan lalu ke bawah => eom
-        $mode = $period->greaterThanOrEqualTo(now()->startOfMonth()) ? 'realtime' : 'eom';
-
-        $force = (bool)($data['force'] ?? false);
-
-        // YYYY-MM-01
-        $periodYmd = $period->toDateString();
+        $period = Carbon::parse($periodYmd)->startOfMonth();
+        $mode = $this->resolveRoMode($period);
 
         $result = $builder->buildAndStore(
             $periodYmd,
@@ -87,7 +98,7 @@ class KpiRecalcController extends Controller
 
         return back()->with(
             'status',
-            "Recalc KPI RO OK. saved={$result['saved']}, skipped_locked={$result['skipped_locked']}, total_ao={$result['total_ao']} (mode={$mode})."
+            "Recalc KPI RO OK. saved={$result['saved']}, skipped_locked={$result['skipped_locked']}, total_ao={$result['total_ao']} (mode={$mode}, period={$periodYm})."
         );
     }
 
@@ -95,14 +106,10 @@ class KpiRecalcController extends Controller
     {
         $this->authorize('recalcMarketingKpi');
 
-        $data = $request->validate([
-            'period' => ['required', 'date_format:Y-m'],
-        ]);
-
-        $periodYm = $data['period'];
+        [$periodYm, $periodYmd] = $this->parsePeriod($request);
 
         $svc = app(\App\Services\Kpi\FeKpiMonthlyService::class);
-        $svc->buildForPeriod($periodYm, auth()->user()); // ✅ hanya 2 argumen
+        $svc->buildForPeriod($periodYm, auth()->user());
 
         return redirect()
             ->route('kpi.marketing.sheet', [
@@ -117,7 +124,7 @@ class KpiRecalcController extends Controller
         $user = $request->user();
         abort_if(!$user, 401);
 
-        // ✅ role KBL (support enum/string)
+        // role KBL (support enum/string)
         $lvl = strtoupper(trim((string)($user->roleValue() ?? '')));
         if ($lvl === '') {
             $raw = $user->level ?? null;
@@ -125,35 +132,25 @@ class KpiRecalcController extends Controller
         }
         abort_if($lvl !== 'KBL', 403);
 
-        $periodYm = (string)($request->input('period') ?? now()->format('Y-m'));
-        abort_if(!preg_match('/^\d{4}-\d{2}$/', $periodYm), 422);
+        [$periodYm, $periodYmd] = $this->parsePeriod($request);
 
         // optional: recalc untuk 1 BE tertentu
         $only = $request->input('only');
         $only = $only !== null && $only !== '' ? (int)$only : null;
 
         $args = [
-            '--period' => $periodYm,
+            '--period' => $periodYm,   // command BE kamu pakai YM, biarkan konsisten
             '--source' => 'recalc',
         ];
         if ($only) $args['--only'] = $only;
 
         Artisan::call('kpi:be-build-monthly', $args);
 
-        return redirect()
-            ->back()
-            ->with('success', 'Recalc KPI BE berhasil dijalankan (KBL).');
+        return back()->with('success', "Recalc KPI BE berhasil dijalankan (KBL) ({$periodYm}).");
     }
-    
+
     private function resolveRoMode(Carbon $period): string
     {
-        $thisMonth = now()->startOfMonth();
-
-        // periode bulan ini atau lebih baru => realtime
-        if ($period->greaterThanOrEqualTo($thisMonth)) return 'realtime';
-
-        // periode bulan lalu kebawah => eom (historis)
-        return 'eom';
+        return $period->greaterThanOrEqualTo(now()->startOfMonth()) ? 'realtime' : 'eom';
     }
-
 }

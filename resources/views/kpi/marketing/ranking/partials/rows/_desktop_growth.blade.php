@@ -10,15 +10,13 @@
                 <th class="text-right px-4 py-3">DPK %</th>
             </tr>
         @else
+            {{-- ✅ Non-RO Growth = Realisasi Disbursement (bukan Prev/Now) --}}
             <tr class="border-b">
                 <th class="text-left px-4 py-3">Rank</th>
                 <th class="text-left px-4 py-3">{{ $role }}</th>
-                <th class="text-right px-4 py-3">OS Prev</th>
-                <th class="text-right px-4 py-3">OS Now</th>
-                <th class="text-right px-4 py-3">OS Growth</th>
-                <th class="text-right px-4 py-3">NOA Prev</th>
-                <th class="text-right px-4 py-3">NOA Now</th>
-                <th class="text-right px-4 py-3">NOA Growth</th>
+                <th class="text-right px-4 py-3">OS Disb</th>
+                <th class="text-right px-4 py-3">NOA Disb</th>
+                <th class="text-right px-4 py-3">RR</th>
             </tr>
         @endif
     </thead>
@@ -50,12 +48,16 @@
                         <div class="text-xs text-gray-500">{{ $role }} Code: {{ $aoCode }}</div>
                     </td>
 
-                    <td class="px-4 py-3 text-right">Rp {{ number_format((int)($r->os_prev ?? 0),0,',','.') }}</td>
-                    <td class="px-4 py-3 text-right">Rp {{ number_format((int)($r->os_now ?? 0),0,',','.') }}</td>
-                    <td class="px-4 py-3 text-right font-semibold">Rp {{ number_format((int)($r->os_growth ?? 0),0,',','.') }}</td>
-                    <td class="px-4 py-3 text-right">{{ number_format((int)($r->noa_prev ?? 0)) }}</td>
-                    <td class="px-4 py-3 text-right">{{ number_format((int)($r->noa_now ?? 0)) }}</td>
-                    <td class="px-4 py-3 text-right font-semibold">{{ number_format((int)($r->noa_growth ?? 0)) }}</td>
+                    {{-- ✅ Non-RO Growth = os_growth/noa_growth (disbursement) --}}
+                    <td class="px-4 py-3 text-right font-semibold">
+                        Rp {{ number_format((int)($r->os_growth ?? 0),0,',','.') }}
+                    </td>
+                    <td class="px-4 py-3 text-right font-semibold">
+                        {{ number_format((int)($r->noa_growth ?? 0)) }}
+                    </td>
+                    <td class="px-4 py-3 text-right">
+                        {{ number_format((float)($r->rr_pct ?? 0),2) }}%
+                    </td>
                 </tr>
             @endif
 
@@ -68,3 +70,4 @@
         @endforelse
     </tbody>
 </table>
+

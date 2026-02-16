@@ -92,6 +92,12 @@
             🎯 Input Target BE
           </a>
         @endif
+        @if($roleSel === 'AO' && $canManageTargets)
+          <a href="{{ route('kpi.ao.targets.index', ['period' => $periodYm]) }}"
+            class="rounded-xl bg-emerald-600 px-4 py-2 text-white text-sm font-semibold hover:bg-emerald-700">
+            🎯 Input Target AO
+          </a>
+        @endif
         {{-- Input Komunitas & Adjustment (KBL only, SO only) --}}
         @if($canInputSoCommunity)
           <a href="{{ route('kpi.so.community_input.index', ['period' => $periodYmd]) }}"

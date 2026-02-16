@@ -5,9 +5,6 @@ namespace App\Http\Controllers\Kpi;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use App\Services\Kpi\FeKpiMonthlyService;
-use App\Services\Kpi\BeKpiMonthlyService;
-
 
 class MarketingKpiSheetController
 {
@@ -83,10 +80,10 @@ class MarketingKpiSheetController
         $q = clone $baseQ;
         if (!empty($periodDate)) {
             $q->whereDate('effective_from', '<=', $periodDate)
-            ->where(function ($qq) use ($periodDate) {
-                $qq->whereNull('effective_to')
-                    ->orWhereDate('effective_to', '>=', $periodDate);
-            });
+              ->where(function ($qq) use ($periodDate) {
+                  $qq->whereNull('effective_to')
+                     ->orWhereDate('effective_to', '>=', $periodDate);
+              });
         }
 
         $ids = $q->pluck('user_id')
@@ -97,7 +94,6 @@ class MarketingKpiSheetController
             ->all();
 
         // 3) ✅ fallback: kalau kosong di periode tsb, ambil assignment terbaru yg aktif
-        //    Ini menyelesaikan kasus "Feb ada, Jan kosong" kalau scope dianggap current
         if (!empty($periodDate) && empty($ids)) {
             $ids = (clone $baseQ)
                 ->orderByDesc('effective_from')
@@ -152,7 +148,6 @@ class MarketingKpiSheetController
             ->map(fn ($x) => (string)$x)
             ->values()
             ->all();
-
     }
 
     // =========================
@@ -219,8 +214,8 @@ class MarketingKpiSheetController
             $rows = $rowsQ
                 ->leftJoin('kpi_ro_monthly as k', function ($j) use ($periodDate, $mode) {
                     $j->on('k.ao_code', '=', 'u.ao_code')
-                    ->where('k.period_month', '=', $periodDate)  // ✅ aman
-                    ->where('k.calc_mode', '=', $mode);
+                      ->where('k.period_month', '=', $periodDate)
+                      ->where('k.calc_mode', '=', $mode);
                 })
                 ->selectRaw("
                     u.id as user_id, u.name, u.ao_code, u.level,
@@ -359,12 +354,11 @@ class MarketingKpiSheetController
                 $sumTopupCifNew   = (int) $scoped->sum('topup_cif_new_count');
                 $maxTopupMaxCif   = (float) $scoped->max('topup_max_cif_amount');
 
-                // konsentrasi TL: ambil kontribusi top1 terbesar dari seluruh scope / total topup
-                // cara simpel: cari AO dengan topup_max_cif_amount terbesar
+                // konsentrasi TL
                 $globalTop1 = (float) $scoped->max('topup_max_cif_amount');
                 $tlConcentration = $sumTopupActual > 0 ? round(($globalTop1 / $sumTopupActual) * 100.0, 2) : 0.0;
 
-                // top3 TL: gabungkan semua top3 AO, urutkan, ambil 3 terbesar
+                // top3 TL
                 $all = [];
                 foreach ($scoped as $it) {
                     $arr = [];
@@ -376,15 +370,11 @@ class MarketingKpiSheetController
                 usort($all, fn($a,$b) => (float)($b['delta'] ?? 0) <=> (float)($a['delta'] ?? 0));
                 $tlTop3 = array_slice($all, 0, 3);
 
-                // RR: avg scope
-                $rrAvg = $scoped->count() > 0
-                    ? round((float)$scoped->avg('repayment_pct_display'), 2)
-                    : 0.0;
-
+                // RR avg / weighted
+                $rrAvg = $scoped->count() > 0 ? round((float)$scoped->avg('repayment_pct_display'), 2) : 0.0;
                 $sumOs = (float) $scoped->sum('dpk_total_os_akhir');
 
                 $rrWeighted = 0.0;
-
                 if ($sumOs > 0) {
                     $rrWeighted = round(
                         $scoped->sum(function ($it) {
@@ -395,7 +385,7 @@ class MarketingKpiSheetController
                     , 2);
                 }
 
-                $rrUsed = $rrWeighted > 0 ? $rrWeighted : $rrAvg; // fallback kalau OS=0
+                $rrUsed = $rrWeighted > 0 ? $rrWeighted : $rrAvg;
                 $targetRr = 100.0;
 
                 $achRr = $targetRr > 0 ? round(($rrUsed / $targetRr) * 100.0, 2) : 0.0;
@@ -405,7 +395,7 @@ class MarketingKpiSheetController
 
                 $dpkPctTotal = $sumOsAkhir > 0 ? round(($sumMigrasiOs / $sumOsAkhir) * 100.0, 2) : 0.0;
 
-                // target DPK TL: weighted by os_akhir (lebih fair)
+                // target DPK TL weighted by os_akhir
                 $targetDpkTl = 1.0;
                 if ($sumOsAkhir > 0) {
                     $targetDpkTl = round(
@@ -430,15 +420,15 @@ class MarketingKpiSheetController
                 $tlRecap = (object)[
                     'name'        => $leader?->name ?? '-',
                     'leader_role' => $leaderRole,
-                    'scope_count' => count($scopeAoCodes), // jumlah RO dalam scope
+                    'scope_count' => count($scopeAoCodes),
 
-                    // targets (total/avg)
+                    // targets
                     'target_topup_total' => $sumTopupTarget,
                     'target_noa_total'   => $sumNoaTarget,
                     'target_rr_pct'      => $targetRr,
                     'target_dpk_pct'     => $targetDpkTl,
 
-                    // actual (total/avg)
+                    // actual
                     'topup_actual_total' => $sumTopupActual,
                     'noa_actual_total'   => $sumNoaActual,
                     'rr_actual_avg'      => $rrUsed,
@@ -463,6 +453,7 @@ class MarketingKpiSheetController
                     'pi_dpk'       => $piDpk,
                     'pi_total'     => round($piRepay + $piTopup + $piNoa + $piDpk, 2),
 
+                    // topup meta
                     'topup_cif_count' => $sumTopupCifCount,
                     'topup_cif_new_count' => $sumTopupCifNew,
                     'topup_max_amount' => $maxTopupMaxCif,
@@ -475,9 +466,8 @@ class MarketingKpiSheetController
 
                     // RR meta
                     'rr_os_exposure' => (float) $scoped->sum('repayment_total_os'),
-                    'rr_paid_amount' => 0, // (nggak ada karena RR kamu basis FT, bukan pembayaran)
-                    'rr_account_count' => 0, // optional kalau nanti ada
-
+                    'rr_paid_amount' => 0,
+                    'rr_account_count' => 0,
                 ];
             }
 
@@ -505,7 +495,7 @@ class MarketingKpiSheetController
                 ->join('users as u', 'u.id', '=', 'm.user_id')
                 ->leftJoin('kpi_so_targets as t', function ($j) use ($periodDate) {
                     $j->on('t.user_id', '=', 'm.user_id')
-                        ->where('t.period', '=', $periodDate);
+                      ->where('t.period', '=', $periodDate);
                 })
                 ->where('m.period', $periodDate)
                 ->where('u.level', 'SO')
@@ -571,7 +561,6 @@ class MarketingKpiSheetController
         // ========= FE =========
         if ($role === 'FE') {
             $svc = app(\App\Services\Kpi\FeKpiMonthlyService::class);
-
             $res = $svc->buildForPeriod($periodYm, auth()->user());
 
             return view('kpi.marketing.sheet', [
@@ -581,14 +570,13 @@ class MarketingKpiSheetController
                 'mode'      => $res['mode'] ?? null,
                 'weights'   => $res['weights'],
                 'items'     => $res['items'],
-                'tlRecap' => $res['tlFeRecap'] ?? null,
+                'tlRecap'   => $res['tlFeRecap'] ?? null,
             ]);
         }
 
         // ========= BE =========
         if ($role === 'BE') {
             $svc = app(\App\Services\Kpi\BeKpiMonthlyService::class);
-
             $res = $svc->buildForPeriod($periodYm, auth()->user());
 
             return view('kpi.marketing.sheet', [
@@ -603,67 +591,349 @@ class MarketingKpiSheetController
         }
 
         // ========= AO =========
-        $weights = [
-            'os'       => 0.35,
-            'noa'      => 0.15,
-            'rr'       => 0.25,
-            'kolek'    => 0.15,
-            'activity' => 0.10,
+
+        // weights AO UMKM (baru) - single mode
+        $weightsUmkm = [
+            'noa'       => 0.30,
+            'os'        => 0.20,
+            'rr'        => 0.25,
+            'community' => 0.20,
+            'daily'     => 0.05,
         ];
 
+        // ====== TLUM SCOPE (untuk tabel TLUM + ranking) ======
+        $me = $request->user();
+        $tlum = null;
+        $tlumRowsRank = collect();
+
+        try {
+            $roleAliases = ['tl', 'tlum', 'tl um', 'tl-um', 'tl_um', 'tl umkm', 'tl-umkm', 'tl_umkm'];
+
+            $subUserIds = DB::table('org_assignments')
+                ->where('leader_id', (int)($me?->id ?? 0))
+                ->where('is_active', 1)
+                ->whereIn(DB::raw('LOWER(TRIM(leader_role))'), $roleAliases)
+                ->whereDate('effective_from', '<=', $periodDate)
+                ->where(function ($q) use ($periodDate) {
+                    $q->whereNull('effective_to')
+                      ->orWhereDate('effective_to', '>=', $periodDate);
+                })
+                ->pluck('user_id')
+                ->unique()
+                ->values()
+                ->all();
+
+            $aoUserIds = empty($subUserIds) ? [] : DB::table('users')
+                ->whereIn('id', $subUserIds)
+                ->where('level', 'AO')
+                ->pluck('id')
+                ->unique()
+                ->values()
+                ->all();
+
+            $baseRankQ = DB::table('kpi_ao_monthlies as m')
+                ->join('users as u', 'u.id', '=', 'm.user_id')
+                ->leftJoin('kpi_ao_targets as t', function ($j) use ($periodDate) {
+                    $j->on('t.user_id', '=', 'm.user_id')
+                      ->where('t.period', '=', $periodDate);
+                })
+                ->where('m.period', $periodDate)
+                ->where('m.scheme', 'AO_UMKM');
+
+            if (!empty($aoUserIds)) {
+                $baseRankQ->whereIn('u.id', $aoUserIds);
+            }
+
+            $rankRows = $baseRankQ
+                ->select([
+                    'u.id as user_id','u.name','u.ao_code',
+
+                    't.target_os_disbursement',
+                    't.target_noa_disbursement',
+                    't.target_rr',
+                    't.target_community',
+                    't.target_daily_report',
+
+                    'm.os_disbursement',
+                    'm.noa_disbursement',
+                    'm.os_disbursement_pct',
+                    'm.noa_disbursement_pct',
+                    'm.rr_pct',
+                    'm.rr_os_total',
+                    'm.rr_os_current',
+                    'm.community_actual',
+                    'm.community_pct',
+                    'm.daily_report_actual',
+                    'm.daily_report_pct',
+
+                    'm.score_os',
+                    'm.score_noa',
+                    'm.score_rr',
+                    'm.score_community',
+                    'm.score_daily_report',
+                    'm.score_total',
+                ])
+                ->orderByDesc('m.score_total')
+                ->orderBy('u.name')
+                ->get();
+
+            $tlumRowsRank = $rankRows->map(function ($r) use ($weightsUmkm) {
+                $piNoa = round(((float)($r->score_noa ?? 0))          * $weightsUmkm['noa'], 2);
+                $piOs  = round(((float)($r->score_os ?? 0))           * $weightsUmkm['os'], 2);
+                $piRr  = round(((float)($r->score_rr ?? 0))           * $weightsUmkm['rr'], 2);
+                $piCom = round(((float)($r->score_community ?? 0))    * $weightsUmkm['community'], 2);
+                $piDay = round(((float)($r->score_daily_report ?? 0)) * $weightsUmkm['daily'], 2);
+                $piTot = round($piNoa + $piOs + $piRr + $piCom + $piDay, 2);
+
+                return (object) array_merge((array)$r, [
+                    'pi_noa' => $piNoa,
+                    'pi_os'  => $piOs,
+                    'pi_rr'  => $piRr,
+                    'pi_community' => $piCom,
+                    'pi_daily' => $piDay,
+                    'pi_total' => $piTot,
+                ]);
+            })->sortByDesc('pi_total')->values();
+
+            // 5) TLUM AGREGAT
+            if ($tlumRowsRank->count() > 0) {
+                $sumTargetNoa = (int) $tlumRowsRank->sum(fn($x) => (int)($x->target_noa_disbursement ?? 0));
+                $sumTargetOs  = (int) $tlumRowsRank->sum(fn($x) => (int)($x->target_os_disbursement ?? 0));
+                $avgTargetRr  = (float) ($tlumRowsRank->avg(fn($x) => (float)($x->target_rr ?? 100)) ?? 100.0);
+                $sumTargetCom = (int) $tlumRowsRank->sum(fn($x) => (int)($x->target_community ?? 0));
+                $sumTargetDay = (int) $tlumRowsRank->sum(fn($x) => (int)($x->target_daily_report ?? 0));
+
+                $sumActualNoa = (int) $tlumRowsRank->sum(fn($x) => (int)($x->noa_disbursement ?? 0));
+                $sumActualOs  = (int) $tlumRowsRank->sum(fn($x) => (int)($x->os_disbursement ?? 0));
+                $sumActualCom = (int) $tlumRowsRank->sum(fn($x) => (int)($x->community_actual ?? 0));
+                $sumActualDay = (int) $tlumRowsRank->sum(fn($x) => (int)($x->daily_report_actual ?? 0));
+
+                $sumRrTotal   = (int) $tlumRowsRank->sum(fn($x) => (int)($x->rr_os_total ?? 0));
+                $sumRrCurrent = (int) $tlumRowsRank->sum(fn($x) => (int)($x->rr_os_current ?? 0));
+                $rrWeighted   = $sumRrTotal > 0 ? round(100.0 * $sumRrCurrent / $sumRrTotal, 2) : 0.0;
+
+                $noaPct = \App\Services\Kpi\KpiScoreHelper::safePct((float)$sumActualNoa, (float)$sumTargetNoa);
+                $osPct  = \App\Services\Kpi\KpiScoreHelper::safePct((float)$sumActualOs,  (float)$sumTargetOs);
+                $comPct = \App\Services\Kpi\KpiScoreHelper::safePct((float)$sumActualCom, (float)$sumTargetCom);
+                $dayPct = \App\Services\Kpi\KpiScoreHelper::safePct((float)$sumActualDay, (float)$sumTargetDay);
+
+                $scoreNoaT = \App\Services\Kpi\KpiScoreHelper::scoreFromTlumNoaGrowth6($sumActualNoa);
+                $scoreOsT  = \App\Services\Kpi\KpiScoreHelper::scoreFromAoOsRealisasiPct6($osPct);
+                $scoreRrT  = \App\Services\Kpi\KpiScoreHelper::scoreFromRepaymentRateAo6($rrWeighted);
+                $scoreComT = \App\Services\Kpi\KpiScoreHelper::scoreFromTlumCommunity6($sumActualCom);
+
+                $wT = ['noa'=>0.30,'os'=>0.20,'rr'=>0.25,'com'=>0.20];
+
+                $piNoaT = round($scoreNoaT * $wT['noa'], 2);
+                $piOsT  = round($scoreOsT  * $wT['os'],  2);
+                $piRrT  = round($scoreRrT  * $wT['rr'],  2);
+                $piComT = round($scoreComT * $wT['com'], 2);
+                $piTotT = round($piNoaT + $piOsT + $piRrT + $piComT, 2);
+
+                $tlum = (object) [
+                    'noa_target' => $sumTargetNoa,
+                    'os_target'  => $sumTargetOs,
+                    'rr_target'  => round($avgTargetRr, 2),
+                    'com_target' => $sumTargetCom,
+                    'day_target' => $sumTargetDay,
+
+                    'noa_actual' => $sumActualNoa,
+                    'os_actual'  => $sumActualOs,
+                    'rr_actual'  => $rrWeighted,
+                    'com_actual' => $sumActualCom,
+                    'day_actual' => $sumActualDay,
+
+                    'noa_pct' => round($noaPct, 2),
+                    'os_pct'  => round($osPct, 2),
+                    'rr_pct'  => $rrWeighted,
+                    'com_pct' => round($comPct, 2),
+                    'day_pct' => round($dayPct, 2),
+
+                    'score_noa' => $scoreNoaT,
+                    'score_os'  => $scoreOsT,
+                    'score_rr'  => $scoreRrT,
+                    'score_com' => $scoreComT,
+
+                    'pi_noa' => $piNoaT,
+                    'pi_os'  => $piOsT,
+                    'pi_rr'  => $piRrT,
+                    'pi_com' => $piComT,
+                    'pi_total' => $piTotT,
+                ];
+
+                if (!empty($me?->id)) {
+                    DB::table('kpi_tlum_monthlies')->updateOrInsert(
+                        ['period' => $periodDate, 'tlum_user_id' => (int)$me->id],
+                        [
+                            'noa_target' => (int)($tlum->noa_target ?? 0),
+                            'os_target'  => (int)($tlum->os_target ?? 0),
+                            'rr_target'  => (float)($tlum->rr_target ?? 0),
+                            'com_target' => (int)($tlum->com_target ?? 0),
+                            'day_target' => (int)($tlum->day_target ?? 0),
+
+                            'noa_actual' => (int)($tlum->noa_actual ?? 0),
+                            'os_actual'  => (int)($tlum->os_actual ?? 0),
+                            'rr_actual'  => (float)($tlum->rr_actual ?? 0),
+                            'com_actual' => (int)($tlum->com_actual ?? 0),
+                            'day_actual' => (int)($tlum->day_actual ?? 0),
+
+                            'noa_pct' => (float)($tlum->noa_pct ?? 0),
+                            'os_pct'  => (float)($tlum->os_pct ?? 0),
+                            'com_pct' => (float)($tlum->com_pct ?? 0),
+                            'day_pct' => (float)($tlum->day_pct ?? 0),
+
+                            'score_noa' => (float)($tlum->score_noa ?? 0),
+                            'score_os'  => (float)($tlum->score_os ?? 0),
+                            'score_rr'  => (float)($tlum->score_rr ?? 0),
+                            'score_com' => (float)($tlum->score_com ?? 0),
+
+                            'pi_total' => (float)($tlum->pi_total ?? 0),
+                            'calculated_at' => now(),
+                            'updated_at' => now(),
+                            'created_at' => now(),
+                        ]
+                    );
+                }
+            }
+
+        } catch (\Throwable $e) {
+            \Log::warning('TLUM aggregate failed: '.$e->getMessage(), [
+                'period'  => $periodDate,
+                'user_id' => (int)($me?->id ?? 0),
+            ]);
+            $tlum = null;
+            $tlumRowsRank = collect();
+        }
+
+        // ===== AO ITEMS (detail per AO) =====
         $rows = DB::table('kpi_ao_monthlies as m')
             ->join('users as u', 'u.id', '=', 'm.user_id')
             ->leftJoin('kpi_ao_targets as t', function ($j) use ($periodDate) {
                 $j->on('t.user_id', '=', 'm.user_id')
-                    ->where('t.period', '=', $periodDate);
+                  ->where('t.period', '=', $periodDate);
             })
             ->where('m.period', $periodDate)
             ->where('u.level', 'AO')
+            ->where('m.scheme', 'AO_UMKM')
             ->select([
                 'u.id as user_id','u.name','u.ao_code','u.level',
-                't.id as target_id',
-                't.target_os_growth',
-                't.target_noa_growth',
-                't.target_activity',
-                'm.os_growth',
-                'm.noa_growth',
+                'm.scheme',
+
+                't.target_os_disbursement',
+                't.target_noa_disbursement',
+                't.target_rr',
+                't.target_community',
+                't.target_daily_report',
+
+                'm.os_disbursement',
+                'm.noa_disbursement',
+                'm.os_disbursement_pct',
+                'm.noa_disbursement_pct',
                 'm.rr_pct',
-                'm.npl_migration_pct',
-                'm.activity_actual',
-                'm.score_os','m.score_noa','m.score_rr','m.score_kolek','m.score_activity',
+                'm.community_actual',
+                'm.community_pct',
+                'm.daily_report_actual',
+                'm.daily_report_pct',
+
+                'm.score_os','m.score_noa','m.score_rr','m.score_community','m.score_daily_report',
                 'm.score_total',
             ])
             ->orderBy('u.name')
             ->get();
 
-        $items = $rows->map(function ($r) use ($weights) {
-            $achOs  = $this->pct($r->os_growth ?? 0, $r->target_os_growth ?? 0);
-            $achNoa = $this->pct($r->noa_growth ?? 0, $r->target_noa_growth ?? 0);
-            $achAct = $this->pct($r->activity_actual ?? 0, $r->target_activity ?? 0);
-
-            $piOs   = round(((float)($r->score_os ?? 0))       * $weights['os'], 2);
-            $piNoa  = round(((float)($r->score_noa ?? 0))      * $weights['noa'], 2);
-            $piRr   = round(((float)($r->score_rr ?? 0))       * $weights['rr'], 2);
-            $piKol  = round(((float)($r->score_kolek ?? 0))    * $weights['kolek'], 2);
-            $piAct  = round(((float)($r->score_activity ?? 0)) * $weights['activity'], 2);
-
-            $totalPi = round($piOs + $piNoa + $piRr + $piKol + $piAct, 2);
+        $items = $rows->map(function ($r) use ($weightsUmkm) {
+            $piNoa = round(((float)($r->score_noa ?? 0))          * $weightsUmkm['noa'], 2);
+            $piOs  = round(((float)($r->score_os ?? 0))           * $weightsUmkm['os'], 2);
+            $piRr  = round(((float)($r->score_rr ?? 0))           * $weightsUmkm['rr'], 2);
+            $piCom = round(((float)($r->score_community ?? 0))    * $weightsUmkm['community'], 2);
+            $piDay = round(((float)($r->score_daily_report ?? 0)) * $weightsUmkm['daily'], 2);
+            $piTot = round($piNoa + $piOs + $piRr + $piCom + $piDay, 2);
 
             return (object) array_merge((array)$r, [
-                'ach_os'       => $achOs,
-                'ach_noa'      => $achNoa,
-                'ach_rr'       => (float)($r->rr_pct ?? 0),
-                'ach_kolek'    => (float)($r->npl_migration_pct ?? 0),
-                'ach_activity' => $achAct,
+                'mode' => 'AO_UMKM',
 
-                'pi_os'       => $piOs,
-                'pi_noa'      => $piNoa,
-                'pi_rr'       => $piRr,
-                'pi_kolek'    => $piKol,
-                'pi_activity' => $piAct,
-                'pi_total'    => $totalPi,
+                'ach_noa'       => (float)($r->noa_disbursement_pct ?? 0),
+                'ach_os'        => (float)($r->os_disbursement_pct ?? 0),
+                'ach_rr'        => (float)($r->rr_pct ?? 0),
+                'ach_community' => (float)($r->community_pct ?? 0),
+                'ach_daily'     => (float)($r->daily_report_pct ?? 0),
+
+                'pi_noa'       => $piNoa,
+                'pi_os'        => $piOs,
+                'pi_rr'        => $piRr,
+                'pi_community' => $piCom,
+                'pi_daily'     => $piDay,
+                'pi_total'     => $piTot,
             ]);
         });
+
+        $weights = $weightsUmkm;
+
+        // ====== INSIGHT PANEL (TLUM) ======
+        $insight = (object) [
+            'best' => null,
+            'worst' => null,
+            'rr_gap' => null,
+            'os_gap' => null,
+            'noa_gap' => null,
+            'community_gap' => null,
+        ];
+
+        if ($tlumRowsRank instanceof \Illuminate\Support\Collection && $tlumRowsRank->count() > 0) {
+            $best  = $tlumRowsRank->sortByDesc(fn($x) => (float)($x->pi_total ?? 0))->first();
+            $worst = $tlumRowsRank->sortBy(fn($x) => (float)($x->pi_total ?? 0))->first();
+
+            $insight->best = $best ? (object)[
+                'name' => $best->name ?? '-',
+                'ao_code' => $best->ao_code ?? '-',
+                'pi' => (float)($best->pi_total ?? 0),
+                'rr' => (float)($best->rr_pct ?? 0),
+                'os_pct' => (float)($best->os_disbursement_pct ?? 0),
+                'noa' => (int)($best->noa_disbursement ?? 0),
+            ] : null;
+
+            $insight->worst = $worst ? (object)[
+                'name' => $worst->name ?? '-',
+                'ao_code' => $worst->ao_code ?? '-',
+                'pi' => (float)($worst->pi_total ?? 0),
+                'rr' => (float)($worst->rr_pct ?? 0),
+                'os_pct' => (float)($worst->os_disbursement_pct ?? 0),
+                'noa' => (int)($worst->noa_disbursement ?? 0),
+            ] : null;
+        }
+
+        if (!empty($tlum)) {
+            $insight->rr_gap = round(((float)($tlum->rr_target ?? 0)) - ((float)($tlum->rr_actual ?? 0)), 2);
+            $insight->os_gap = max(0, (int)($tlum->os_target ?? 0) - (int)($tlum->os_actual ?? 0));
+            $insight->noa_gap = max(0, (int)($tlum->noa_target ?? 0) - (int)($tlum->noa_actual ?? 0));
+            $insight->community_gap = max(0, (int)($tlum->com_target ?? 0) - (int)($tlum->com_actual ?? 0));
+        }
+
+        // ===== Trend TLUM (MoM) =====
+        $trend = null;
+        if (!empty($me?->id)) {
+            $prevPeriod = Carbon::parse($periodDate)->subMonth()->startOfMonth()->toDateString();
+
+            $cur = DB::table('kpi_tlum_monthlies')
+                ->where('period', $periodDate)
+                ->where('tlum_user_id', (int)$me->id)
+                ->first();
+
+            $prev = DB::table('kpi_tlum_monthlies')
+                ->where('period', $prevPeriod)
+                ->where('tlum_user_id', (int)$me->id)
+                ->first();
+
+            if ($cur && $prev) {
+                $delta = round(((float)$cur->pi_total) - ((float)$prev->pi_total), 2);
+                $trend = (object) [
+                    'prev_period' => $prevPeriod,
+                    'prev_pi' => (float)$prev->pi_total,
+                    'cur_pi'  => (float)$cur->pi_total,
+                    'delta'   => $delta,
+                ];
+            }
+        }
 
         return view('kpi.marketing.sheet', [
             'role'     => $role,
@@ -671,7 +941,40 @@ class MarketingKpiSheetController
             'period'   => $period,
             'weights'  => $weights,
             'items'    => $items,
-        ]);
 
+            // ✅ TLUM
+            'tlum'     => $tlum,
+            'tlumRows' => $tlumRowsRank,
+            'insight'  => $insight,
+            'trend'    => $trend,
+        ]);
+    }
+
+    // (dua helper ini belum dipakai di file ini, tapi aku biarkan kalau memang dipakai di bagian lain nantinya)
+    private function periodDateFromYm(?string $periodYm): string
+    {
+        $p = $periodYm ?: now()->format('Y-m');
+        return \Carbon\Carbon::parse($p.'-01')->startOfMonth()->toDateString();
+    }
+
+    private function scopeAoUserIdsForMe(\App\Models\User $me, string $periodDate): array
+    {
+        $roleAliases = ['tl', 'tlum', 'tl um', 'tl-um', 'tl_um', 'tl umkm', 'tl-umkm', 'tl_umkm'];
+
+        $subUserIds = \DB::table('org_assignments')
+            ->where('leader_id', (int)($me->id ?? 0))
+            ->where('is_active', 1)
+            ->whereIn(\DB::raw('LOWER(TRIM(leader_role))'), $roleAliases)
+            ->whereDate('effective_from', '<=', $periodDate)
+            ->where(function ($q) use ($periodDate) {
+                $q->whereNull('effective_to')
+                  ->orWhereDate('effective_to', '>=', $periodDate);
+            })
+            ->pluck('user_id')->unique()->values()->all();
+
+        return empty($subUserIds) ? [] : \DB::table('users')
+            ->whereIn('id', $subUserIds)
+            ->where('level', 'AO')
+            ->pluck('id')->unique()->values()->all();
     }
 }

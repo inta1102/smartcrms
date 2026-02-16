@@ -63,6 +63,10 @@
     $isNplActive     = $is('cases.*') && !$isOverdueActive;
     $isShmActive     = $is('shm.*');
 
+    // ====== Active: KPI Communities ======
+    $isKpiCommunityActive = $is('kpi.communities.*') || request()->is('kpi/communities*');
+
+
     // ====== Active states supervisi ======
     $isSupervisionActive =
         $is('supervision.*') ||
@@ -323,6 +327,9 @@
     $isRkhActive = $is('rkh.*') || $is('lkh.*') || $is('lkh.recap.*');
     $isLkhActive = $is('lkh.*') || $is('lkh.recap.*');
 
+    // ====== Active states KPI Communities ======
+    $isKpiCommunityActive = $is('kpi.communities.*') || $is('kpi.communities'); 
+
 
     // ====== Menus ======
     $menus = [
@@ -392,6 +399,13 @@
                 'show'   => $canViewShm,
                 'badge'  => ($shmBadge ?? 0) > 0 ? $shmBadge : null,
                 'badge_kind' => 'warn', // optional kalau kamu sudah bikin kind-based
+            ],
+            [
+                'label'  => 'Input Komunitas',
+                'icon'   => '🏘️',
+                'href'   => route('kpi.communities.index'),
+                'active' => $isKpiCommunityActive,
+                'show' => (in_array($roleValue, ['AO','SO','KBL'], true)) && !$isPimpinan,
             ],
         ],
 

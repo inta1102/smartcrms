@@ -96,16 +96,28 @@ use App\Http\Controllers\Kpi\BeKpiTargetController;
 use App\Http\Controllers\Kpi\KpiAoTargetController;
 use App\Http\Controllers\Kpi\KpiAoActivityInputController;
 
-Route::prefix('kpi/ao')->group(function () {
+use App\Http\Controllers\Kpi\TlumKpiSheetController;
 
-    Route::get('/targets', [\App\Http\Controllers\Kpi\AoTargetController::class, 'index'])->name('kpi.ao.targets');
-    Route::post('/targets', [\App\Http\Controllers\Kpi\AoTargetController::class, 'store'])->name('kpi.ao.targets.store');
-
-    Route::get('/activity-inputs', [\App\Http\Controllers\Kpi\AoActivityInputController::class, 'index'])->name('kpi.ao.activity_inputs');
-    Route::post('/activity-inputs', [\App\Http\Controllers\Kpi\AoActivityInputController::class, 'store'])->name('kpi.ao.activity_inputs.store');
-
+Route::middleware(['auth'])->group(function () {
+    Route::get('/kpi/tlum/sheet', [TlumKpiSheetController::class, 'index'])->name('kpi.tlum.sheet');
 });
 
+Route::get('/kpi/marketing/sheet', [MarketingKpiSheetController::class, 'index'])
+    ->name('kpi.marketing.sheet');
+
+// ===== AO Targets (full) =====
+Route::get('/kpi/ao/targets', [KpiAoTargetController::class, 'index'])
+    ->name('kpi.ao.targets.index');
+Route::post('/kpi/ao/targets', [KpiAoTargetController::class, 'store'])
+    ->name('kpi.ao.targets.store');
+Route::post('/kpi/recalc/ao', [KpiRecalcController::class, 'recalcAo'])
+->name('kpi.recalc.ao');
+
+// ===== AO Actual Community (manual) =====
+Route::get('/kpi/ao/community', [MarketingKpiSheetController::class, 'aoCommunity'])
+    ->name('kpi.ao.community');
+Route::post('/kpi/ao/community', [MarketingKpiSheetController::class, 'aoCommunityStore'])
+    ->name('kpi.ao.community.store');
 
 Route::middleware(['auth'])->group(function () {
 
@@ -587,6 +599,10 @@ Route::middleware('auth')->group(function () {
     Route::get('/kpi/marketing/ranking', [MarketingKpiRankingController::class, 'index'])
         ->name('kpi.marketing.ranking.index');
 
+     // ✅ ini yang dipakai sidebar
+    Route::get('ranking/goto', [MarketingKpiRankingController::class, 'goto'])
+        ->name('ranking.goto');
+
         // routes/web.php
     Route::post('/kpi/marketing/ranking/recalc', 
         [\App\Http\Controllers\Kpi\MarketingKpiRankingController::class, 'recalcAll']
@@ -879,8 +895,39 @@ Route::middleware(['auth'])->prefix('kpi/ro')->name('kpi.ro.')->group(function (
         ->name('show');
 });
 
-// Route::middleware(['auth'])->prefix('kpi')->name('kpi.')->group(function () {
-//     // KPI FE Sheet
-//     Route::get('/fe/sheet', [FeKpiSheetController::class, 'index'])->name('fe.sheet');
-// });
+use App\Http\Controllers\Kpi\CommunityController;
+use App\Http\Controllers\Kpi\CommunityHandlingController;
 
+Route::middleware(['auth'])->prefix('kpi/communities')->name('kpi.communities.')->group(function () {
+    // list + filter
+    Route::get('/', [CommunityController::class, 'index'])->name('index');
+
+    // create master komunitas (AO/SO/KBL)
+    Route::get('/create', [CommunityController::class, 'create'])
+        ->middleware('role:AO,SO,TLUM,TLSO,KBL')
+        ->name('create');
+    Route::post('/', [CommunityController::class, 'store'])
+        ->middleware('role:AO,SO,TLUM,TLSO,KBL')
+        ->name('store');
+
+    // detail komunitas + riwayat handling
+    Route::get('/{community}', [CommunityController::class, 'show'])->name('show');
+
+    // edit master komunitas (KBL only biar rapi governance)
+    Route::get('/{community}/edit', [CommunityController::class, 'edit'])
+        ->middleware('role:KBL')
+        ->name('edit');
+    Route::put('/{community}', [CommunityController::class, 'update'])
+        ->middleware('role:KBL')
+        ->name('update');
+
+    // handling (AO/SO/KBL)
+    Route::post('/{community}/handlings', [CommunityHandlingController::class, 'store'])
+        ->middleware('role:AO,SO,KBL')
+        ->name('handlings.store');
+
+    // end handling (AO/SO boleh end miliknya, KBL boleh end siapa saja)
+    Route::post('/handlings/{handling}/end', [CommunityHandlingController::class, 'end'])
+        ->middleware('role:AO,SO,KBL')
+        ->name('handlings.end');
+});
