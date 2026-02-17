@@ -98,6 +98,62 @@ use App\Http\Controllers\Kpi\KpiAoActivityInputController;
 
 use App\Http\Controllers\Kpi\TlumKpiSheetController;
 
+use App\Http\Controllers\Kpi\KpiRankingController;
+use App\Http\Controllers\Kpi\KpiAoController;
+use App\Http\Controllers\Kpi\KpiRoController;
+use App\Http\Controllers\Kpi\KpiSoController;
+use App\Http\Controllers\Kpi\KpiFeController;
+use App\Http\Controllers\Kpi\KpiBeController;
+
+use App\Http\Controllers\Kpi\KpiThresholdController;
+use App\Http\Controllers\Kpi\KpiRankingHomeController;
+
+
+    // RO (scope diri sendiri)
+Route::get('/kpi/ro/os-daily', [RoOsDailyDashboardController::class, 'index'])
+    ->name('kpi.ro.os-daily');
+
+Route::prefix('kpi')->middleware(['auth'])->group(function () {
+    Route::get('/ro/{user}', [KpiRoController::class, 'show'])->name('kpi.ro.show');
+});
+
+Route::get('/kpi/so/{user}', [\App\Http\Controllers\Kpi\KpiSoController::class, 'show'])->name('kpi.so.show');
+
+Route::get('/kpi/fe/{feUserId}', [KpiFeController::class, 'show'])->name('kpi.fe.show');
+
+Route::get('/kpi/be/{beUserId}', [\App\Http\Controllers\Kpi\KpiBeController::class, 'show'])
+    ->name('kpi.be.show');
+
+
+
+Route::middleware(['auth'])->group(function () {
+    Route::get('/kpi/thresholds', [KpiThresholdController::class, 'index'])->name('kpi.thresholds.index');
+    Route::get('/kpi/thresholds/{threshold}/edit', [KpiThresholdController::class, 'edit'])->name('kpi.thresholds.edit');
+    Route::put('/kpi/thresholds/{threshold}', [KpiThresholdController::class, 'update'])->name('kpi.thresholds.update');
+});
+
+Route::middleware(['auth'])->group(function () {
+    Route::get('/kpi/ao', [KpiRankingController::class, 'ao'])->name('kpi.ao.ranking');
+    Route::get('/kpi/ao/{user}', [KpiAoController::class, 'show'])->name('kpi.ao.show');
+});
+
+
+Route::middleware(['auth'])->group(function () {
+    // entry point dari sidebar
+    Route::get('/kpi/ranking', [KpiRankingHomeController::class, 'index'])->name('kpi.ranking.home');
+
+    // ranking per role (yang sudah ada / akan kita buat)
+    Route::get('/kpi/ranking/ao', [\App\Http\Controllers\Kpi\KpiRankingController::class, 'ao'])->name('kpi.ranking.ao');
+    Route::get('/kpi/ranking/ro', [\App\Http\Controllers\Kpi\KpiRankingController::class, 'ro'])->name('kpi.ranking.ro');
+    Route::get('/kpi/ranking/so', [\App\Http\Controllers\Kpi\KpiRankingController::class, 'so'])->name('kpi.ranking.so');
+    Route::get('/kpi/ranking/fe', [\App\Http\Controllers\Kpi\KpiRankingController::class, 'fe'])->name('kpi.ranking.fe');
+    Route::get('/kpi/ranking/be', [\App\Http\Controllers\Kpi\KpiRankingController::class, 'be'])->name('kpi.ranking.be');
+
+    // TL / leader (kalau belum ada, nanti kita buat bertahap)
+    Route::get('/kpi/ranking/tl', [\App\Http\Controllers\Kpi\KpiRankingController::class, 'tl'])->name('kpi.ranking.tl');
+});
+
+
 Route::middleware(['auth'])->group(function () {
     Route::get('/kpi/tlum/sheet', [TlumKpiSheetController::class, 'index'])->name('kpi.tlum.sheet');
 });
@@ -726,9 +782,7 @@ Route::prefix('kpi/so')->name('kpi.so.')->middleware('auth')->group(function () 
     Route::get('/kpi/tl/os-daily', [TlOsDailyDashboardController::class, 'index'])
         ->name('kpi.tl.os-daily');
 
-    // RO (scope diri sendiri)
-    Route::get('/kpi/ro/os-daily', [RoOsDailyDashboardController::class, 'index'])
-        ->name('kpi.ro.os-daily');
+
 
 // =========================
 // LEGAL PROPOSALS (USULAN)

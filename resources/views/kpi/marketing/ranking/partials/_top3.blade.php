@@ -42,15 +42,15 @@
         // FE metrik detail belum kamu expose di controller ranking,
         // tapi minimal Top3 tetap hidup pakai total score.
         return [
-          'Kinerja', 'Skor',
-          'Status', 'FE',
+          'Kinerja',  $fmtPct($r->score_total ?? 0, 2),
+          'Status', '-',
         ];
       }
 
       if ($role === 'BE') {
         return [
-          'Kinerja', 'Skor',
-          'Status', 'BE',
+          'Kinerja',  $fmtPct($r->score_total ?? 0, 2),
+          'Status', '-',
         ];
       }
 

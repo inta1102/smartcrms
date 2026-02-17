@@ -8,6 +8,12 @@ use App\Policies\AoAgendaPolicy;
 use Illuminate\Support\Facades\Gate;
 use App\Models\OrgAssignment;
 use App\Enums\UserRole;
+use App\Models\User;
+use App\Policies\KpiAoPolicy;
+use App\Policies\KpiRoPolicy;
+use App\Policies\KpiSoPolicy;
+use App\Policies\KpiFePolicy;
+use App\Policies\KpiBePolicy;
 
 
 class AuthServiceProvider extends ServiceProvider
@@ -27,8 +33,11 @@ class AuthServiceProvider extends ServiceProvider
         \App\Models\NonLitigationAction::class => \App\Policies\NonLitigationActionPolicy::class,
         \App\Models\LegalActionProposal::class => \App\Policies\LegalActionProposalPolicy::class,
         \App\Models\ShmCheckRequest::class => \App\Policies\ShmCheckRequestPolicy::class,
-        
-        
+        \App\Models\User::class => \App\Policies\KpiRoPolicy::class,
+        \App\Models\User::class => \App\Policies\KpiSoPolicy::class,
+        \App\Models\User::class => \App\Policies\KpiBePolicy::class,
+        \App\Models\User::class => \App\Policies\KpiFePolicy::class,
+        \App\Models\User::class => \App\Policies\KpiAoPolicy::class
     ];
 
     /**
@@ -130,6 +139,32 @@ class AuthServiceProvider extends ServiceProvider
 
         Gate::define('manageRoTargets', function ($user) {
             return $user?->hasAnyRole(['KBL']) === true;
+        });
+
+        Gate::define('kpi-ao-view', function (User $viewer, User $target) {
+            return (new KpiAoPolicy())->view($viewer, $target);
+        });
+
+        Gate::define('kpi-ro-view', function (User $viewer, User $target) {
+            return (new KpiRoPolicy())->view($viewer, $target);
+        });
+
+        Gate::define('kpi-so-view', function (User $viewer, User $target) {
+            return (new KpiSoPolicy())->view($viewer, $target);
+        });
+
+        Gate::define('kpi-be-view', function (User $viewer, User $target) {
+            return (new KpiBePolicy())->view($viewer, $target);
+        });
+
+        Gate::define('kpi-be-viewAny', [KpiBePolicy::class, 'viewAny']);
+
+        Gate::define('kpi-fe-viewAny', function (User $viewer) {
+            return (new KpiFePolicy())->viewAny($viewer);
+        });
+
+        Gate::define('kpi-fe-view', function (User $viewer, User $target) {
+            return (new KpiFePolicy())->view($viewer, $target);
         });
     }
 }

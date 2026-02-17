@@ -330,6 +330,8 @@
     // ====== Active states KPI Communities ======
     $isKpiCommunityActive = $is('kpi.communities.*') || $is('kpi.communities'); 
 
+    $canKpiThresholds = in_array($roleValue, ['KTI','KBL','PE','DIR','DIREKSI','KOM','KABAG'], true);
+
 
     // ====== Menus ======
     $menus = [
@@ -539,34 +541,6 @@
         'kpi_marketing' => [
 
             // =========================
-            // TARGET KPI - AO (Marketing KPI Targets)
-            // =========================
-            //[
-            //    'label'  => 'Target KPI AO',
-            //    'icon'   => '🎯',
-            //    'href'   => \Illuminate\Support\Facades\Route::has('kpi.marketing.targets.index')
-             //       ? route('kpi.marketing.targets.index')
-           //         : null,
-            //    'active' => request()->routeIs('kpi.marketing.targets.*'),
-
-                // tampil untuk AO family (bukan SO)
-            //    'show'   => $u && $u->hasAnyRole(['AO','RO','FE','BE']),
-            //],
-
-            // =========================
-            // TARGET KPI - SO
-            // =========================
-            //[
-           //     'label'  => 'Target KPI SO',
-           //     'icon'   => '🎯',
-           //     'href'   => \Illuminate\Support\Facades\Route::has('kpi.so.targets.index')
-           //         ? route('kpi.so.targets.index')
-           //         : null,
-           //     'active' => request()->routeIs('kpi.so.targets.*'),
-           //     'show'   => $u && $u->hasAnyRole(['SO']),
-           // ],
-
-            // =========================
             // ACHIEVEMENT (Marketing KPI Targets)
             // =========================
             [
@@ -581,35 +555,26 @@
                 'show'   => $u && $u->hasAnyRole(['AO','SO','RO','FE','BE']),
             ],
 
-            // =========================
-            // APPROVAL KPI (TL/Kasi/Kabag, dst)
-            // =========================
-            // [
-            //     'label'  => 'Approval KPI AO',
-            //     'icon'   => '✅',
-            //     'href'   => \Illuminate\Support\Facades\Route::has('kpi.marketing.approvals.index')
-            //         ? route('kpi.marketing.approvals.index')
-            //         : null,
-            //     'active' => request()->routeIs('kpi.marketing.approvals.*'),
-            //     'show'   => $u && in_array(
-            //         strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)),
-            //         ['TL','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM','KSL','KSR'],
-            //         true
-            //     ),
-            // ],
-            // [
-            //     'label'  => 'Approval KPI SO',
-            //     'icon'   => '✅',
-            //     'href'   => \Illuminate\Support\Facades\Route::has('kpi.so.approvals.index')
-            //         ? route('kpi.so.approvals.index')
-            //         : null,
-            //     'active' => request()->routeIs('kpi.so.approvals.*'),
-            //     'show'   => $u && in_array(strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)),
-            //                 ['TL','TLL','TLR','KSL','TLRO','TLSO','TLFE','TLBE','TLUM','KSR'], true),
-            // ],
-
+           
             // =========================
             // RANKING KPI
+            // =========================
+            [
+                'label'  => 'Ranking KPI',
+                'icon'   => '🏆',
+                'href'   => \Illuminate\Support\Facades\Route::has('kpi.ranking.home')
+                    ? route('kpi.ranking.home')
+                    : null,
+                'active' => request()->routeIs('kpi.ranking.*'),
+                'show'   => $u && in_array(
+                    strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : $u->level)),
+                    ['AO','BE','FE','RO','SO'],
+                    true
+                ),
+            ],
+
+            // =========================
+            // RANKING KPI TL KASI KABAG
             // =========================
             [
                 'label'  => 'Ranking KPI',
@@ -620,7 +585,7 @@
                 'active' => request()->routeIs('kpi.marketing.ranking.*'),
                 'show'   => $u && in_array(
                     strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)),
-                    ['AO','BE','FE','RO','SO','TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM','KSL','KSO','KSA','KSF','KSD','KSR','KBL'],
+                    ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM','KSL','KSO','KSA','KSF','KSD','KSR','KBL'],
                     true
                 ),
             ],
@@ -645,8 +610,8 @@
                 ],
         ],
 
-        // ================= ADMIN =================
-        'admin' => $isOrgAdmin ? [
+        // ================= ADMIN ================= 
+        'admin' => ($isOrgAdmin || $canKpiThresholds) ? [
             [
                 'label'  => 'Org Assignment',
                 'icon'   => '🧩',
@@ -664,6 +629,12 @@
                 'icon'   => '🎯',
                 'href'   => route('kti.targets.index'),
                 'active' => $is('kti.targets.index.*'),
+            ],
+            [
+                'label'  => 'KPI Thresholds',
+                'icon'   => '📏',
+                'href'   => route('kpi.thresholds.index'),
+                'active' => $is('kpi.thresholds.*'),
             ],
         ] : [],
     ];
