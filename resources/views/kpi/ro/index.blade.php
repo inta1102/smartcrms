@@ -110,10 +110,10 @@
             <th class="text-right px-4 py-3">Skor</th>
 
             <th class="text-right px-4 py-3">Repayment</th>
+            <th class="text-right px-4 py-3">DPK (LT→DPK)</th>
             <th class="text-right px-4 py-3">TopUp</th>
             <th class="text-right px-4 py-3">NOA</th>
-            <th class="text-right px-4 py-3">DPK (LT→DPK)</th>
-
+            
             <th class="text-left px-4 py-3">Catatan</th>
           </tr>
         </thead>
@@ -169,6 +169,18 @@
               </td>
 
               <td class="px-4 py-3 text-right">
+                <div class="font-semibold {{ $hasMigrasi ? 'text-rose-700' : '' }}">
+                  {{ $fmtPct($r->dpk_pct ?? 0, 4) }}
+                </div>
+                <div class="text-xs text-slate-500">
+                  Migrasi: <b class="{{ $hasMigrasi ? 'text-rose-700' : '' }}">{{ (int)($r->dpk_migrasi_count ?? 0) }}</b>
+                  · OS: {{ $fmtRp($r->dpk_migrasi_os ?? 0) }}
+                  · Denom: {{ $fmtRp($r->dpk_total_os_akhir ?? 0) }}
+                  · Score: {{ (int)($r->dpk_score ?? 0) }}
+                </div>
+              </td>
+
+              <td class="px-4 py-3 text-right">
                 <div class="font-semibold">{{ $fmtRp($r->topup_realisasi ?? 0) }}</div>
                 <div class="text-xs text-slate-500">
                   Target: {{ $fmtRp($r->topup_target ?? 0) }} · {{ $fmtPct($r->topup_pct ?? 0, 1) }} · Score: {{ (int)($r->topup_score ?? 0) }}
@@ -179,18 +191,6 @@
                 <div class="font-semibold">{{ (int)($r->noa_realisasi ?? 0) }}</div>
                 <div class="text-xs text-slate-500">
                   Target: {{ (int)($r->noa_target ?? 0) }} · {{ $fmtPct($r->noa_pct ?? 0, 1) }} · Score: {{ (int)($r->noa_score ?? 0) }}
-                </div>
-              </td>
-
-              <td class="px-4 py-3 text-right">
-                <div class="font-semibold {{ $hasMigrasi ? 'text-rose-700' : '' }}">
-                  {{ $fmtPct($r->dpk_pct ?? 0, 4) }}
-                </div>
-                <div class="text-xs text-slate-500">
-                  Migrasi: <b class="{{ $hasMigrasi ? 'text-rose-700' : '' }}">{{ (int)($r->dpk_migrasi_count ?? 0) }}</b>
-                  · OS: {{ $fmtRp($r->dpk_migrasi_os ?? 0) }}
-                  · Denom: {{ $fmtRp($r->dpk_total_os_akhir ?? 0) }}
-                  · Score: {{ (int)($r->dpk_score ?? 0) }}
                 </div>
               </td>
 

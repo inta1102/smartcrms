@@ -198,6 +198,30 @@
           <td class="px-3 py-2 text-right text-slate-700">FT=0/0</td>
         </tr>
 
+                {{-- DPK --}}
+        <tr>
+          <td class="px-3 py-2 font-semibold">Pemburukan DPK</td>
+          <td class="px-3 py-2 text-right">{{ $fmtPct($tlRecap->target_dpk_pct ?? 0) }}</td>
+          <td class="px-3 py-2 text-right">{{ $fmtPct($dpkActualPct) }}</td>
+          <td class="px-3 py-2 text-right">
+            <span class="px-3 py-1 rounded-full text-xs font-semibold {{ $kpiBadgeReverse($dpkActualPct, $tlRecap->target_dpk_pct ?? 1) }}">
+              {{ $fmtPct($tlRecap->ach_dpk ?? 0) }}
+            </span>
+          </td>
+          <td class="px-3 py-2 text-center font-bold">{{ number_format((float)($tlRecap->score_dpk ?? $tlRecap->dpk_score ?? 0), 2) }}</td>
+          <td class="px-3 py-2 text-right">{{ (int)round(((float)($weights['dpk'] ?? 0))*100) }}%</td>
+          <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($tlRecap->pi_dpk ?? 0), 2) }}</td>
+        </tr>
+
+        <tr class="bg-slate-50">
+          <td class="px-3 py-2 text-slate-600">Detail Migrasi LT→DPK</td>
+          <td class="px-3 py-2 text-right text-slate-600">Count</td>
+          <td class="px-3 py-2 text-right text-slate-700">{{ number_format((int)$migrasiCount) }}</td>
+          <td class="px-3 py-2 text-right text-slate-600">OS Migrasi</td>
+          <td class="px-3 py-2 text-right text-slate-700">{{ $fmtRp($migrasiOs) }}</td>
+          <td colspan="2"></td>
+        </tr>
+
         {{-- TOPUP --}}
         <tr>
           <td class="px-3 py-2 font-semibold">Top Up (Delta OS CIF)</td>
@@ -249,29 +273,6 @@
           <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($tlRecap->pi_noa ?? 0), 2) }}</td>
         </tr>
 
-        {{-- DPK --}}
-        <tr>
-          <td class="px-3 py-2 font-semibold">Pemburukan DPK</td>
-          <td class="px-3 py-2 text-right">{{ $fmtPct($tlRecap->target_dpk_pct ?? 0) }}</td>
-          <td class="px-3 py-2 text-right">{{ $fmtPct($dpkActualPct) }}</td>
-          <td class="px-3 py-2 text-right">
-            <span class="px-3 py-1 rounded-full text-xs font-semibold {{ $kpiBadgeReverse($dpkActualPct, $tlRecap->target_dpk_pct ?? 1) }}">
-              {{ $fmtPct($tlRecap->ach_dpk ?? 0) }}
-            </span>
-          </td>
-          <td class="px-3 py-2 text-center font-bold">{{ number_format((float)($tlRecap->score_dpk ?? $tlRecap->dpk_score ?? 0), 2) }}</td>
-          <td class="px-3 py-2 text-right">{{ (int)round(((float)($weights['dpk'] ?? 0))*100) }}%</td>
-          <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($tlRecap->pi_dpk ?? 0), 2) }}</td>
-        </tr>
-
-        <tr class="bg-slate-50">
-          <td class="px-3 py-2 text-slate-600">Detail Migrasi LT→DPK</td>
-          <td class="px-3 py-2 text-right text-slate-600">Count</td>
-          <td class="px-3 py-2 text-right text-slate-700">{{ number_format((int)$migrasiCount) }}</td>
-          <td class="px-3 py-2 text-right text-slate-600">OS Migrasi</td>
-          <td class="px-3 py-2 text-right text-slate-700">{{ $fmtRp($migrasiOs) }}</td>
-          <td colspan="2"></td>
-        </tr>
 
       </tbody>
 
@@ -372,43 +373,7 @@
                 <td class="px-3 py-2 text-right">{{ (int)round(($weights['repayment'] ?? 0)*100) }}%</td>
                 <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($it->pi_repayment ?? 0), 2) }}</td>
             </tr>
-
-            {{-- TopUp --}}
-            <tr>
-              <td class="px-3 py-2 font-semibold">Target Realisasi TU (Top Up)</td>
-              <td class="px-3 py-2 text-right">
-                Rp {{ number_format((int)($it->target_topup ?? 0),0,',','.') }}
-              </td>
-              <td class="px-3 py-2 text-right">
-                Rp {{ number_format((int)($it->topup_realisasi ?? 0),0,',','.') }}
-              </td>
-              <td class="px-3 py-2 text-right">
-                <span class="px-3 py-1 rounded-full text-xs font-semibold {{ $kpiBadgeNormal($it->ach_rr ?? 0) }}">
-                    {{ number_format((float)($it->ach_topup ?? 0),2) }}%
-                </span>
-              </td>
-
-              <td class="px-3 py-2 text-center font-bold">{{ number_format((float)($it->topup_score ?? 0), 2) }}</td>
-              <td class="px-3 py-2 text-right">{{ (int)round(($weights['topup'] ?? 0)*100) }}%</td>
-              <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($it->pi_topup ?? 0), 2) }}</td>
-            </tr>
-
-            {{-- NOA --}}
-            <tr>
-              <td class="px-3 py-2 font-semibold">NOA Pengembangan</td>
-              <td class="px-3 py-2 text-right">{{ number_format((int)($it->target_noa ?? 0)) }}</td>
-              <td class="px-3 py-2 text-right">{{ number_format((int)($it->noa_realisasi ?? 0)) }}</td>
-              <td class="px-3 py-2 text-right">
-                <span class="px-3 py-1 rounded-full text-xs font-semibold {{ $kpiBadgeNormal($it->ach_rr ?? 0) }}">
-                    {{ number_format((float)($it->ach_noa ?? 0),2) }}%
-                </span>
-              </td>
-
-              <td class="px-3 py-2 text-center font-bold">{{ number_format((float)($it->noa_score ?? 0), 2) }}</td>
-              <td class="px-3 py-2 text-right">{{ (int)round(($weights['noa'] ?? 0)*100) }}%</td>
-              <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($it->pi_noa ?? 0), 2) }}</td>
-            </tr>
-
+            
            {{-- DPK --}}
             @php
                 $tDpk = (float)($it->target_dpk_pct ?? 0);  // target dalam % (contoh 1.00 artinya 1%)
@@ -464,6 +429,43 @@
                     Rp {{ number_format((int)($it->dpk_migrasi_os ?? 0),0,',','.') }}
                 </td>
             </tr>
+
+            {{-- TopUp --}}
+            <tr>
+              <td class="px-3 py-2 font-semibold">Target Realisasi TU (Top Up)</td>
+              <td class="px-3 py-2 text-right">
+                Rp {{ number_format((int)($it->target_topup ?? 0),0,',','.') }}
+              </td>
+              <td class="px-3 py-2 text-right">
+                Rp {{ number_format((int)($it->topup_realisasi ?? 0),0,',','.') }}
+              </td>
+              <td class="px-3 py-2 text-right">
+                <span class="px-3 py-1 rounded-full text-xs font-semibold {{ $kpiBadgeNormal($it->ach_rr ?? 0) }}">
+                    {{ number_format((float)($it->ach_topup ?? 0),2) }}%
+                </span>
+              </td>
+
+              <td class="px-3 py-2 text-center font-bold">{{ number_format((float)($it->topup_score ?? 0), 2) }}</td>
+              <td class="px-3 py-2 text-right">{{ (int)round(($weights['topup'] ?? 0)*100) }}%</td>
+              <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($it->pi_topup ?? 0), 2) }}</td>
+            </tr>
+
+            {{-- NOA --}}
+            <tr>
+              <td class="px-3 py-2 font-semibold">NOA Pengembangan</td>
+              <td class="px-3 py-2 text-right">{{ number_format((int)($it->target_noa ?? 0)) }}</td>
+              <td class="px-3 py-2 text-right">{{ number_format((int)($it->noa_realisasi ?? 0)) }}</td>
+              <td class="px-3 py-2 text-right">
+                <span class="px-3 py-1 rounded-full text-xs font-semibold {{ $kpiBadgeNormal($it->ach_rr ?? 0) }}">
+                    {{ number_format((float)($it->ach_noa ?? 0),2) }}%
+                </span>
+              </td>
+
+              <td class="px-3 py-2 text-center font-bold">{{ number_format((float)($it->noa_score ?? 0), 2) }}</td>
+              <td class="px-3 py-2 text-right">{{ (int)round(($weights['noa'] ?? 0)*100) }}%</td>
+              <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($it->pi_noa ?? 0), 2) }}</td>
+            </tr>
+
 
           </tbody>
 

@@ -1,6 +1,8 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Gate;
 
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\DashboardController;
@@ -41,16 +43,18 @@ use App\Http\Controllers\ExecutiveDashboardController;
 
 use App\Http\Controllers\EwsSummaryController;
 use App\Http\Controllers\Ews\EwsMacetController;
+use App\Http\Controllers\Ews\EwsCkpnController;
 
-// ✅ TAMBAH INI (controller org assignment kamu)
 use App\Http\Controllers\Supervision\OrgAssignmentController;
 
-use App\Http\Controllers\RestructureDashboardController;    
+use App\Http\Controllers\RestructureDashboardController;
 use App\Http\Controllers\Admin\JobMonitorController;
-// use App\Http\Controllers\Legal\LegalDashboardController;
+
 use App\Http\Controllers\Legal\LegalActionProposalController;
 use App\Http\Controllers\Legal\LegalActionProposalApprovalController;
+
 use App\Http\Controllers\Executive\KomTargetDashboardController;
+use App\Http\Controllers\Executive\ExecutiveTargetController;
 
 use App\Http\Controllers\Kti\KtiResolutionTargetController;
 
@@ -60,38 +64,26 @@ use App\Http\Controllers\Lending\LendingPerformanceController;
 use App\Http\Controllers\Lending\LendingTrendController;
 
 use App\Http\Controllers\ShmCheckRequestController;
+
 use App\Http\Controllers\Kpi\MarketingTargetController;
 use App\Http\Controllers\Kpi\MarketingTargetApprovalController;
 use App\Http\Controllers\Kpi\MarketingKpiAchievementController;
 use App\Http\Controllers\Kpi\MarketingKpiRankingController;
-use App\Http\Controllers\Ews\EwsCkpnController;
 use App\Http\Controllers\Kpi\MarketingKpiSheetController;
 use App\Http\Controllers\Kpi\KpiRecalcController;
 
-
 use App\Http\Controllers\Kpi\SoHandlingController;
 use App\Http\Controllers\Kpi\SoTargetController;
+use App\Http\Controllers\Kpi\SoCommunityInputController;
 
 use App\Http\Controllers\Kpi\KpiTargetRouterController;
-use App\Http\Controllers\LkhController;
-use App\Http\Controllers\Kpi\SoCommunityInputController;
-use App\Http\Controllers\NplCaseAssessmentController;
 use App\Http\Controllers\Kpi\TlOsDailyDashboardController;
-
-use App\Http\Controllers\LkhRecapController;
-use App\Http\Controllers\RkhController;
-    
-use App\Http\Controllers\RkhVisitController;
 use App\Http\Controllers\Kpi\RoOsDailyDashboardController;
-
-use App\Http\Controllers\RoVisitController;
 use App\Http\Controllers\Kpi\RoKpiController;
 use App\Http\Controllers\Kpi\KpiRoTargetController;
-use App\Http\Controllers\Kpi\FeKpiSheetController;
-use App\Http\Controllers\Kpi\FeTargetController;
-use App\Http\Controllers\Kpi\FeKpiRecalcController;
-use App\Http\Controllers\Kpi\BeKpiTargetController;
 
+use App\Http\Controllers\Kpi\FeTargetController;
+use App\Http\Controllers\Kpi\BeKpiTargetController;
 
 use App\Http\Controllers\Kpi\KpiAoTargetController;
 use App\Http\Controllers\Kpi\KpiAoActivityInputController;
@@ -108,127 +100,43 @@ use App\Http\Controllers\Kpi\KpiBeController;
 use App\Http\Controllers\Kpi\KpiThresholdController;
 use App\Http\Controllers\Kpi\KpiRankingHomeController;
 
+use App\Http\Controllers\LkhController;
+use App\Http\Controllers\LkhRecapController;
+use App\Http\Controllers\RkhController;
+use App\Http\Controllers\RkhVisitController;
+use App\Http\Controllers\RoVisitController;
+use App\Http\Controllers\NplCaseAssessmentController;
 
-    // RO (scope diri sendiri)
-Route::get('/kpi/ro/os-daily', [RoOsDailyDashboardController::class, 'index'])
-    ->name('kpi.ro.os-daily');
+use App\Http\Controllers\Kpi\CommunityController;
+use App\Http\Controllers\Kpi\CommunityHandlingController;
 
-Route::prefix('kpi')->middleware(['auth'])->group(function () {
-    Route::get('/ro/{user}', [KpiRoController::class, 'show'])->name('kpi.ro.show');
-});
-
-Route::get('/kpi/so/{user}', [\App\Http\Controllers\Kpi\KpiSoController::class, 'show'])->name('kpi.so.show');
-
-Route::get('/kpi/fe/{feUserId}', [KpiFeController::class, 'show'])->name('kpi.fe.show');
-
-Route::get('/kpi/be/{beUserId}', [\App\Http\Controllers\Kpi\KpiBeController::class, 'show'])
-    ->name('kpi.be.show');
-
-
-
-Route::middleware(['auth'])->group(function () {
-    Route::get('/kpi/thresholds', [KpiThresholdController::class, 'index'])->name('kpi.thresholds.index');
-    Route::get('/kpi/thresholds/{threshold}/edit', [KpiThresholdController::class, 'edit'])->name('kpi.thresholds.edit');
-    Route::put('/kpi/thresholds/{threshold}', [KpiThresholdController::class, 'update'])->name('kpi.thresholds.update');
-});
-
-Route::middleware(['auth'])->group(function () {
-    Route::get('/kpi/ao', [KpiRankingController::class, 'ao'])->name('kpi.ao.ranking');
-    Route::get('/kpi/ao/{user}', [KpiAoController::class, 'show'])->name('kpi.ao.show');
-});
-
-
-Route::middleware(['auth'])->group(function () {
-    // entry point dari sidebar
-    Route::get('/kpi/ranking', [KpiRankingHomeController::class, 'index'])->name('kpi.ranking.home');
-
-    // ranking per role (yang sudah ada / akan kita buat)
-    Route::get('/kpi/ranking/ao', [\App\Http\Controllers\Kpi\KpiRankingController::class, 'ao'])->name('kpi.ranking.ao');
-    Route::get('/kpi/ranking/ro', [\App\Http\Controllers\Kpi\KpiRankingController::class, 'ro'])->name('kpi.ranking.ro');
-    Route::get('/kpi/ranking/so', [\App\Http\Controllers\Kpi\KpiRankingController::class, 'so'])->name('kpi.ranking.so');
-    Route::get('/kpi/ranking/fe', [\App\Http\Controllers\Kpi\KpiRankingController::class, 'fe'])->name('kpi.ranking.fe');
-    Route::get('/kpi/ranking/be', [\App\Http\Controllers\Kpi\KpiRankingController::class, 'be'])->name('kpi.ranking.be');
-
-    // TL / leader (kalau belum ada, nanti kita buat bertahap)
-    Route::get('/kpi/ranking/tl', [\App\Http\Controllers\Kpi\KpiRankingController::class, 'tl'])->name('kpi.ranking.tl');
-});
-
-
-Route::middleware(['auth'])->group(function () {
-    Route::get('/kpi/tlum/sheet', [TlumKpiSheetController::class, 'index'])->name('kpi.tlum.sheet');
-});
-
-Route::get('/kpi/marketing/sheet', [MarketingKpiSheetController::class, 'index'])
-    ->name('kpi.marketing.sheet');
-
-// ===== AO Targets (full) =====
-Route::get('/kpi/ao/targets', [KpiAoTargetController::class, 'index'])
-    ->name('kpi.ao.targets.index');
-Route::post('/kpi/ao/targets', [KpiAoTargetController::class, 'store'])
-    ->name('kpi.ao.targets.store');
-Route::post('/kpi/recalc/ao', [KpiRecalcController::class, 'recalcAo'])
-->name('kpi.recalc.ao');
-
-// ===== AO Actual Community (manual) =====
-Route::get('/kpi/ao/community', [MarketingKpiSheetController::class, 'aoCommunity'])
-    ->name('kpi.ao.community');
-Route::post('/kpi/ao/community', [MarketingKpiSheetController::class, 'aoCommunityStore'])
-    ->name('kpi.ao.community.store');
-
-Route::middleware(['auth'])->group(function () {
-
-    // ===============================
-    // KPI FE - Targets
-    // ===============================
-    Route::get('/kpi/fe/targets', [FeTargetController::class, 'index'])
-        ->name('kpi.fe.targets.index');
-
-    Route::post('/kpi/fe/targets', [FeTargetController::class, 'store'])
-        ->name('kpi.fe.targets.store');
-
-    
-    // ===============================
-    // KPI FE - Recalc
-    // ===============================
-    Route::post('/kpi/recalc/fe', [KpiRecalcController::class, 'recalcFe'])
-        ->name('kpi.recalc.fe');
-
-});
-
-Route::get('/kpi/be', [\App\Http\Controllers\Kpi\MarketingKpiSheetController::class, 'index'])
-    ->name('kpi.be.index');
-
-
-Route::post('/kpi/be/recalc', [KpiRecalcController::class, 'recalcBe'])
-    ->name('kpi.recalc.be');
-
-Route::get('/kpi/be/targets',  [BeKpiTargetController::class, 'index'])->name('kpi.be.targets.index');
-Route::post('/kpi/be/targets', [BeKpiTargetController::class, 'store'])->name('kpi.be.targets.store');
-
-
-
+/**
+ * =======================================================
+ * Model binding
+ * =======================================================
+ */
 Route::model('action', LegalAction::class);
 
-
-// ROOT
+/**
+ * =======================================================
+ * ROOT + AUTH
+ * =======================================================
+ */
 Route::get('/', fn () => redirect()->route('login'));
 
-// AUTH
 Route::get('/login',  [AuthController::class, 'showLoginForm'])->name('login');
 Route::post('/login', [AuthController::class, 'login'])->name('login.post');
 Route::post('/logout',[AuthController::class, 'logout'])->name('logout');
+
 Route::get('/forbidden', function () {
     abort(403);
 })->name('forbidden');
 
-
-Route::post('/cases/{case}/sync-legacy-sp', [\App\Http\Controllers\NplCaseController::class, 'syncLegacySp'])
-    ->name('cases.sync-legacy-sp');
-
-Route::post('/cases/{case}/legal/start', [\App\Http\Controllers\Legal\LegalEscalationController::class, 'start'])
-    ->name('cases.legal.start');
-
-
+/**
+ * =======================================================
+ * ADMIN JOBS (auth + kti_or_ti)
+ * =======================================================
+ */
 Route::middleware(['auth', 'kti_or_ti'])->group(function () {
     Route::get('/admin/jobs', [JobMonitorController::class, 'index'])
         ->name('admin.jobs.index');
@@ -244,25 +152,32 @@ Route::middleware(['auth', 'kti_or_ti'])->group(function () {
 
     Route::post('/admin/jobs/run/sync-users', [JobMonitorController::class, 'runSyncUsers'])
         ->name('admin.jobs.run.sync_users');
-
 });
 
-
-// =======================================================
-// APP (AUTH)
-// =======================================================
+/**
+ * =======================================================
+ * APP (AUTH)
+ * =======================================================
+ */
 Route::middleware('auth')->group(function () {
 
+    // -------------------------------
+    // Dashboard
+    // -------------------------------
     Route::get('/dashboard', [DashboardController::class, 'index'])->name('dashboard');
 
     Route::get('/dashboard/executive', [ExecutiveDashboardController::class, 'index'])
         ->name('dashboard.executive');
 
+    // -------------------------------
+    // Loans Import
+    // -------------------------------
     Route::get('/loans/import', [LoanImportController::class, 'showForm'])->name('loans.import.form');
-
     Route::post('/loans/import', [LoanImportController::class, 'import'])->name('loans.import.process');
+
     Route::post('/loans/legacy-sync', [LoanImportController::class, 'legacySync'])->name('loans.legacy.sync');
     Route::post('/loans/update-jadwal', [LoanImportController::class, 'updateJadwal'])->name('loans.jadwal.update');
+
     Route::get('/loans/legacy-sync/status', [LoanImportController::class, 'legacySyncStatus'])
         ->name('loans.legacy.status');
 
@@ -272,8 +187,9 @@ Route::middleware('auth')->group(function () {
     Route::post('/loans/import/installments', [LoanImportController::class, 'importInstallments'])
         ->name('loans.installments.import');
 
-
+    // -------------------------------
     // EWS
+    // -------------------------------
     Route::get('/ews/summary', [EwsSummaryController::class, 'index'])
         ->name('ews.summary');
 
@@ -284,18 +200,21 @@ Route::middleware('auth')->group(function () {
         ->name('ews.detail.export');
 
     Route::get('/ews/ckpn', [EwsCkpnController::class, 'index'])->name('ews.ckpn.index');
-
     Route::get('/ews/ckpn/export', [EwsCkpnController::class, 'export'])
         ->name('ews.ckpn.export');
 
-
+    // -------------------------------
+    // Restructure Monitoring
+    // -------------------------------
     Route::get('/rs/monitoring', [RestructureDashboardController::class, 'index'])
         ->name('rs.monitoring.index');
 
     Route::post('/rs/monitoring/action-status', [RestructureDashboardController::class, 'updateActionStatus'])
         ->name('rs.monitoring.action-status');
-    
+
+    // -------------------------------
     // NPL Cases
+    // -------------------------------
     Route::prefix('cases')->name('cases.')->group(function () {
         Route::get('/',         [NplCaseController::class, 'index'])->name('index');
         Route::get('/overdue',  [NplCaseController::class, 'overdue'])->name('overdue');
@@ -308,9 +227,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/{case}/sp/{type}',  [NplCaseController::class, 'showSpForm'])->name('sp.form');
         Route::post('/{case}/sp/{type}', [NplCaseController::class, 'storeSp'])->name('sp.store');
 
-        Route::get('/{case}/actions/{action}/proof',        [CaseActionProofController::class, 'show'])->name('actions.proof');
-        // Route::get('/{case}/actions/{action}/legacy-proof', [CaseLegacyProofController::class, 'show'])->name('actions.legacy_proof');
-        // Route::get('/{case}/actions/{action}/legacy-proof', [LegacySpProofController::class, 'show'])->name('actions.legacy_proof');
+        Route::get('/{case}/actions/{action}/proof', [CaseActionProofController::class, 'show'])->name('actions.proof');
+
         Route::get('/{case}/actions/{caseAction}/legacy-proof', [CaseLegacyProofController::class, 'show'])
             ->name('actions.legacy_proof');
 
@@ -337,7 +255,9 @@ Route::middleware('auth')->group(function () {
         Route::post('/{nonLit}/reject',  [NonLitigationActionController::class, 'reject'])->name('reject');
     });
 
+    // -------------------------------
     // Dashboard AO
+    // -------------------------------
     Route::prefix('dashboard/ao')->name('dashboard.ao.')->group(function () {
         Route::get('/',                [AoPerformanceController::class, 'index'])->name('index');
         Route::get('/{aoCode}',        [AoPerformanceController::class, 'show'])->name('show');
@@ -345,42 +265,36 @@ Route::middleware('auth')->group(function () {
         Route::get('/{aoCode}/agenda', [AoAgendaController::class, 'index'])->name('agenda');
     });
 
+    // -------------------------------
     // Schedules & Visits
+    // -------------------------------
     Route::prefix('schedules')->name('schedules.')->group(function () {
         Route::patch('/{schedule}/complete', [ActionScheduleController::class, 'complete'])->name('complete');
         Route::get('/{schedule}/sp-log',  [WarningLetterController::class, 'create'])->name('sp.log');
         Route::post('/{schedule}/sp-log', [WarningLetterController::class, 'store'])->name('sp.store');
     });
 
-    // Route::prefix('visits')->name('visits.')->group(function () {
-    //     Route::get('/{schedule}/start', [VisitController::class, 'create'])->name('start');
-    //     Route::post('/{schedule}',      [VisitController::class, 'store'])->name('store');
-    // });
-
     Route::get('/visit-schedules/{visitSchedule}/start', [VisitController::class, 'createFromVisitSchedule'])
         ->name('visitSchedules.start');
 
-        
     Route::post('/visit-schedules/{visitSchedule}', [VisitController::class, 'storeFromVisitSchedule'])
         ->name('visitSchedules.store');
 
-
-    // routes/web.php
     Route::get('visits/{schedule:id}/start', [VisitController::class, 'create'])->name('visits.start');
     Route::post('visits/{schedule:id}', [VisitController::class, 'store'])->name('visits.store');
 
-    // Create Legal Action from NPL Case
+    // -------------------------------
+    // Legal Action from NPL Case
+    // -------------------------------
     Route::prefix('npl-cases/{case}/legal-actions')->name('npl.legal-actions.')->group(function () {
         Route::get('/create', [NplLegalActionController::class, 'create'])->name('create');
         Route::post('/',      [NplLegalActionController::class, 'store'])->name('store');
     });
 
     // Resolution target flow
-    // AO propose (nested)
     Route::post('/npl-cases/{case}/resolution-targets', [NplCaseResolutionTargetController::class, 'store'])
         ->name('npl-cases.resolution-targets.store');
 
-    // Approval (by target)
     Route::post('/resolution-targets/{target}/approve-tl', [ResolutionTargetApprovalController::class, 'approveTl'])
         ->name('resolution-targets.approve-tl');
 
@@ -390,14 +304,15 @@ Route::middleware('auth')->group(function () {
     Route::post('/resolution-targets/{target}/reject', [ResolutionTargetApprovalController::class, 'reject'])
         ->name('resolution-targets.reject');
 
+    // -------------------------------
+    // Legal Actions (Dashboard + Detail)
+    // -------------------------------
     Route::prefix('legal-actions')->name('legal-actions.')->group(function () {
 
-        // ========== VIEW DASHBOARD / LIST ==========
         Route::middleware(['role:KBL,KTI,KSR,KSL,DIREKSI,DIR,KOM,BE'])
             ->get('/', [LegalActionController::class, 'index'])
             ->name('index');
 
-        // ========== SHOW + UPDATE CONTENT ==========
         Route::middleware(['role:KBL,KTI,KSR,KSL,DIREKSI,DIR,KOM,BE'])->group(function () {
 
             Route::get('/{action}', [LegalActionController::class, 'show'])
@@ -407,7 +322,7 @@ Route::middleware('auth')->group(function () {
             Route::put('/{action}', [LegalActionController::class, 'update'])
                 ->whereNumber('action')
                 ->name('update');
-        
+
             Route::post('/{action}/documents', [LegalActionDocumentController::class, 'store'])->name('documents.store');
             Route::get('/{action}/documents/{doc}/download', [LegalActionDocumentController::class, 'download'])->name('documents.download');
             Route::delete('/{action}/documents/{doc}', [LegalActionDocumentController::class, 'destroy'])->name('documents.destroy');
@@ -416,7 +331,6 @@ Route::middleware('auth')->group(function () {
             Route::post('/{action}/events/{event}/cancel', [LegalEventController::class, 'cancel'])->name('events.cancel');
             Route::post('/{action}/events/{event}/reschedule', [LegalEventController::class, 'reschedule'])->name('events.reschedule');
 
-            // SOMASI
             Route::prefix('{action}/somasi')->name('somasi.')->group(function () {
                 Route::get('/', [SomasiController::class, 'show'])->name('show');
                 Route::post('/mark-sent', [SomasiController::class, 'markSent'])->name('markSent');
@@ -434,16 +348,12 @@ Route::middleware('auth')->group(function () {
                 ->name('somasi.received');
         });
 
-        // ========== UPDATE STATUS (lebih ketat, tanpa BE) ==========
         Route::middleware(['role:KBL,KTI,KSR,KSL,DIREKSI,DIR,KOM'])
             ->post('/{action}/status', [LegalActionController::class, 'updateStatus'])
             ->whereNumber('action')
             ->name('update-status');
 
-        // ========== HT EXECUTION ==========
         Route::middleware(['role:KBL,KTI,KSR,KSL,DIR,BE'])->group(function () {
-            // Route::get('/{action}/ht',  [HtExecutionController::class, 'show'])->name('ht.show');
-            // Route::post('/{action}/ht', [HtExecutionController::class, 'upsertExecution'])->name('ht.upsert');
             Route::post('/{action}/checklists/save', [LegalChecklistController::class, 'save'])->name('checklists.save');
         });
 
@@ -451,14 +361,13 @@ Route::middleware('auth')->group(function () {
             Route::post('/{action}/ht/status', [HtExecutionController::class, 'updateHtStatus'])
                 ->whereNumber('action')
                 ->name('ht.status');
+
             Route::post('/{action}/ht/close',  [LegalActionController::class, 'closeHt'])->name('ht.close');
             Route::get('/{action}/ht/audit_pdf', [LegalActionController::class, 'htAuditPdf'])->name('ht.audit_pdf');
         });
     });
 
-    // =======================================================
-    // Monitoring HT (auth + gate) — gate viewHtMonitoring sudah ada
-    // =======================================================
+    // Monitoring HT (auth + gate)
     Route::middleware(['can:viewHtMonitoring'])
         ->prefix('monitoring/ht')
         ->name('monitoring.ht.')
@@ -468,9 +377,9 @@ Route::middleware('auth')->group(function () {
             Route::get('/export',  [HtMonitoringController::class, 'export'])->name('export');
         });
 
-    // =======================================================
+    // -------------------------------
     // AO AGENDAS (HARUS ADA)
-    // =======================================================
+    // -------------------------------
     Route::prefix('ao-agendas')->name('ao-agendas.')->group(function () {
 
         Route::get('/', [AoAgendaController::class, 'index'])->name('index');
@@ -492,13 +401,9 @@ Route::middleware('auth')->group(function () {
         Route::get('/ao/{aoCode}', [AoScheduleDashboardController::class, 'forAo'])->name('ao');
     });
 
-    Route::post('/cases/{case}/legal-proposals/{proposal}/plakat-report', 
-        [LegalActionProposalController::class, 'reportPlakat']
-    )->name('npl.legal-proposals.plakatReport');
-
-    // =======================================================
-    // Supervision (AUTH) — 1 pintu + requireRole
-    // =======================================================
+    // -------------------------------
+    // Supervision
+    // -------------------------------
     Route::get('/supervision', [\App\Http\Controllers\Supervision\SupervisionHomeController::class, 'index'])
         ->name('supervision.home');
 
@@ -507,18 +412,18 @@ Route::middleware('auth')->group(function () {
         Route::get('/', [\App\Http\Controllers\Supervision\SupervisionHomeController::class, 'index'])
             ->name('home');
 
-        Route::get('/tl', [\App\Http\Controllers\Supervision\TlDashboardController::class, 'index'])
+        Route::get('/tl', [TlDashboardController::class, 'index'])
             ->middleware('requireRole:TL,TLL,TLF,TLR,TLRO,TLSO,TLFE,TLBE,TLUM')
             ->name('tl');
 
-        Route::get('/kasi', [\App\Http\Controllers\Supervision\KasiDashboardController::class, 'index'])
+        Route::get('/kasi', [KasiDashboardController::class, 'index'])
             ->middleware('requireRole:KSL,KSO,KSA,KSF,KSD,KSR')
             ->name('kasi');
 
-        Route::get('/kabag', [\App\Http\Controllers\ExecutiveDashboardController::class, 'index'])
+        Route::get('/kabag', [ExecutiveDashboardController::class, 'index'])
             ->middleware('requireRole:KABAG,KBL,KBO,KTI,KBF,PE,DIREKSI,KOM,DIR')
             ->name('kabag');
-        
+
         Route::get('/pengurus', fn() => redirect()->route('supervision.kabag'))
             ->middleware('requireRole:DIREKSI,KOM,DIR')
             ->name('pengurus');
@@ -529,7 +434,7 @@ Route::middleware('auth')->group(function () {
                 Route::get('/targets', [TargetApprovalTlController::class, 'index'])->name('targets.index');
                 Route::post('/targets/{target}/approve', [TargetApprovalTlController::class, 'approve'])->name('targets.approve');
                 Route::post('/targets/{target}/reject', [TargetApprovalTlController::class, 'reject'])->name('targets.reject');
-                    // ✅ tambah: NON-LIT approvals
+
                 Route::get('/nonlit', [\App\Http\Controllers\Supervision\NonLitApprovalTlController::class, 'index'])
                     ->name('nonlit.index');
 
@@ -546,20 +451,17 @@ Route::middleware('auth')->group(function () {
                 Route::get('/targets', [TargetApprovalKasiController::class, 'index'])->name('targets.index');
                 Route::post('/targets/{target}/approve', [TargetApprovalKasiController::class, 'approve'])->name('targets.approve');
                 Route::post('/targets/{target}/reject', [TargetApprovalKasiController::class, 'reject'])->name('targets.reject');
+
                 Route::get('/targets/{target}/approve', [TargetApprovalKasiController::class, 'approveForm'])
                     ->name('targets.approveForm');
 
                 Route::get('/nonlit', [\App\Http\Controllers\Supervision\NonLitApprovalKasiController::class, 'index'])->name('nonlit.index');
                 Route::post('/nonlit/{nonLit}/approve', [\App\Http\Controllers\Supervision\NonLitApprovalKasiController::class, 'approve'])->name('nonlit.approve');
                 Route::post('/nonlit/{nonLit}/reject', [\App\Http\Controllers\Supervision\NonLitApprovalKasiController::class, 'reject'])->name('nonlit.reject');
-                
             });
-
     });
 
-    // =======================================================
     // Org Assignment (AUTH + GATE)
-    // =======================================================
     Route::prefix('supervision/org')->name('supervision.org.')
         ->middleware('can:manage-org-assignments')
         ->group(function () {
@@ -574,37 +476,39 @@ Route::middleware('auth')->group(function () {
             Route::post('/assignments/{assignment}/switch', [OrgAssignmentController::class, 'switchLeader'])->name('assignments.switch');
         });
 
+    // Lending
     Route::get('/lending/performance', [LendingPerformanceController::class, 'index'])
         ->name('lending.performance.index');
 
     Route::get('/lending/performance/ao/{ao_code}', [LendingPerformanceController::class, 'showAo'])
         ->name('lending.performance.ao');
-    
+
     Route::get('/lending/trend', [LendingTrendController::class, 'index'])
         ->name('lending.trend.index');
 
+    // -------------------------------
+    // SHM Check
+    // -------------------------------
     Route::get('/shm-check', [ShmCheckRequestController::class, 'index'])->name('shm.index');
     Route::get('/shm-check/create', [ShmCheckRequestController::class, 'create'])->name('shm.create');
     Route::post('/shm-check', [ShmCheckRequestController::class, 'store'])->name('shm.store');
 
-   
     Route::prefix('shm')->name('shm.')->group(function () {
-     Route::post('{req}/replace-initial-files', [ShmCheckRequestController::class, 'replaceInitialFiles'])
-        ->name('replaceInitialFiles');
+        Route::post('{req}/replace-initial-files', [ShmCheckRequestController::class, 'replaceInitialFiles'])
+            ->name('replaceInitialFiles');
 
-        Route::post('{req}/revision/request-initial', [\App\Http\Controllers\ShmCheckRequestController::class, 'requestRevisionInitialDocs'])
+        Route::post('{req}/revision/request-initial', [ShmCheckRequestController::class, 'requestRevisionInitialDocs'])
             ->name('revision.requestInitial');
 
-        Route::post('{req}/revision/approve-initial', [\App\Http\Controllers\ShmCheckRequestController::class, 'approveRevisionInitialDocs'])
+        Route::post('{req}/revision/approve-initial', [ShmCheckRequestController::class, 'approveRevisionInitialDocs'])
             ->name('revision.approveInitial');
 
-        Route::post('{req}/revision/upload-initial', [\App\Http\Controllers\ShmCheckRequestController::class, 'uploadCorrectedInitialDocs'])
+        Route::post('{req}/revision/upload-initial', [ShmCheckRequestController::class, 'uploadCorrectedInitialDocs'])
             ->name('revision.uploadInitial');
-    });    
+    });
 
     Route::get('/shm-check/{req}', [ShmCheckRequestController::class, 'show'])->name('shm.show');
 
-    // KSA/KBO/SAD actions (gate: sadAction)
     Route::post('/shm-check/{req}/sent-to-notary', [ShmCheckRequestController::class, 'markSentToNotary'])
         ->name('shm.sentToNotary');
 
@@ -617,93 +521,262 @@ Route::middleware('auth')->group(function () {
     Route::post('/shm-check/{req}/upload-result', [ShmCheckRequestController::class, 'uploadResult'])
         ->name('shm.uploadResult');
 
-    // AO actions
     Route::post('/shm-check/{req}/upload-signed', [ShmCheckRequestController::class, 'uploadSigned'])
         ->name('shm.uploadSigned');
 
     Route::post('/shm-check/{req}/handed-to-sad', [ShmCheckRequestController::class, 'markHandedToSad'])
         ->name('shm.handedToSad');
 
-    // download file
     Route::get('/shm-check/file/{file}', [ShmCheckRequestController::class, 'downloadFile'])
         ->name('shm.file.download');
 
-        // ===============================
-        // KPI
-        // ===============================
-    Route::get('/kpi/marketing/targets', [MarketingTargetController::class, 'index'])
-        ->name('kpi.marketing.targets.index');
+    // -------------------------------
+    // KPI (SEMUA DI DALAM AUTH) — RAPINYA 1 PINTU
+    // -------------------------------
+    Route::prefix('kpi')->name('kpi.')->group(function () {
 
-    Route::get('/kpi/marketing/targets/create', [MarketingTargetController::class, 'create'])
-        ->name('kpi.marketing.targets.create');
+        // ===== entry point router (optional) =====
+        Route::get('/targets', [KpiTargetRouterController::class, 'index'])
+            ->name('targets');
 
-    Route::post('/kpi/marketing/targets', [MarketingTargetController::class, 'store'])
-        ->name('kpi.marketing.targets.store');
+        // ===== Thresholds =====
+        Route::get('/thresholds', [KpiThresholdController::class, 'index'])->name('thresholds.index');
+        Route::get('/thresholds/{threshold}/edit', [KpiThresholdController::class, 'edit'])->name('thresholds.edit');
+        Route::put('/thresholds/{threshold}', [KpiThresholdController::class, 'update'])->name('thresholds.update');
 
-    Route::get('/kpi/marketing/targets/{target}/edit', [MarketingTargetController::class, 'edit'])
-        ->name('kpi.marketing.targets.edit');
+        // ===== Ranking Home + per Role =====
+        Route::get('/ranking', [KpiRankingHomeController::class, 'index'])->name('ranking.home');
 
-    Route::put('/kpi/marketing/targets/{target}', [MarketingTargetController::class, 'update'])
-        ->name('kpi.marketing.targets.update');
+        Route::get('/ranking/ao', [KpiRankingController::class, 'ao'])->name('ranking.ao');
+        Route::get('/ranking/ro', [KpiRankingController::class, 'ro'])->name('ranking.ro');
+        Route::get('/ranking/so', [KpiRankingController::class, 'so'])->name('ranking.so');
+        Route::get('/ranking/fe', [KpiRankingController::class, 'fe'])->name('ranking.fe');
+        Route::get('/ranking/be', [KpiRankingController::class, 'be'])->name('ranking.be');
+        Route::get('/ranking/tl', [KpiRankingController::class, 'tl'])->name('ranking.tl');
 
-    Route::post('/kpi/marketing/targets/{target}/submit', [MarketingTargetController::class, 'submit'])
-        ->name('kpi.marketing.targets.submit');
+        // ===== TL dashboards =====
+        Route::get('/tl/os-daily', [TlOsDailyDashboardController::class, 'index'])
+            ->name('tl.os-daily');
 
-    Route::get('/kpi/marketing/achievements', [\App\Http\Controllers\Kpi\MarketingAchievementController::class, 'index'])
-        ->name('kpi.marketing.achievements.index');
+        // ===== TLUM =====
+        Route::get('/tlum/sheet', [TlumKpiSheetController::class, 'index'])
+            ->name('tlum.sheet');
 
-    Route::get('/kpi/marketing/ranking', [MarketingKpiRankingController::class, 'index'])
-        ->name('kpi.marketing.ranking.index');
+        // =======================================================
+        // AO (PENTING: static dulu, wildcard belakangan)
+        // =======================================================
+        Route::prefix('ao')->name('ao.')->group(function () {
+            Route::get('/', [KpiRankingController::class, 'ao'])->name('ranking');
 
-     // ✅ ini yang dipakai sidebar
-    Route::get('ranking/goto', [MarketingKpiRankingController::class, 'goto'])
-        ->name('ranking.goto');
+            // targets
+            Route::get('/targets', [KpiAoTargetController::class, 'index'])->name('targets.index');
+            Route::post('/targets', [KpiAoTargetController::class, 'store'])->name('targets.store');
 
-        // routes/web.php
-    Route::post('/kpi/marketing/ranking/recalc', 
-        [\App\Http\Controllers\Kpi\MarketingKpiRankingController::class, 'recalcAll']
-    )->name('kpi.marketing.ranking.recalc');
+            // community actual (manual)
+            Route::get('/community', [MarketingKpiSheetController::class, 'aoCommunity'])->name('community');
+            Route::post('/community', [MarketingKpiSheetController::class, 'aoCommunityStore'])->name('community.store');
 
+            // wildcard show (paling bawah) + constraint anti tabrakan
+            Route::get('/{user}', [KpiAoController::class, 'show'])
+                ->whereNumber('user')
+                ->name('show');
+        });
 
-        // ===============================
-        // Approval KPI
-        // ===============================
+        // =======================================================
+        // RO (scope diri sendiri + os daily + targets)
+        // =======================================================
+        Route::get('/ro/os-daily', [RoOsDailyDashboardController::class, 'index'])
+            ->name('ro.os-daily');
 
-    // inbox TL/Kasi
-    Route::get('/kpi/marketing/approvals', [MarketingTargetApprovalController::class, 'index'])
-        ->name('kpi.marketing.approvals.index');
+        Route::prefix('ro')->name('ro.')->group(function () {
+            Route::get('/', [RoKpiController::class, 'index'])->name('index');
 
-    // form review (TL/Kasi boleh adjust)
-    Route::get('/kpi/marketing/approvals/{target}', [MarketingTargetApprovalController::class, 'show'])
-        ->name('kpi.marketing.approvals.show');
+            // static dulu
+            Route::get('/targets', [KpiRoTargetController::class, 'index'])->name('targets.index');
+            Route::post('/targets', [KpiRoTargetController::class, 'store'])->name('targets.store');
 
-    // simpan perubahan angka final (sebelum approve)
-    Route::put('/kpi/marketing/approvals/{target}', [MarketingTargetApprovalController::class, 'update'])
-        ->name('kpi.marketing.approvals.update');
+            // wildcard bawah + constraint
+            Route::get('/{ao}', [RoKpiController::class, 'show'])
+                ->where('ao', '[0-9]{1,10}')
+                ->name('show');
 
-    // approve / reject
-    Route::post('/kpi/marketing/approvals/{target}/approve', [MarketingTargetApprovalController::class, 'approve'])
-        ->name('kpi.marketing.approvals.approve');
+            // kalau masih butuh route /kpi/ro/{user} untuk legacy UI
+            Route::get('/user/{user}', [KpiRoController::class, 'show'])
+                ->whereNumber('user')
+                ->name('user.show');
+        });
 
-    Route::post('/kpi/marketing/approvals/{target}/reject', [MarketingTargetApprovalController::class, 'reject'])
-        ->name('kpi.marketing.approvals.reject');
+        // =======================================================
+        // FE
+        // =======================================================
+        Route::prefix('fe')->name('fe.')->group(function () {
+            // targets
+            Route::get('/targets', [FeTargetController::class, 'index'])->name('targets.index');
+            Route::post('/targets', [FeTargetController::class, 'store'])->name('targets.store');
 
-    Route::get('/kpi/marketing/targets/{target}/achievement', [MarketingKpiAchievementController::class, 'show'])
-        ->name('kpi.marketing.targets.achievement');
+            // show (paling bawah + constraint)
+            Route::get('/{feUserId}', [KpiFeController::class, 'show'])
+                ->whereNumber('feUserId')
+                ->name('show');
+        });
 
-    Route::get('/kpi/marketing/sheet', [MarketingKpiSheetController::class, 'index'])
-        ->name('kpi.marketing.sheet');
+        // =======================================================
+        // BE
+        // =======================================================
+        Route::get('/be', [MarketingKpiSheetController::class, 'index'])
+            ->name('be.index');
 
-    Route::post('/kpi/recalc/ao', [KpiRecalcController::class, 'recalcAo'])->name('kpi.recalc.ao');
-    Route::post('/kpi/recalc/so', [KpiRecalcController::class, 'recalcSo'])->name('kpi.recalc.so');
-    Route::post('/kpi/recalc/ro', [\App\Http\Controllers\Kpi\KpiRecalcController::class, 'recalcRo'])
-        ->name('kpi.recalc.ro');
+        Route::prefix('be')->name('be.')->group(function () {
+            // targets
+            Route::get('/targets', [BeKpiTargetController::class, 'index'])->name('targets.index');
+            Route::post('/targets', [BeKpiTargetController::class, 'store'])->name('targets.store');
 
+            // show (paling bawah + constraint)
+            Route::get('/{beUserId}', [KpiBeController::class, 'show'])
+                ->whereNumber('beUserId')
+                ->name('show');
+        });
 
-        // ===============================
-        // RKH LKH
-        // ===============================
+        // =======================================================
+        // SO (INI YANG BIKIN ERROR KEMARIN) — static dulu, wildcard terakhir
+        // =======================================================
+        Route::prefix('so')->name('so.')->group(function () {
 
+            // community input (KBL)
+            Route::middleware(['role:KBL'])->group(function () {
+                Route::get('/community-input', [SoCommunityInputController::class, 'index'])
+                    ->name('community_input.index');
+
+                Route::post('/community-input', [SoCommunityInputController::class, 'store'])
+                    ->name('community_input.store');
+            });
+
+            // targets (resource) — static routes duluan
+            Route::resource('targets', SoTargetController::class)->except(['show','destroy']);
+            Route::post('targets/{target}/submit', [SoTargetController::class, 'submit'])->name('targets.submit');
+
+            // approvals SO (TL/KASI)
+            Route::get('approvals', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'index'])
+                ->name('approvals.index');
+
+            Route::get('approvals/{target}', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'show'])
+                ->name('approvals.show');
+
+            Route::put('approvals/{target}', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'update'])
+                ->name('approvals.update');
+
+            Route::post('approvals/{target}/approve', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'approve'])
+                ->name('approvals.approve');
+
+            Route::post('approvals/{target}/reject', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'reject'])
+                ->name('approvals.reject');
+
+            // wildcard show PALING BAWAH + constraint anti tabrakan "targets"
+            Route::get('/{user}', [KpiSoController::class, 'show'])
+                ->whereNumber('user')
+                ->name('show');
+        });
+
+        // =======================================================
+        // KPI MARKETING (TARGETS + APPROVAL + ACHIEVEMENT + RANKING)
+        // =======================================================
+        Route::prefix('marketing')->name('marketing.')->group(function () {
+
+            Route::get('/targets', [MarketingTargetController::class, 'index'])
+                ->name('targets.index');
+
+            Route::get('/targets/create', [MarketingTargetController::class, 'create'])
+                ->name('targets.create');
+
+            Route::post('/targets', [MarketingTargetController::class, 'store'])
+                ->name('targets.store');
+
+            Route::get('/targets/{target}/edit', [MarketingTargetController::class, 'edit'])
+                ->name('targets.edit');
+
+            Route::put('/targets/{target}', [MarketingTargetController::class, 'update'])
+                ->name('targets.update');
+
+            Route::post('/targets/{target}/submit', [MarketingTargetController::class, 'submit'])
+                ->name('targets.submit');
+
+            Route::get('/targets/{target}/achievement', [MarketingKpiAchievementController::class, 'show'])
+                ->name('targets.achievement');
+
+            Route::get('/achievements', [\App\Http\Controllers\Kpi\MarketingAchievementController::class, 'index'])
+                ->name('achievements.index');
+
+            Route::get('/approvals', [MarketingTargetApprovalController::class, 'index'])
+                ->name('approvals.index');
+
+            Route::get('/approvals/{target}', [MarketingTargetApprovalController::class, 'show'])
+                ->name('approvals.show');
+
+            Route::put('/approvals/{target}', [MarketingTargetApprovalController::class, 'update'])
+                ->name('approvals.update');
+
+            Route::post('/approvals/{target}/approve', [MarketingTargetApprovalController::class, 'approve'])
+                ->name('approvals.approve');
+
+            Route::post('/approvals/{target}/reject', [MarketingTargetApprovalController::class, 'reject'])
+                ->name('approvals.reject');
+
+            Route::get('/ranking', [MarketingKpiRankingController::class, 'index'])
+                ->name('ranking.index');
+
+            Route::post('/ranking/recalc', [MarketingKpiRankingController::class, 'recalcAll'])
+                ->name('ranking.recalc');
+
+            Route::get('/sheet', [MarketingKpiSheetController::class, 'index'])
+                ->name('sheet');
+        });
+
+        // =======================================================
+        // Recalc KPI (semua di satu tempat)
+        // =======================================================
+        Route::post('/recalc/ao', [KpiRecalcController::class, 'recalcAo'])->name('recalc.ao');
+        Route::post('/recalc/so', [KpiRecalcController::class, 'recalcSo'])->name('recalc.so');
+        Route::post('/recalc/ro', [KpiRecalcController::class, 'recalcRo'])->name('recalc.ro');
+        Route::post('/recalc/fe', [KpiRecalcController::class, 'recalcFe'])->name('recalc.fe');
+        Route::post('/be/recalc', [KpiRecalcController::class, 'recalcBe'])->name('recalc.be');
+
+        // =======================================================
+        // Communities
+        // =======================================================
+        Route::prefix('communities')->name('communities.')->group(function () {
+            Route::get('/', [CommunityController::class, 'index'])->name('index');
+
+            Route::get('/create', [CommunityController::class, 'create'])
+                ->middleware('role:AO,SO,TLUM,TLSO,KBL')
+                ->name('create');
+
+            Route::post('/', [CommunityController::class, 'store'])
+                ->middleware('role:AO,SO,TLUM,TLSO,KBL')
+                ->name('store');
+
+            Route::get('/{community}', [CommunityController::class, 'show'])->name('show');
+
+            Route::get('/{community}/edit', [CommunityController::class, 'edit'])
+                ->middleware('role:KBL')
+                ->name('edit');
+
+            Route::put('/{community}', [CommunityController::class, 'update'])
+                ->middleware('role:KBL')
+                ->name('update');
+
+            Route::post('/{community}/handlings', [CommunityHandlingController::class, 'store'])
+                ->middleware('role:AO,SO,KBL')
+                ->name('handlings.store');
+
+            Route::post('/handlings/{handling}/end', [CommunityHandlingController::class, 'end'])
+                ->middleware('role:AO,SO,KBL')
+                ->name('handlings.end');
+        });
+    });
+
+    // -------------------------------
+    // RKH / LKH (di dalam auth)
+    // -------------------------------
     Route::get('/rkh/{rkh}/lkh-recap', [LkhRecapController::class, 'show'])
         ->name('lkh.recap.show');
 
@@ -718,75 +791,51 @@ Route::middleware('auth')->group(function () {
     Route::post('/rkh/{rkh}/submit', [RkhController::class, 'submit'])->name('rkh.submit');
 
     Route::prefix('rkh')->name('rkh.')->group(function () {
-        // start form visit RKH (prospect/non-NPL) by rkh_detail
         Route::get('/details/{detail}/visit-start', [RkhVisitController::class, 'create'])->name('details.visit.start');
         Route::post('/details/{detail}/visit', [RkhVisitController::class, 'store'])->name('details.visit.store');
 
-        // link account_no + promote history visit RKH ke timeline penanganan
         Route::post('/details/{detail}/link-account', [RkhVisitController::class, 'linkAccount'])->name('details.linkAccount');
     });
 
-    
-});    
+    // create LKH by detail
+    Route::get('/lkh/{detail}/create', [LkhController::class, 'create'])->name('lkh.create');
+    Route::post('/lkh/{detail}', [LkhController::class, 'store'])->name('lkh.store');
 
+    // edit/update existing LKH
+    Route::get('/lkh-report/{lkh}/edit', [LkhController::class, 'edit'])->name('lkh.edit');
+    Route::put('/lkh-report/{lkh}', [LkhController::class, 'update'])->name('lkh.update');
+
+    // NPL assessment
+    Route::post('/cases/{case}/assessment', [NplCaseAssessmentController::class, 'store'])
+        ->name('cases.assessment.store');
+});
+
+/**
+ * =======================================================
+ * RO Visits (auth) — di luar group besar juga aman
+ * =======================================================
+ */
 Route::middleware(['auth'])->prefix('ro-visits')->name('ro_visits.')->group(function () {
-        Route::post('/toggle', [RoVisitController::class, 'toggle'])->name('toggle'); // checklist
-        Route::get('/visit',   [RoVisitController::class, 'create'])->name('create'); // form LKH
-        Route::post('/visit',  [RoVisitController::class, 'store'])->name('store');   // submit LKH
-    });
-
-Route::middleware(['auth', 'role:KBL'])->group(function () {
-    Route::get('/kpi/so/community-input', [SoCommunityInputController::class, 'index'])
-        ->name('kpi.so.community_input.index');
-
-    Route::post('/kpi/so/community-input', [SoCommunityInputController::class, 'store'])
-        ->name('kpi.so.community_input.store');
+    Route::post('/toggle', [RoVisitController::class, 'toggle'])->name('toggle');
+    Route::get('/visit',   [RoVisitController::class, 'create'])->name('create');
+    Route::post('/visit',  [RoVisitController::class, 'store'])->name('store');
 });
 
-Route::middleware(['auth'])->prefix('kpi/so')->name('kpi.so.')->group(function () {
-    // ✅ Target SO: hanya KBL
-    Route::middleware('role:KBL')->group(function () {
-        Route::get('targets', [\App\Http\Controllers\Kpi\SoKpiTargetController::class, 'index'])
-            ->name('targets.index');
+/**
+ * =======================================================
+ * BRIDGE ROUTES (legacy / helper)
+ * =======================================================
+ */
+Route::get('/rkh/details/{detail}/visit-start', [\App\Http\Controllers\RkhVisitBridgeController::class, 'start'])
+    ->name('rkh.details.visitStart');
 
-        Route::post('targets', [\App\Http\Controllers\Kpi\SoKpiTargetController::class, 'store'])
-            ->name('targets.store');
-    });
-});
+Route::get('/visits/loan/{loan}/start', [VisitController::class, 'startFromLoan'])->name('visits.loan.start');
 
-Route::prefix('kpi/so')->name('kpi.so.')->middleware('auth')->group(function () {
-    Route::resource('targets', \App\Http\Controllers\Kpi\SoTargetController::class)->except(['show','destroy']);
-    Route::post('targets/{target}/submit', [\App\Http\Controllers\Kpi\SoTargetController::class, 'submit'])->name('targets.submit');
-
-    // ✅ approvals SO (TL/KASI)
-    Route::get('approvals', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'index'])
-        ->name('approvals.index');
-
-    Route::get('approvals/{target}', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'show'])
-        ->name('approvals.show');
-
-    Route::put('approvals/{target}', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'update'])
-        ->name('approvals.update');
-
-    Route::post('approvals/{target}/approve', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'approve'])
-        ->name('approvals.approve');
-
-    Route::post('approvals/{target}/reject', [\App\Http\Controllers\Kpi\SoTargetApprovalController::class, 'reject'])
-        ->name('approvals.reject');
-});
-
-
-    
-
-// TL RO (scope bawahan)
-    Route::get('/kpi/tl/os-daily', [TlOsDailyDashboardController::class, 'index'])
-        ->name('kpi.tl.os-daily');
-
-
-
-// =========================
-// LEGAL PROPOSALS (USULAN)
-// =========================
+/**
+ * =======================================================
+ * LEGAL PROPOSALS (USULAN) + APPROVAL
+ * =======================================================
+ */
 Route::middleware(['auth','role:AO,BE,FE,SO,RO,SA'])
     ->prefix('npl-cases/{case}')
     ->name('npl.')
@@ -795,9 +844,6 @@ Route::middleware(['auth','role:AO,BE,FE,SO,RO,SA'])
             ->name('legal-proposals.store');
     });
 
-// =========================
-// PROPOSAL APPROVAL & LIST (TL/Kasi/BE monitor)
-// =========================
 Route::middleware(['auth'])
     ->prefix('legal/proposals')
     ->name('legal.proposals.')
@@ -808,13 +854,12 @@ Route::middleware(['auth'])
         Route::post('{proposal}/approve-tl',   [LegalActionProposalApprovalController::class, 'approveTl'])->name('approve-tl');
         Route::post('{proposal}/approve-kasi', [LegalActionProposalApprovalController::class, 'approveKasi'])->name('approve-kasi');
 
-        // ✅ GANTI JADI POST + role BE
         Route::post('{proposal}/execute', [LegalActionProposalController::class, 'execute'])
             ->middleware('role:BE')
             ->name('execute');
     });
 
-    Route::middleware(['auth', 'role:BE'])
+Route::middleware(['auth', 'role:BE'])
     ->prefix('npl-cases/{case}')
     ->name('npl.')
     ->group(function () {
@@ -823,45 +868,51 @@ Route::middleware(['auth'])
 
         Route::post('/legal-actions', [NplLegalActionController::class, 'store'])
             ->name('legal-actions.store');
-        
     });
 
-
-// routes/web.php
-
-Route::middleware(['auth','role:KOM,DIR,DIREKSI,KBL,KSL,KBO,PE']) // sesuaikan role executive kamu
+/**
+ * =======================================================
+ * EXECUTIVE TARGETS
+ * =======================================================
+ */
+Route::middleware(['auth','role:KOM,DIR,DIREKSI,KBL,KSL,KBO,PE'])
     ->prefix('executive')
     ->as('executive.')
     ->group(function () {
-        Route::get('/targets', [\App\Http\Controllers\Executive\ExecutiveTargetController::class, 'index'])
+        Route::get('/targets', [ExecutiveTargetController::class, 'index'])
             ->name('targets.index');
 
-        Route::get('/targets/{case}', [\App\Http\Controllers\Executive\ExecutiveTargetController::class, 'show'])
+        Route::get('/targets/{case}', [ExecutiveTargetController::class, 'show'])
             ->name('targets.show');
     });
 
-
+/**
+ * =======================================================
+ * KTI TARGETS
+ * =======================================================
+ */
 Route::middleware(['auth'])->prefix('kti')->name('kti.')->group(function () {
     Route::get('/targets', [KtiResolutionTargetController::class, 'index'])->name('targets.index');
     Route::get('/targets/{case}', [KtiResolutionTargetController::class, 'show'])->name('targets.show');
     Route::post('/targets/{case}', [KtiResolutionTargetController::class, 'store'])->name('targets.store');
 });
 
-
+/**
+ * =======================================================
+ * LEGAL ACTIONS - HT EXECUTION (additional endpoints)
+ * =======================================================
+ */
 Route::middleware(['auth'])
     ->prefix('legal-actions')
     ->name('legal-actions.')
     ->group(function () {
 
-        // ===== HT EXECUTION UI (TAB) =====
         Route::get('{action}/ht', [HtExecutionController::class, 'show'])
             ->name('ht.show');
 
-        // ===== EXECUTION FORM (Data objek & dasar HT) =====
         Route::post('{action}/ht', [HtExecutionController::class, 'upsert'])
             ->name('ht.upsert');
 
-        // ===== DOCUMENTS =====
         Route::post('{action}/ht/documents', [HtExecutionController::class, 'storeDocument'])
             ->name('ht.documents.store');
 
@@ -877,14 +928,12 @@ Route::middleware(['auth'])
         Route::get('{action}/ht/documents/{doc}/view', [HtExecutionController::class, 'viewDocument'])
             ->name('ht.documents.view');
 
-        // ===== EVENTS (TIMELINE) =====
         Route::post('{action}/ht/events', [HtExecutionController::class, 'storeEvent'])
             ->name('ht.events.store');
 
         Route::delete('{action}/ht/events/{event}', [HtExecutionController::class, 'deleteEvent'])
             ->name('ht.events.delete');
 
-        // ===== AUCTIONS =====
         Route::post('{action}/ht/auctions', [HtExecutionController::class, 'storeAuction'])
             ->name('ht.auctions.store');
 
@@ -897,91 +946,17 @@ Route::middleware(['auth'])
         Route::get('{action}/ht/auctions/{auction}/risalah', [HtExecutionController::class, 'risalah'])
             ->name('ht.auctions.risalah');
 
-        // ===== STATUS HT =====
-        // Route::post('{action}/ht/status', [HtExecutionController::class, 'updateHtStatus'])
-        //     ->name('ht.update-status');
-
         Route::post('{action}/ht/close', [HtExecutionController::class, 'closeHt'])
             ->name('ht.close');
-
     });
 
-    
+/**
+ * =======================================================
+ * EXTRA CASE ROUTES (di luar auth group awal - tetap aman)
+ * =======================================================
+ */
+Route::post('/cases/{case}/sync-legacy-sp', [NplCaseController::class, 'syncLegacySp'])
+    ->name('cases.sync-legacy-sp');
 
-Route::middleware(['auth'])->group(function () {
-    Route::post('/cases/{case}/assessment', [NplCaseAssessmentController::class, 'store'])
-        ->name('cases.assessment.store');
-});
-
-Route::get('/kpi/targets', [\App\Http\Controllers\Kpi\KpiTargetRouterController::class, 'index'])
-    ->name('kpi.targets');
-
-    
-
-Route::middleware(['auth'])->group(function () {
-    // create LKH by detail
-    Route::get('/lkh/{detail}/create', [LkhController::class, 'create'])->name('lkh.create');
-    Route::post('/lkh/{detail}', [LkhController::class, 'store'])->name('lkh.store');
-
-    // edit/update existing LKH
-    Route::get('/lkh-report/{lkh}/edit', [LkhController::class, 'edit'])->name('lkh.edit');
-    Route::put('/lkh-report/{lkh}', [LkhController::class, 'update'])->name('lkh.update');
-});
-
-// routes/web.php
-Route::get('/rkh/details/{detail}/visit-start', [\App\Http\Controllers\RkhVisitBridgeController::class, 'start'])
-    ->name('rkh.details.visitStart');
-
-Route::get('/visits/loan/{loan}/start', [VisitController::class, 'startFromLoan'])->name('visits.loan.start');
-
-
-
-Route::middleware(['auth'])->prefix('kpi/ro')->name('kpi.ro.')->group(function () {
-    Route::get('/', [RoKpiController::class, 'index'])->name('index');
-
-    // ✅ static dulu
-    Route::get('/targets', [KpiRoTargetController::class, 'index'])->name('targets.index');
-    Route::post('/targets', [KpiRoTargetController::class, 'store'])->name('targets.store');
-
-    // ✅ wildcard paling bawah + constraint
-    Route::get('/{ao}', [RoKpiController::class, 'show'])
-        ->where('ao', '[0-9]{1,10}') // sesuaikan: misal 6 digit => [0-9]{6}
-        ->name('show');
-});
-
-use App\Http\Controllers\Kpi\CommunityController;
-use App\Http\Controllers\Kpi\CommunityHandlingController;
-
-Route::middleware(['auth'])->prefix('kpi/communities')->name('kpi.communities.')->group(function () {
-    // list + filter
-    Route::get('/', [CommunityController::class, 'index'])->name('index');
-
-    // create master komunitas (AO/SO/KBL)
-    Route::get('/create', [CommunityController::class, 'create'])
-        ->middleware('role:AO,SO,TLUM,TLSO,KBL')
-        ->name('create');
-    Route::post('/', [CommunityController::class, 'store'])
-        ->middleware('role:AO,SO,TLUM,TLSO,KBL')
-        ->name('store');
-
-    // detail komunitas + riwayat handling
-    Route::get('/{community}', [CommunityController::class, 'show'])->name('show');
-
-    // edit master komunitas (KBL only biar rapi governance)
-    Route::get('/{community}/edit', [CommunityController::class, 'edit'])
-        ->middleware('role:KBL')
-        ->name('edit');
-    Route::put('/{community}', [CommunityController::class, 'update'])
-        ->middleware('role:KBL')
-        ->name('update');
-
-    // handling (AO/SO/KBL)
-    Route::post('/{community}/handlings', [CommunityHandlingController::class, 'store'])
-        ->middleware('role:AO,SO,KBL')
-        ->name('handlings.store');
-
-    // end handling (AO/SO boleh end miliknya, KBL boleh end siapa saja)
-    Route::post('/handlings/{handling}/end', [CommunityHandlingController::class, 'end'])
-        ->middleware('role:AO,SO,KBL')
-        ->name('handlings.end');
-});
+Route::post('/cases/{case}/legal/start', [LegalEscalationController::class, 'start'])
+    ->name('cases.legal.start');

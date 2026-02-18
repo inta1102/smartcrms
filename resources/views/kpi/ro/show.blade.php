@@ -18,7 +18,7 @@
   {{-- Header --}}
   <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
     <div>
-      <div class="text-sm text-slate-500">Periode</div>
+      <div class="text-sm text-slate-500">Periode Errorrrr</div>
       <div class="text-4xl font-extrabold text-slate-900">{{ $periodLabel }}</div>
 
       <div class="mt-2 text-sm text-slate-600">
@@ -160,17 +160,6 @@
           </thead>
 
           <tbody class="divide-y divide-slate-200">
-            {{-- Topup --}}
-            <tr>
-              <td class="px-3 py-2 font-semibold">Topup</td>
-              <td class="px-3 py-2 text-right">{{ $fmtRp($target->target_topup ?? 0) }}</td>
-              <td class="px-3 py-2 text-right">{{ $fmtRp($kpi->topup_realisasi ?? 0) }}</td>
-              <td class="px-3 py-2 text-right">{{ $fmtPct($kpi->topup_pct ?? 0,2) }}</td>
-              <td class="px-3 py-2 text-center font-bold">{{ (int)($kpi->topup_score ?? 0) }}</td>
-              <td class="px-3 py-2 text-right text-xs text-slate-500">
-                Konsentrasi: {{ $fmtPct($kpi->topup_concentration_pct ?? 0,2) }}
-              </td>
-            </tr>
 
             {{-- Repayment --}}
             <tr>
@@ -184,16 +173,6 @@
               </td>
             </tr>
 
-            {{-- NOA --}}
-            <tr>
-              <td class="px-3 py-2 font-semibold">NOA Realisasi</td>
-              <td class="px-3 py-2 text-right">{{ (int)($target->target_noa ?? 0) }}</td>
-              <td class="px-3 py-2 text-right">{{ (int)($kpi->noa_realisasi ?? 0) }}</td>
-              <td class="px-3 py-2 text-right">{{ $fmtPct($kpi->noa_pct ?? 0,2) }}</td>
-              <td class="px-3 py-2 text-center font-bold">{{ (int)($kpi->noa_score ?? 0) }}</td>
-              <td class="px-3 py-2 text-right text-xs text-slate-500">-</td>
-            </tr>
-
             {{-- DPK --}}
             <tr>
               <td class="px-3 py-2 font-semibold">DPK (Migrasi)</td>
@@ -205,6 +184,31 @@
                 OS migrasi: {{ $fmtRp($kpi->dpk_migrasi_os ?? 0) }} • OS akhir: {{ $fmtRp($kpi->dpk_total_os_akhir ?? 0) }}
               </td>
             </tr>
+
+
+            {{-- Topup --}}
+            <tr>
+              <td class="px-3 py-2 font-semibold">Topup</td>
+              <td class="px-3 py-2 text-right">{{ $fmtRp($target->target_topup ?? 0) }}</td>
+              <td class="px-3 py-2 text-right">{{ $fmtRp($kpi->topup_realisasi ?? 0) }}</td>
+              <td class="px-3 py-2 text-right">{{ $fmtPct($kpi->topup_pct ?? 0,2) }}</td>
+              <td class="px-3 py-2 text-center font-bold">{{ (int)($kpi->topup_score ?? 0) }}</td>
+              <td class="px-3 py-2 text-right text-xs text-slate-500">
+                Konsentrasi: {{ $fmtPct($kpi->topup_concentration_pct ?? 0,2) }}
+              </td>
+            </tr>
+
+            {{-- NOA --}}
+            <tr>
+              <td class="px-3 py-2 font-semibold">NOA Realisasi</td>
+              <td class="px-3 py-2 text-right">{{ (int)($target->target_noa ?? 0) }}</td>
+              <td class="px-3 py-2 text-right">{{ (int)($kpi->noa_realisasi ?? 0) }}</td>
+              <td class="px-3 py-2 text-right">{{ $fmtPct($kpi->noa_pct ?? 0,2) }}</td>
+              <td class="px-3 py-2 text-center font-bold">{{ (int)($kpi->noa_score ?? 0) }}</td>
+              <td class="px-3 py-2 text-right text-xs text-slate-500">-</td>
+            </tr>
+
+
           </tbody>
         </table>
       </div>

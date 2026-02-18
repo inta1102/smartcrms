@@ -9,16 +9,38 @@ use Illuminate\Support\Facades\DB;
 
 class KpiAoTargetController extends Controller
 {
-    private function normPeriod(?string $raw): string
+   
+    private function normPeriod(?string $period): string
     {
-        $raw = trim((string)$raw);
-        if ($raw === '') return now()->startOfMonth()->toDateString();
+        $p = trim((string)$period);
 
-        // support input type="month" => "YYYY-MM"
-        if (preg_match('/^\d{4}-\d{2}$/', $raw)) $raw .= '-01';
+        // default: bulan ini
+        if ($p === '') {
+            return now()->startOfMonth()->format('Y-m-d');
+        }
 
-        return Carbon::parse($raw)->startOfMonth()->toDateString();
+        // ✅ terima YYYY-MM
+        if (preg_match('/^\d{4}-\d{2}$/', $p)) {
+            try {
+                return Carbon::createFromFormat('Y-m', $p)->startOfMonth()->format('Y-m-d');
+            } catch (\Throwable $e) {
+                abort(422, 'Format period tidak valid. Gunakan YYYY-MM atau YYYY-MM-DD');
+            }
+        }
+
+        // ✅ terima YYYY-MM-DD
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $p)) {
+            try {
+                return Carbon::createFromFormat('Y-m-d', $p)->startOfMonth()->format('Y-m-d');
+            } catch (\Throwable $e) {
+                abort(422, 'Format period tidak valid. Gunakan YYYY-MM atau YYYY-MM-DD');
+            }
+        }
+
+        // selain itu → 422 (jangan 404)
+        abort(422, 'Format period harus YYYY-MM atau YYYY-MM-DD');
     }
+
 
     private function toIntMoney($v): int
     {
