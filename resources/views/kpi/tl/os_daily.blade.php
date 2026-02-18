@@ -112,6 +112,8 @@
   $cLT  = $card('lt', $cards ?? []);
   $cRR  = $card('rr', $cards ?? []);
   $cPLT = $card('pct_lt', $cards ?? []);
+  $cDPK = $card('dpk', $cards ?? []);
+
 
   $bounce = $bounce ?? [];
   $bouncePrev = $bounce['prev_pos_date'] ?? null;
@@ -135,38 +137,46 @@
 
     $d = (float)$deltaLt;
 
-    // ⚠️ Mixed: LT turun tapi migrasi ke DPK
-    if ($d < 0 && $toDpkNoa > 0) {
-      return [
-        'deltaTone' => 'text-amber-700',
-        'hintTone'  => 'text-amber-700',
-        'hint'      => "LT turun, tapi ada eskalasi LT→DPK: {$toDpkNoa} NOA (OS ± Rp ".number_format($toDpkOs,0,',','.').")",
-      ];
+    // ✅ delta tone murni dari sign (LT naik buruk, LT turun baik)
+    $deltaTone = $d > 0 ? 'text-rose-700' : ($d < 0 ? 'text-emerald-700' : 'text-slate-500');
+    $hintTone  = 'text-slate-500';
+    $hint      = $d > 0 ? 'LT naik = memburuk' : ($d < 0 ? 'LT turun = membaik' : 'stagnan');
+
+    // ⚠️ eskalasi: jangan ubah deltaTone, cukup hint warning
+    if ($toDpkNoa > 0) {
+      $hintTone = 'text-amber-700';
+      if ($d < 0) {
+        $hint = "LT turun, tapi ada eskalasi LT→DPK: {$toDpkNoa} NOA (OS ± Rp ".number_format($toDpkOs,0,',','.').")";
+      } elseif ($d > 0) {
+        $hint = "LT naik, dan ada eskalasi LT→DPK: {$toDpkNoa} NOA (OS ± Rp ".number_format($toDpkOs,0,',','.').")";
+      } else {
+        $hint = "LT stagnan, ada eskalasi LT→DPK: {$toDpkNoa} NOA (OS ± Rp ".number_format($toDpkOs,0,',','.').")";
+      }
     }
 
-    // Normal
-    if ($d > 0) {
-      return [
-        'deltaTone' => 'text-rose-700',
-        'hintTone'  => 'text-slate-500',
-        'hint'      => 'LT naik = memburuk',
-      ];
-    }
-
-    if ($d < 0) {
-      return [
-        'deltaTone' => 'text-emerald-700',
-        'hintTone'  => 'text-slate-500',
-        'hint'      => 'LT turun = membaik',
-      ];
-    }
-
-    return [
-      'deltaTone' => 'text-slate-500',
-      'hintTone'  => 'text-slate-500',
-      'hint'      => 'stagnan',
-    ];
+    return compact('deltaTone','hintTone','hint');
   };
+
+  // ===== summary mode (day|mtd) from controller =====
+  $sum = $sum ?? 'mtd';
+  if (!in_array($sum, ['day','mtd'], true)) $sum = 'mtd';
+
+  // ===== build query helper (preserve all existing query params) =====
+  $q = request()->query(); // ambil semua query string saat ini
+  $buildUrl = function(array $override = []) use ($q) {
+    $merged = array_merge($q, $override);
+    // bersihkan null/empty agar URL rapi
+    foreach ($merged as $k => $v) {
+      if ($v === null || $v === '') unset($merged[$k]);
+    }
+    return url()->current() . (count($merged) ? ('?' . http_build_query($merged)) : '');
+  };
+
+  $urlDay = $buildUrl(['sum' => 'day']);
+  $urlMtd = $buildUrl(['sum' => 'mtd']);
+
+  $activeDay = $sum === 'day';
+  $activeMtd = $sum === 'mtd';
 @endphp
 
 
@@ -175,22 +185,36 @@
   {{-- Header --}}
   <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-3">
     <div>
-      <h1 class="text-2xl font-extrabold text-slate-900">📈 Dashboard TL RO – OS Harian</h1>
-      <p class="text-sm text-slate-500">
-        Scope: {{ $aoCount }} staff. Data snapshot harian (kpi_os_daily_aos).
-        Posisi terakhir: <b>{{ $latestPosDate ?? '-' }}</b>.
-      </p>
-      <div class="mt-2 flex flex-wrap gap-2 text-xs">
-        <span class="px-3 py-1 rounded-xl bg-slate-50 border border-slate-200">
-          <span class="text-slate-500">Mode:</span> <b class="text-slate-900">Supervisi TL</b>
+      <h1 class="text-2xl font-extrabold text-slate-900">📈 Dashboard TL RO</h1>
+      
+
+      {{-- Mode ringkasan (Harian / MTD) --}}
+      <div class="mt-2 flex flex-wrap items-center gap-2 text-xs">
+       
+        {{-- Toggle ringkasan --}}
+        <span class="ml-0 md:ml-2 inline-flex rounded-xl border border-slate-200 overflow-hidden bg-white">
+          <a href="{{ $urlDay }}"
+             class="px-3 py-1.5 text-xs font-semibold {{ $activeDay ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-50' }}">
+            Harian
+          </a>
+          <a href="{{ $urlMtd }}"
+             class="px-3 py-1.5 text-xs font-semibold {{ $activeMtd ? 'bg-slate-900 text-white' : 'text-slate-700 hover:bg-slate-50' }}">
+            MTD
+          </a>
         </span>
-        <span class="px-3 py-1 rounded-xl bg-slate-50 border border-slate-200">
-          <span class="text-slate-500">Fokus:</span> <b class="text-slate-900">JT, LT, Migrasi, JT Angsuran, OS Besar</b>
-        </span>
+
+        @if(!empty($compareLabel))
+          <span class="px-3 py-1 rounded-xl bg-white border border-slate-200 text-slate-600">
+            {{ $compareLabel }}
+          </span>
+        @endif
       </div>
     </div>
 
     <form method="GET" class="flex items-end gap-2 flex-wrap">
+      {{-- ✅ pertahankan sum saat klik Tampilkan --}}
+      <input type="hidden" name="sum" value="{{ $sum }}">
+
       <div>
         <div class="text-xs text-slate-500 mb-1">AO</div>
         <select name="ao" class="rounded-xl border border-slate-300 px-3 py-2 text-sm bg-white">
@@ -221,28 +245,45 @@
     </form>
   </div>
 
-  {{-- Summary cards (M-1) --}}
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+  {{-- Summary cards (M-1 / EOM bulan lalu) --}}
+  @php
+    $m1 = $summaryM1 ?? ['os'=>0,'l0'=>0,'lt'=>0,'dpk'=>0];
+  @endphp
+
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
     <div class="rounded-2xl border border-slate-200 bg-white p-4">
-      <div class="text-xs text-slate-500">OS Terakhir</div>
-      <div class="text-xl font-extrabold text-slate-900">
-        {{ $fmtRp($latestOs ?? 0) }}
+      <div class="text-xs text-slate-500">
+        OS Bulan Lalu <span class="text-slate-400">({{ $prevOsLabel ?? '-' }})</span>
+      </div>
+      <div class="text-l font-extrabold text-slate-900">
+        {{ $fmtRp($m1['os'] ?? 0) }}
       </div>
     </div>
 
     <div class="rounded-2xl border border-slate-200 bg-white p-4">
       <div class="text-xs text-slate-500">
-        OS Closing Bulan Lalu <span class="text-slate-400">({{ $prevOsLabel ?? '-' }})</span>
+        L0 Bulan Lalu <span class="text-slate-400">({{ $prevOsLabel ?? '-' }})</span>
       </div>
-      <div class="text-xl font-extrabold text-slate-900">
-        {{ $fmtRp($prevOs ?? 0) }}
+      <div class="text-l font-extrabold text-slate-900">
+        {{ $fmtRp($m1['l0'] ?? 0) }}
       </div>
     </div>
 
     <div class="rounded-2xl border border-slate-200 bg-white p-4">
-      <div class="text-xs text-slate-500">Growth (Terakhir vs M-1)</div>
-      <div class="text-xl font-extrabold {{ ($delta ?? 0) >= 0 ? 'text-emerald-700' : 'text-rose-700' }}">
-        {{ ($delta ?? 0) >= 0 ? '+' : '' }}{{ $fmtRp($delta ?? 0) }}
+      <div class="text-xs text-slate-500">
+        LT Bulan Lalu <span class="text-slate-400">({{ $prevOsLabel ?? '-' }})</span>
+      </div>
+      <div class="text-l font-extrabold text-slate-900">
+        {{ $fmtRp($m1['lt'] ?? 0) }}
+      </div>
+    </div>
+
+    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+      <div class="text-xs text-slate-500">
+        DPK Bulan Lalu <span class="text-slate-400">({{ $prevOsLabel ?? '-' }})</span>
+      </div>
+      <div class="text-l font-extrabold text-slate-900">
+        {{ $fmtRp($m1['dpk'] ?? 0) }}
       </div>
     </div>
   </div>
@@ -250,7 +291,7 @@
   {{-- ✅ NEW: Cards H vs H-1 + TLRO Panel --}}
   <div class="rounded-2xl border border-slate-200 bg-white p-4 space-y-4">
     <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
-      <div>
+      <!-- <div>
         <div class="font-extrabold text-slate-900">TLRO – Ringkasan Harian (H vs H-1)</div>
         <div class="text-xs text-slate-500 mt-1">
           Basis perbandingan: <b>{{ $prevDate ?? '-' }}</b> → <b>{{ $latestDate ?? '-' }}</b>.
@@ -258,9 +299,9 @@
             <span class="ml-2">Bounce compare (loan_accounts): <b>{{ $bouncePrev }}</b> → <b>{{ $latestPosDate }}</b>.</span>
           @endif
         </div>
-      </div>
+      </div> -->
 
-      <div class="flex flex-wrap gap-2 justify-end">
+      <!-- <div class="flex flex-wrap gap-2 justify-end">
         <span class="px-3 py-1 rounded-xl bg-slate-50 border border-slate-200 text-xs">
           <span class="text-slate-500">JT Next2:</span>
           <b class="text-slate-900">
@@ -279,118 +320,140 @@
           <span class="text-rose-700">NOA LT→DPK:</span>
           <b class="text-rose-800">{{ (int)($bounce['lt_to_dpk_noa'] ?? 0) }}</b>
         </span>
-      </div>
+      </div> -->
     </div>
 
-    {{-- cards H vs H-1 --}}
-    <div class="grid grid-cols-1 md:grid-cols-5 gap-3">
+    {{-- cards H vs H-1 (OS, L0+RR, LT+%LT, DPK, Meta) --}}
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+
       {{-- OS --}}
       <div class="rounded-2xl border border-slate-200 bg-white p-4">
-        <div class="text-xs text-slate-500">Latest OS</div>
-        <div class="text-lg font-extrabold text-slate-900">
+        <div class="text-xs text-slate-500">OS tgl terakhir</div>
+        <div class="text-l font-extrabold text-slate-900">
           {{ $fmtRp($cOS['value'] ?? 0) }}
         </div>
         <div class="mt-1 text-sm font-bold {{ (($cOS['delta'] ?? 0) >= 0) ? 'text-emerald-700' : 'text-rose-700' }}">
           Δ {{ $fmtRpDelta($cOS['delta'] ?? null) }}
         </div>
-        <div class="text-[11px] text-slate-500">H vs H-1</div>
+        <div class="text-[11px] text-slate-500 mt-1">
+          OS naik = membaik
+        </div>
       </div>
 
-      {{-- L0 --}}
+      {{-- L0 + RR --}}
       <div class="rounded-2xl border border-slate-200 bg-white p-4">
-        <div class="text-xs text-slate-500">Latest L0</div>
-        <div class="text-lg font-extrabold text-slate-900">
+        <div class="flex items-start justify-between gap-3">
+          <div class="text-xs text-slate-500">L0 tgl terakhir</div>
+          <span class="shrink-0 px-2 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-600">
+            RR: <b class="text-slate-900">{{ $fmtPct($cRR['value'] ?? null) }}</b>
+          </span>
+        </div>
+
+        <div class="text-l font-extrabold text-slate-900">
           {{ $fmtRp($cL0['value'] ?? 0) }}
         </div>
-        <div class="mt-1 text-sm font-bold {{ (($cL0['delta'] ?? 0) >= 0) ? 'text-emerald-700' : 'text-rose-700' }}">
-          Δ {{ $fmtRpDelta($cL0['delta'] ?? null) }}
+
+        <div class="mt-1 flex items-baseline justify-between gap-3">
+          <div class="text-sm font-bold {{ (($cL0['delta'] ?? 0) >= 0) ? 'text-emerald-700' : 'text-rose-700' }}">
+            Δ {{ $fmtRpDelta($cL0['delta'] ?? null) }}
+          </div>
+
+          <!-- <div class="text-sm font-bold {{ (($cRR['delta'] ?? 0) >= 0) ? 'text-emerald-700' : 'text-rose-700' }}">
+            Δ RR {{ $fmtPts($cRR['delta'] ?? null) }}
+          </div> -->
         </div>
-        <div class="text-[11px] text-slate-500">
-          <span class="font-semibold text-emerald-700">Jika Δ positif = membaik</span>,
-          tapi perlu cek “bounce risk”.
+
+        <div class="text-[11px] text-slate-500 mt-1">
+          RR = L0/OS · Δ dalam <b>points</b> (bukan %)
         </div>
       </div>
 
-      @php
-        $deltaHint = function(string $metric, $delta): string {
-          if (is_null($delta)) return 'prev n/a';
-
-          $d = (float) $delta;
-
-          // metric yang "naik = baik"
-          if (in_array($metric, ['os','l0','rr'], true)) {
-            if ($d > 0) return $metric === 'rr' ? 'RR naik = membaik' : strtoupper($metric).' naik = membaik';
-            if ($d < 0) return $metric === 'rr' ? 'RR turun = memburuk' : strtoupper($metric).' turun = memburuk';
-            return 'stagnan';
-          }
-
-          // metric yang "naik = buruk"
-          if (in_array($metric, ['lt','pct_lt'], true)) {
-            if ($d > 0) return $metric === 'lt' ? 'LT naik = memburuk' : '%LT naik = memburuk';
-            if ($d < 0) return $metric === 'lt' ? 'LT turun = membaik'  : '%LT turun = membaik';
-            return 'stagnan';
-          }
-
-          return '—';
-        };
-      @endphp
-
-      {{-- LT --}} 
+      {{-- LT + %LT --}}
       @php
         $ltPack = $ltTlPack($cLT['delta'] ?? null, (array)($bounce ?? []));
+        $pltDelta = $cPLT['delta'] ?? null;
+        $pltTone  = is_null($pltDelta) ? 'text-slate-500' : (((float)$pltDelta <= 0) ? 'text-emerald-700' : 'text-rose-700');
+        $toDpkNoa = (int)($bounce['lt_to_dpk_noa'] ?? 0);
       @endphp
 
       <div class="rounded-2xl border border-slate-200 bg-white p-4">
-        <div class="text-xs text-slate-500">Latest LT</div>
+        <div class="flex items-start justify-between gap-3">
+          <div class="text-xs text-slate-500">LT tgl terakhir</div>
+          <span class="shrink-0 px-2 py-1 rounded-lg bg-slate-50 border border-slate-200 text-[11px] text-slate-600">
+            %LT: <b class="text-slate-900">{{ $fmtPct($cPLT['value'] ?? null) }}</b>
+          </span>
+        </div>
 
-        <div class="text-lg font-extrabold text-slate-900">
+        <div class="text-l font-extrabold text-slate-900">
           {{ $fmtRp($cLT['value'] ?? 0) }}
         </div>
 
-        <div class="mt-1 text-sm font-bold {{ $ltPack['deltaTone'] }}">
-          Δ {{ $fmtRpDelta($cLT['delta'] ?? null) }}
+        <div class="mt-1 flex items-baseline justify-between gap-3">
+          <div class="text-sm font-bold {{ $ltPack['deltaTone'] }}">
+            Δ {{ $fmtRpDelta($cLT['delta'] ?? null) }}
+          </div>
+
+          <!-- <div class="text-sm font-bold {{ $pltTone }}">
+            Δ %LT {{ $fmtPts($pltDelta) }}
+          </div> -->
         </div>
 
-        <span class="text-[11px] {{ $ltPack['hintTone'] }}">
+        <div class="text-[11px] {{ $ltPack['hintTone'] }} mt-1">
           {{ $ltPack['hint'] }}
-        </span>
+        </div>
 
-        {{-- Optional kecil, biar TL kebaca cepat --}}
-        @php $toDpkNoa = (int)($bounce['lt_to_dpk_noa'] ?? 0); @endphp
         @if($toDpkNoa > 0)
           <div class="mt-2 text-[11px] text-amber-700">
             ⚠ Fokus: migrasi LT→DPK hari ini (potensi pindah FE)
           </div>
         @endif
+
+        <div class="text-[11px] text-slate-500 mt-1">
+          %LT = LT/OS · %LT turun = membaik
+        </div>
       </div>
 
-      {{-- RR --}}
+      {{-- DPK --}}
       <div class="rounded-2xl border border-slate-200 bg-white p-4">
-        <div class="text-xs text-slate-500">RR (L0/OS)</div>
-        <div class="text-lg font-extrabold text-slate-900">
-          {{ $fmtPct($cRR['value'] ?? null) }}
+        <div class="text-xs text-slate-500">DPK tgl terakhir</div>
+        <div class="text-l font-extrabold text-slate-900">
+          {{ $fmtRp($cDPK['value'] ?? 0) }}
         </div>
-        <div class="mt-1 text-sm font-bold {{ (($cRR['delta'] ?? 0) >= 0) ? 'text-emerald-700' : 'text-rose-700' }}">
-          Δ {{ $fmtPts($cRR['delta'] ?? null) }}
+        <div class="mt-1 text-sm font-bold {{ (($cDPK['delta'] ?? 0) <= 0) ? 'text-emerald-700' : 'text-rose-700' }}">
+          Δ {{ $fmtRpDelta($cDPK['delta'] ?? null) }}
         </div>
-        <div class="text-[11px] text-slate-500">points (bukan %)</div>
+        <div class="text-[11px] text-slate-500 mt-1">
+          DPK naik = memburuk
+        </div>
       </div>
 
-      {{-- %LT --}}
-      <div class="rounded-2xl border border-slate-200 bg-white p-4">
-        <div class="text-xs text-slate-500">%LT (LT/OS)</div>
-        <div class="text-lg font-extrabold text-slate-900">
-          {{ $fmtPct($cPLT['value'] ?? null) }}
+      {{-- META / COMPARE --}}
+      <!-- <div class="rounded-2xl border border-slate-200 bg-white p-4">
+        <div class="text-xs text-slate-500">Basis perbandingan</div>
+        <div class="text-sm font-extrabold text-slate-900 mt-1">
+          {{ $compareLabel ?? '-' }}
         </div>
-        <div class="mt-1 text-sm font-bold {{ (($cPLT['delta'] ?? 0) <= 0) ? 'text-emerald-700' : 'text-rose-700' }}">
-          Δ {{ $fmtPts($cPLT['delta'] ?? null) }}
+
+        <div class="text-[11px] text-slate-500 mt-2">
+          Latest: <b>{{ $latestDataDate ?? '-' }}</b><br>
+          Compare: <b>{{ $prevDate ?? ($prevDataDate ?? '-') }}</b>
         </div>
-        <span class="text-[11px] text-slate-500">{{ $deltaHint('pct_lt', $cPLT['delta'] ?? null) }}</span>
-      </div>
+
+        @php
+          $snapWarn = (int)($bounce['jt_next2_noa'] ?? 0) > 0 || (int)($bounce['lt_to_dpk_noa'] ?? 0) > 0;
+        @endphp
+
+        @if($snapWarn)
+          <div class="mt-2 text-[11px] text-amber-700">
+            ⚠ Ada sinyal risiko di scope TL
+          </div>
+        @endif
+      </div> -->
+
     </div>
 
     {{-- Risk panel TLRO --}}
-    <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+    <!-- <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
       <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4 md:col-span-2">
         <div class="font-bold text-slate-900">Kalimat TLRO (Interpretasi)</div>
 
@@ -423,9 +486,9 @@
             </li>
           </ul>
         </div>
-      </div>
+      </div> -->
 
-      <div class="rounded-2xl border border-slate-200 bg-white p-4">
+      <!-- <div class="rounded-2xl border border-slate-200 bg-white p-4">
         <div class="font-bold text-slate-900">Bounce-back Snapshot</div>
         <div class="text-xs text-slate-500 mt-1">
           Indikator untuk membaca “L0 naik tapi rawan balik LT”.
@@ -462,7 +525,7 @@
           </div>
         </div>
       </div>
-    </div>
+    </div> -->
 
     {{-- ✅ Top Risiko Besok --}}
     <div class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
@@ -593,7 +656,7 @@
       </div>
     </div>
 
-    {{-- ✅ Collapsible lists: Cure & JT Next2 --}}
+    <!-- {{-- ✅ Collapsible lists: Cure & JT Next2 --}}
     <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
       {{-- Cure LT->L0 --}}
       <details class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
@@ -756,7 +819,7 @@
         </div>
       </details>
     </div>
-  </div>
+  </div> -->
 
   {{-- Chart + Controls --}}
   <div class="rounded-2xl border border-slate-200 bg-white p-4 space-y-4">
@@ -926,7 +989,7 @@
         <thead class="bg-slate-50">
           <tr class="text-slate-700">
             <th class="text-left px-3 py-2">Jatuh Tempo</th>
-            <th class="text-left px-3 py-2">No Rek</th>
+            <!-- <th class="text-left px-3 py-2">No Rek</th> -->
             <th class="text-left px-3 py-2">Nama Debitur</th>
             <th class="text-left px-3 py-2">AO</th>
             <th class="text-right px-3 py-2">OS</th>
@@ -976,7 +1039,7 @@
               <td class="px-3 py-2 whitespace-nowrap">
                 {{ !empty($r->maturity_date) ? \Carbon\Carbon::parse($r->maturity_date)->format('d/m/Y') : '-' }}
               </td>
-              <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td>
+              <!-- <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td> -->
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
               <td class="px-3 py-2 font-mono">{{ $r->ao_code ?? '-' }}</td>
               <td class="px-3 py-2 text-right">Rp {{ number_format($os,0,',','.') }}</td>
@@ -985,14 +1048,14 @@
 
               <td class="px-3 py-2 whitespace-nowrap">{!! $riskBadge($r->dpd ?? 0, $r->kolek ?? '-', false) !!}</td>
 
-              <td class="px-3 py-2 whitespace-nowrap">
+              <!-- <td class="px-3 py-2 whitespace-nowrap">
                 <span
                   class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold border {{ $rm['cls'] }}"
                   title="{{ $rm['tooltip'] }}"
                 >
                   {{ $rm['level'] }}
                 </span>
-              </td>
+              </td> -->
 
               <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">
@@ -1000,7 +1063,7 @@
                   <span class="text-slate-400">-</span>
                 @else
                   <span class="{{ $age >= 14 ? 'text-rose-700 font-semibold' : ($age >= 7 ? 'text-amber-700 font-semibold' : 'text-slate-700') }}">
-                    {{ $age }} hari
+                    {{ number_format($age,0,',','.') }} hari
                   </span>
                 @endif
               </td>
@@ -1054,7 +1117,7 @@
       <table class="min-w-full text-sm">
         <thead class="bg-slate-50">
           <tr class="text-slate-700">
-            <th class="text-left px-3 py-2">No Rek</th>
+            <!-- <th class="text-left px-3 py-2">No Rek</th> -->
             <th class="text-left px-3 py-2">Nama Debitur</th>
             <th class="text-left px-3 py-2">AO</th>
             <th class="text-right px-3 py-2">OS</th>
@@ -1122,7 +1185,7 @@
             @endphp
 
             <tr class="{{ $rowCls }}">
-              <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td>
+              <!-- <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td> -->
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
 
               <td class="px-3 py-2">
@@ -1210,7 +1273,7 @@
       <table class="min-w-full text-sm">
         <thead class="bg-slate-50">
           <tr class="text-slate-700">
-            <th class="text-left px-3 py-2">No Rek</th>
+            <!-- <th class="text-left px-3 py-2">No Rek</th> -->
             <th class="text-left px-3 py-2">Nama Debitur</th>
             <th class="text-left px-3 py-2">AO</th>
             <th class="text-right px-3 py-2">OS</th>
@@ -1246,7 +1309,7 @@
               $os  = (int)($r->os ?? 0);
             @endphp
             <tr>
-              <td class="px-3 py-2 font-mono">{{ $r->account_no }}</td>
+              <!-- <td class="px-3 py-2 font-mono">{{ $r->account_no }}</td> -->
               <td class="px-3 py-2">{{ $r->customer_name }}</td>
               <td class="px-3 py-2 font-mono">{{ $r->ao_code }}</td>
               <td class="px-3 py-2 text-right">Rp {{ number_format($os,0,',','.') }}</td>
@@ -1325,7 +1388,7 @@
         <thead class="bg-slate-50">
           <tr class="text-slate-700">
             <th class="text-left px-3 py-2">JT (Tanggal)</th>
-            <th class="text-left px-3 py-2">No Rek</th>
+            <!-- <th class="text-left px-3 py-2">No Rek</th> -->
             <th class="text-left px-3 py-2">Nama Debitur</th>
             <th class="text-left px-3 py-2">AO</th>
             <th class="text-right px-3 py-2">OS</th>
@@ -1364,7 +1427,7 @@
               <td class="px-3 py-2 whitespace-nowrap">
                 {{ !empty($r->due_date) ? \Carbon\Carbon::parse($r->due_date)->format('d/m/Y') : '-' }}
               </td>
-              <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td>
+              <!-- <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td> -->
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
               <td class="px-3 py-2 font-mono">{{ $r->ao_code ?? '-' }}</td>
               <td class="px-3 py-2 text-right">Rp {{ number_format($os,0,',','.') }}</td>
@@ -1433,7 +1496,7 @@
       <table class="min-w-full text-sm">
         <thead class="bg-slate-50">
           <tr class="text-slate-700">
-            <th class="text-left px-3 py-2">No Rek</th>
+            <!-- <th class="text-left px-3 py-2">No Rek</th> -->
             <th class="text-left px-3 py-2">Nama Debitur</th>
             <th class="text-left px-3 py-2">AO</th>
             <th class="text-right px-3 py-2">OS</th>
@@ -1469,7 +1532,7 @@
               $os  = (int)($r->os ?? 0);
             @endphp
             <tr class="bg-slate-50/40">
-              <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td>
+              <!-- <td class="px-3 py-2 font-mono">{{ $r->account_no ?? '-' }}</td> -->
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
               <td class="px-3 py-2 font-mono">{{ $r->ao_code ?? '-' }}</td>
               <td class="px-3 py-2 text-right font-semibold text-slate-900">Rp {{ number_format($os,0,',','.') }}</td>

@@ -77,7 +77,7 @@
                 @endphp
 
                 @if($canView)
-                  <a href="{{ route('kpi.ro.show', $uid) }}?period={{ \Carbon\Carbon::parse($periodYmd)->format('Y-m') }}"
+                  <a href="{{ route('kpi.ro.user.show', $uid) }}?period={{ \Carbon\Carbon::parse($periodYmd)->format('Y-m') }}"
                     class="font-semibold text-slate-900 hover:underline">
                     {{ $r['name'] }}
                   </a>

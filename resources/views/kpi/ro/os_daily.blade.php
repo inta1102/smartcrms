@@ -235,13 +235,13 @@
   {{-- Header --}}
   <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
     <div>
-      <h1 class="text-xl sm:text-2xl font-extrabold text-slate-900">📈 Dashboard RO – OS Harian</h1>
-      <p class="text-xs sm:text-sm text-slate-500 mt-1">
+      <h1 class="text-xl sm:text-2xl font-extrabold text-slate-900">📈 Dashboard RO </h1>
+      <!-- <p class="text-xs sm:text-sm text-slate-500 mt-1">
         Scope: <b>RO sendiri</b>. Data snapshot harian (kpi_os_daily_aos). Posisi terakhir: <b>{{ $latestPosDate }}</b>.
       </p>
       <p class="text-[11px] sm:text-xs text-slate-500 mt-1">
         Snapshot compare: <b>{{ $latestDate ?? '-' }}</b> vs <b>{{ $prevDate ?? '-' }}</b>.
-      </p>
+      </p> -->
       @if($mode === 'mtd')
         <p class="text-[11px] sm:text-xs text-slate-500 mt-1">
           Mode: <b>MtoD</b> (EOM bulan lalu → posisi terakhir).
@@ -282,6 +282,64 @@
       </div>
 
     </form>
+  </div>
+
+  {{-- Grafik --}}
+  <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 space-y-3 sm:space-y-4">
+    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
+      <div>
+        <div class="font-bold text-slate-900 text-sm sm:text-base">Grafik Harian (5 garis)</div>
+        <div class="text-[11px] sm:text-xs text-slate-500 mt-1">
+          Tanggal tanpa snapshot akan tampil <b>putus</b> (bukan 0).
+        </div>
+      </div>
+
+      <div class="w-full sm:w-auto flex flex-col sm:flex-row gap-2 sm:gap-2 sm:items-center sm:justify-end">
+        <div class="rounded-xl border border-slate-200 p-1 bg-slate-50 flex items-center gap-1 w-full sm:w-auto">
+          <button type="button" id="btnModeValue"
+                  class="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200">
+            Value
+          </button>
+          <button type="button" id="btnModeGrowth"
+                  class="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700">
+            Growth (Δ H vs H-1)
+          </button>
+        </div>
+
+        <div class="rounded-xl border border-slate-200 p-1 bg-slate-50 flex items-center gap-1 w-full sm:w-auto">
+          <button type="button" id="btnLabelsLastOnly"
+                  class="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200">
+            Label: Last
+          </button>
+          <button type="button" id="btnLabelsAll"
+                  class="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700">
+            Label: Semua
+          </button>
+        </div>
+
+        <div class="sm:hidden">
+          <button type="button" id="btnShowAllLines"
+                  class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800">
+            Tampilkan semua garis
+          </button>
+          <div class="mt-1 text-[11px] text-slate-500">
+            Mode ringkas membantu grafik lebih kebaca di HP.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="w-full">
+      <div class="relative w-full overflow-x-auto">
+        <div class="relative min-w-[680px] sm:min-w-0 h-[320px] sm:h-[280px]">
+          <canvas id="roChart" class="absolute inset-0 w-full h-full"></canvas>
+        </div>
+      </div>
+
+      <div class="sm:hidden text-[11px] text-slate-500 mt-2">
+        Tips: geser kiri/kanan kalau label tanggal padat.
+      </div>
+    </div>
   </div>
 
   {{-- Summary Cards --}}
@@ -506,7 +564,7 @@
   </div>
 
   {{-- TLRO Narrative --}}
-  <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
+  <!-- <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
     <div class="font-extrabold text-slate-900 text-sm sm:text-base">📣 Pangandikanipun Pimpinan kangge Panjenengan </div>
     <div class="mt-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
       <div class="text-sm text-slate-800 leading-relaxed whitespace-pre-line" id="tlroNarrative">
@@ -520,7 +578,7 @@
         <span id="copyHint" class="text-[11px] text-slate-500"></span>
       </div>
     </div>
-  </div>
+  </div> -->
 
   {{-- Insight --}}
   <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
@@ -582,64 +640,7 @@
     </div>
   </div>
 
-  {{-- Grafik --}}
-  <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 space-y-3 sm:space-y-4">
-    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
-      <div>
-        <div class="font-bold text-slate-900 text-sm sm:text-base">Grafik Harian (5 garis)</div>
-        <div class="text-[11px] sm:text-xs text-slate-500 mt-1">
-          Tanggal tanpa snapshot akan tampil <b>putus</b> (bukan 0).
-        </div>
-      </div>
-
-      <div class="w-full sm:w-auto flex flex-col sm:flex-row gap-2 sm:gap-2 sm:items-center sm:justify-end">
-        <div class="rounded-xl border border-slate-200 p-1 bg-slate-50 flex items-center gap-1 w-full sm:w-auto">
-          <button type="button" id="btnModeValue"
-                  class="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200">
-            Value
-          </button>
-          <button type="button" id="btnModeGrowth"
-                  class="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700">
-            Growth (Δ H vs H-1)
-          </button>
-        </div>
-
-        <div class="rounded-xl border border-slate-200 p-1 bg-slate-50 flex items-center gap-1 w-full sm:w-auto">
-          <button type="button" id="btnLabelsLastOnly"
-                  class="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg bg-white shadow-sm border border-slate-200">
-            Label: Last
-          </button>
-          <button type="button" id="btnLabelsAll"
-                  class="flex-1 sm:flex-none px-3 py-2 sm:py-1.5 text-xs font-semibold rounded-lg text-slate-700">
-            Label: Semua
-          </button>
-        </div>
-
-        <div class="sm:hidden">
-          <button type="button" id="btnShowAllLines"
-                  class="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800">
-            Tampilkan semua garis
-          </button>
-          <div class="mt-1 text-[11px] text-slate-500">
-            Mode ringkas membantu grafik lebih kebaca di HP.
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <div class="w-full">
-      <div class="relative w-full overflow-x-auto">
-        <div class="relative min-w-[680px] sm:min-w-0 h-[320px] sm:h-[280px]">
-          <canvas id="roChart" class="absolute inset-0 w-full h-full"></canvas>
-        </div>
-      </div>
-
-      <div class="sm:hidden text-[11px] text-slate-500 mt-2">
-        Tips: geser kiri/kanan kalau label tanggal padat.
-      </div>
-    </div>
-  </div>
-
+  
   {{-- ===========================
     1) JT bulan ini
     =========================== --}}

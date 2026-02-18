@@ -5,8 +5,6 @@ namespace App\Http\Controllers;
 use App\Models\NplCase;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
-use App\Enums\UserRole;
-
 
 class DashboardController extends Controller
 {
@@ -26,13 +24,13 @@ class DashboardController extends Controller
         }
 
         // fallback enum-safe
-        $role = $u->role(); // UserRole|null
+        // $u->role() : UserRole|null (sesuai komentar kamu)
+        $role = method_exists($u, 'role') ? $u->role() : null;
         if (!$role) return false;
 
-        return $role->isSupervisor(); 
         // pastikan method isSupervisor() di enum mengembalikan true untuk TL/KASI/KABAG/PE/DIR/KOM
+        return (bool) $role->isSupervisor();
     }
-
 
     /**
      * Subquery: ambil next_action_due dari action TERAKHIR per case.
@@ -101,9 +99,40 @@ class DashboardController extends Controller
 
     public function index(Request $request)
     {
+        // ==========================================================
+        // ✅ DASHBOARD ROUTER: RO & TLRO langsung ke OS Daily
+        // Letakkan PALING ATAS supaya tidak buang query NPL.
+        // ==========================================================
+        $user = $request->user();
+
+        // Ambil roleValue jika ada, fallback ke level/role string
+        $roleValue = null;
+        if ($user) {
+            if (method_exists($user, 'roleValue')) {
+                $roleValue = strtoupper(trim((string) $user->roleValue()));
+            } elseif (property_exists($user, 'level')) {
+                $roleValue = strtoupper(trim((string) $user->level));
+            } elseif (property_exists($user, 'role')) {
+                $roleValue = strtoupper(trim((string) $user->role));
+            }
+        }
+
+        // Normalisasi alias TLRO (karena kamu pakai banyak varian di org_assignments)
+        $tlroAliases = ['TLRO', 'TLR', 'TL RO', 'TL-RO', 'TLRO '];
+
+        if ($roleValue === 'RO') {
+            return redirect()->route('kpi.ro.os-daily');
+        }
+
+        if ($roleValue && in_array($roleValue, $tlroAliases, true)) {
+            return redirect()->route('kpi.tl.os-daily');
+        }
+
+        // ==========================================================
+        // Default dashboard (NPL dashboard)
+        // ==========================================================
         $this->authorize('viewDashboard', \App\Models\NplCase::class);
 
-        $user = $request->user(); // ✅ FIX: definisikan $user
         $startOfMonth = now()->startOfMonth()->toDateString();
         $endOfMonth   = now()->endOfMonth()->toDateString();
         $today        = now()->toDateString();
@@ -158,8 +187,6 @@ class DashboardController extends Controller
             ->limit(5)
             ->get();
 
-        // $ao = app(\App\Services\Org\OrgVisibilityService::class)->visibleAoCodes($user);
-        // dd($user->roleValue(), count($ao), array_slice($ao, 0, 10));
         return view('dashboard', [
             'totalCases'           => $totalCases,
             'openCases'            => $openCases,

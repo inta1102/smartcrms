@@ -307,6 +307,10 @@
         $dashboardRouteName = 'executive.targets.index';
     } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['BE'])) {
         $dashboardRouteName = 'legal-actions.index';
+    } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['RO'])) {
+        $dashboardRouteName = 'kpi.ro.os-daily';
+    } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['TLRO'])) {
+        $dashboardRouteName = 'kpi.tl.os-daily';
     }
 
     $badge = (int) $badgeApprovalTarget;
@@ -355,27 +359,27 @@
                 'show'   => $canRkh,
             ],
             
-            [
-                'label'  => 'Kinerja RO',
-                'icon'   => '📅',
-                'href'   => route('kpi.tl.os-daily'),
-                'active' => $isRkhActive,
-                'show'   => $u && $u->hasAnyRole(['TLRO']),
-            ],
-            [
-                'label'  => 'Kinerja RO',
-                'icon'   => '📅',
-                'href'   => route('kpi.ro.os-daily'),
-                'active' => $isRkhActive,
-                'show'   => $u && $u->hasAnyRole(['RO']),
-            ],
+            // [
+            //    'label'  => 'Kinerja RO',
+            //    'icon'   => '📅',
+            //    'href'   => route('kpi.tl.os-daily'),
+            //    'active' => $isRkhActive,
+            //    'show'   => $u && $u->hasAnyRole(['TLRO']),
+            // ],
+            //[
+            //    'label'  => 'Kinerja RO',
+            //    'icon'   => '📅',
+            //    'href'   => route('kpi.ro.os-daily'),
+            //    'active' => $isRkhActive,
+            //    'show'   => $u && $u->hasAnyRole(['RO']),
+            //],
 
             [
                 'label'  => 'NPL Cases',
                 'icon'   => '📁',
                 'href'   => route('cases.index'),
                 'active' => $isNplActive,
-                'show'   => true,
+                'show'   => (in_array($roleValue, ['BE','FE','KBL'], true)) && !$isPimpinan,
             ],
             [
                 'label'  => 'Overdue',
@@ -383,14 +387,14 @@
                 'href'   => route('cases.overdue'),
                 'active' => $isOverdueActive,
                 'badge'  => $overdueCount > 0 ? $overdueCount : null,
-                'show'   => !$isPimpinan,
+                'show'   => (in_array($roleValue, ['BE','FE','KBL'], true)) && !$isPimpinan,
             ],
             [
                 'label'  => 'Agenda Saya',
                 'icon'   => '🗓️',
                 'href'   => route('ao-agendas.my'),
                 'active' => $isAgendaMine,
-                'show'   => $isFieldStaff && !$isPimpinan,
+                'show'   => (in_array($roleValue, ['BE','FE','KBL'], true)) && !$isPimpinan,
                 'badge'  => ($agendaBadge ?? 0) > 0 ? $agendaBadge : null,
             ],
             [

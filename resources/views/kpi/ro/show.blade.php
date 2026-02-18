@@ -34,7 +34,7 @@
     </div>
 
     {{-- Period Picker --}}
-    <form method="GET" action="{{ $user ? route('kpi.ro.show', $user->id) : '#' }}" class="flex items-end gap-2">
+    <form method="GET" action="{{ $user ? route('kpi.ro.user.show', $user->id) : '#' }}" class="flex items-end gap-2">
       <div>
         <div class="text-sm text-slate-600">Ganti periode</div>
         <input type="month"
@@ -165,7 +165,7 @@
             <tr>
               <td class="px-3 py-2 font-semibold">Repayment Rate</td>
               <td class="px-3 py-2 text-right">{{ $fmtPct($target->target_rr_pct ?? 0,2) }}</td>
-              <td class="px-3 py-2 text-right">{{ number_format((float)($kpi->repayment_rate ?? 0),4) }}</td>
+              <td class="px-3 py-2 text-right">{{ number_format((float)($kpi->repayment_rate ?? 0)*100,2) }}</td>
               <td class="px-3 py-2 text-right">{{ $fmtPct($kpi->repayment_pct ?? 0,2) }}</td>
               <td class="px-3 py-2 text-center font-bold">{{ (int)($kpi->repayment_score ?? 0) }}</td>
               <td class="px-3 py-2 text-right text-xs text-slate-500">
