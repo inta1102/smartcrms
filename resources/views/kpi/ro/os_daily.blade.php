@@ -1672,6 +1672,123 @@
     chart.update();
   }
 
+ 
+  // ... tombol tombol pilihan grafik 
+
+  function setBtnActive(el, active) {
+    if (!el) return;
+    if (active) {
+      el.classList.add('bg-white', 'shadow-sm', 'border', 'border-slate-200');
+      el.classList.remove('text-slate-700');
+    } else {
+      el.classList.remove('bg-white', 'shadow-sm', 'border', 'border-slate-200');
+      el.classList.add('text-slate-700');
+    }
+  }
+
+  function syncButtonStates() {
+    // metric buttons
+    setBtnActive(document.getElementById('btnMetricTotal'), metric === 'os_total');
+    setBtnActive(document.getElementById('btnMetricL0'),    metric === 'os_l0');
+    setBtnActive(document.getElementById('btnMetricLT'),    metric === 'os_lt');
+    setBtnActive(document.getElementById('btnMetricRR'),    metric === 'rr');
+    setBtnActive(document.getElementById('btnMetricPctLT'), metric === 'pct_lt');
+
+    // mode buttons
+    setBtnActive(document.getElementById('btnModeValue'),  mode === 'value');
+    setBtnActive(document.getElementById('btnModeGrowth'), mode === 'growth');
+
+    // label buttons
+    setBtnActive(document.getElementById('btnLabelsLastOnly'), showAllPointLabels === false);
+    setBtnActive(document.getElementById('btnLabelsAll'),      showAllPointLabels === true);
+
+    // mobile show lines button text
+    const btnShowAll = document.getElementById('btnShowAllLines');
+    if (btnShowAll) {
+      btnShowAll.textContent = showAllLines ? 'Ringkas (1 garis)' : 'Tampilkan semua garis';
+    }
+  }
+
+  function setMetric(next) {
+    metric = next;
+
+    // optional UX: kalau metric persen, default ke "value"
+    // tapi ini preferensi; kalau mau biarkan tetap, hapus 3 baris ini.
+    if (isPercentMetric(metric) && mode === 'growth') {
+      // growth persen tetap boleh sebenarnya, tapi sering membingungkan user
+      // mode = 'value';
+    }
+
+    syncButtonStates();
+    refreshChart();
+  }
+
+  function setMode(next) {
+    mode = next;
+    syncButtonStates();
+    refreshChart();
+  }
+
+  function setLabelsAll(nextAll) {
+    showAllPointLabels = !!nextAll;
+    syncButtonStates();
+    refreshChart();
+  }
+
+  function toggleShowAllLines() {
+    showAllLines = !showAllLines;
+    syncButtonStates();
+    refreshChart();
+  }
+
+  function bindButtons() {
+    // ==== Metric ====
+    const metricButtons = [
+      ['btnMetricTotal', 'os_total'],
+      ['btnMetricL0',    'os_l0'],
+      ['btnMetricLT',    'os_lt'],
+      ['btnMetricRR',    'rr'],
+      ['btnMetricPctLT', 'pct_lt'],
+    ];
+    metricButtons.forEach(([id, m]) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('click', () => setMetric(m));
+    });
+
+    // ==== Mode ====
+    const btnModeValue  = document.getElementById('btnModeValue');
+    const btnModeGrowth = document.getElementById('btnModeGrowth');
+    btnModeValue  && btnModeValue.addEventListener('click', () => setMode('value'));
+    btnModeGrowth && btnModeGrowth.addEventListener('click', () => setMode('growth'));
+
+    // ==== Labels ====
+    const btnLast = document.getElementById('btnLabelsLastOnly');
+    const btnAll  = document.getElementById('btnLabelsAll');
+    btnLast && btnLast.addEventListener('click', () => setLabelsAll(false));
+    btnAll  && btnAll.addEventListener('click',  () => setLabelsAll(true));
+
+    // ==== Mobile show all lines ====
+    const btnShowAll = document.getElementById('btnShowAllLines');
+    btnShowAll && btnShowAll.addEventListener('click', toggleShowAllLines);
+
+    // ==== Responsive: ketika resize, rebuild agar rules mobile/desktop nyambung ====
+    window.addEventListener('resize', () => {
+      // supaya tick/datalabel display mengikuti breakpoint
+      refreshChart();
+    });
+
+    // initial state
+    syncButtonStates();
+  }
+
+  // pastikan DOM ready (kalau script kebetulan pindah ke <head> atau blade section berbeda)
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bindButtons);
+  } else {
+    bindButtons();
+  }
+
   // ===== PLAN VISIT TODAY (anti double click) =====
  
 
