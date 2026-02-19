@@ -29,7 +29,7 @@ class KpiBePolicy
         if (str_starts_with($meLvl, 'TL')) return true;
 
         // ✅ management boleh lihat semua
-        if (in_array($meLvl, ['KSL','KBL','KABAG','DIR','DIREKSI','KOM','PE','KTI'], true)) return true;
+        if (in_array($meLvl, ['KSLU','KSLR','KSFE','KSBE','KBL','KABAG','DIR','DIREKSI','KOM','PE','KTI'], true)) return true;
 
         // fallback aman
         return (int)$user->id === (int)$target->id;

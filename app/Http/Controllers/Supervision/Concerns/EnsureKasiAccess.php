@@ -30,7 +30,7 @@ trait EnsureKasiAccess
                 UserRole::KSR,
             ], true);
         } else {
-            $isKasi = in_array($val, ['KSL','KSO','KSA','KSF','KSD','KSR'], true);
+            $isKasi = in_array($val, ['KSLU','KSLR','KSFE','KSBE','KSO','KSA','KSF','KSD','KSR'], true);
         }
 
         abort_unless($isKasi, 403);

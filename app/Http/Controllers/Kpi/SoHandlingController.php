@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\DB;
 
 class SoHandlingController extends Controller
 {
-    private const ROLES = ['TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM','KSR','KSL','KBL'];
+    private const ROLES = ['TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM','KSR','KSLU','KSLR','KSFE','KSBE','KBL'];
 
     public function index(Request $request)
     {

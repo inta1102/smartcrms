@@ -32,8 +32,8 @@
 
     // KASI group (catatan: KTI bukan KASI, tapi kamu sebelumnya ikutkan. Aku pisahin biar rapi.)
     $isKasi = ($roleEnum instanceof UserRole)
-        ? in_array($roleEnum, [UserRole::KSL, UserRole::KSA, UserRole::KSF, UserRole::KSD, UserRole::KSR], true)
-        : in_array($roleValue, ['KSL','KSA','KSF','KSD','KSR','KASI'], true);
+        ? in_array($roleEnum, [UserRole::KSLU, UserRole::KSLR, UserRole::KSBE, UserRole::KSFE, UserRole::KSA, UserRole::KSF, UserRole::KSD, UserRole::KSR], true)
+        : in_array($roleValue, ['KSLU','KSLR','KSFE','KSBE','KSA','KSF','KSD','KSR','KASI'], true);
 
     $isOrgAdmin = ($roleEnum instanceof UserRole)
         ? in_array($roleEnum, [UserRole::KTI, UserRole::KABAG], true)
@@ -397,6 +397,28 @@
                 'show'   => (in_array($roleValue, ['BE','FE','KBL'], true)) && !$isPimpinan,
                 'badge'  => ($agendaBadge ?? 0) > 0 ? $agendaBadge : null,
             ],
+            
+            [
+                'label'  => 'Input Komunitas',
+                'icon'   => '🏘️',
+                'href'   => route('kpi.communities.index'),
+                'active' => $isKpiCommunityActive,
+                'show' => (in_array($roleValue, ['AO','SO','KBL'], true)) && !$isPimpinan,
+            ],
+        ],
+
+        // ================= Aply =================
+        'apply' => [
+            
+            
+            [
+                'label'  => 'Progess TopUp',
+                'icon'   => '📅',
+                // 'href'   => route('rkh.index'),
+                'active' => $isRkhActive,
+                'show'   => true,
+            ],
+            
             [
                 'label'  => 'Cek SHM',
                 'icon'   => '📄',
@@ -407,11 +429,11 @@
                 'badge_kind' => 'warn', // optional kalau kamu sudah bikin kind-based
             ],
             [
-                'label'  => 'Input Komunitas',
+                'label'  => 'Order SP',
                 'icon'   => '🏘️',
-                'href'   => route('kpi.communities.index'),
-                'active' => $isKpiCommunityActive,
-                'show' => (in_array($roleValue, ['AO','SO','KBL'], true)) && !$isPimpinan,
+                // 'href'   => route('kpi.communities.index'),
+                // 'active' => $isKpiCommunityActive,
+                'show' => true,
             ],
         ],
 
@@ -589,7 +611,7 @@
                 'active' => request()->routeIs('kpi.marketing.ranking.*'),
                 'show'   => $u && in_array(
                     strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)),
-                    ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM','KSL','KSO','KSA','KSF','KSD','KSR','KBL'],
+                    ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM','KSLU','KSLR','KSFE','KSBE','KSO','KSA','KSF','KSD','KSR','KBL'],
                     true
                 ),
             ],
@@ -857,6 +879,27 @@
                     </div>
                 @endif
             @endif
+            
+            {{-- Apply  --}}
+            <div class="{{ $sectionDivider }}"></div>
+            <div class="{{ $sectionTitle }}">Adminsitrasi</div>
+            <div class="mt-2 space-y-1">
+                @foreach($menus['apply'] as $m)
+                    @if(!array_key_exists('show', $m) || $m['show'])
+                        @if(!empty($m['href']))
+                            <a href="{{ $m['href'] }}"
+                               class="{{ $itemClass((bool)$m['active']) }}">
+                                <span class="opacity-90">{{ $m['icon'] }}</span>
+                                <span class="font-semibold flex-1">{{ $m['label'] }}</span>
+                            </a>
+                        @else
+                            <div class="px-3 py-2 text-xs text-slate-400">
+                                {{ $m['disabledText'] ?? 'TopUp / Order SP' }}
+                            </div>
+                        @endif
+                    @endif
+                @endforeach
+            </div>
 
             {{-- MONITORING --}}
             <div class="{{ $sectionDivider }}"></div>

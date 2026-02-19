@@ -16,7 +16,7 @@ class KpiSoPolicy
         $role = strtoupper(trim((string)($viewer->roleValue() ?? $viewer->level ?? '')));
 
         // 2) management boleh
-        if (in_array($role, ['DIR','DIREKSI','KOM','PE','KABAG','KBL','KSL','KTI','KBO','KSA','KSF'], true)) {
+        if (in_array($role, ['DIR','DIREKSI','KOM','PE','KABAG','KBL','KSLU','KSLR','KSFE','KSBE','KTI','KBO','KSA','KSF'], true)) {
             return true;
         }
 

@@ -248,7 +248,10 @@ class SyncUsersFromSmartKpiApiJob implements ShouldQueue
             'TLBE' => 'TLBE',
             'TLUM' => 'TLUM',
 
-            'KSL' => 'KSL',
+            'KSLU' => 'KSLU',
+            'KSLR' => 'KSLR',
+            'KSBE' => 'KSBE',
+            'KSFE' => 'KSFE',
             'KBL' => 'KBL',
             'KSF' => 'KSF',
             'KBF' => 'KBF',

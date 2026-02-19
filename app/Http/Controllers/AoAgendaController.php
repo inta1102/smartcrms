@@ -31,7 +31,7 @@ class AoAgendaController extends Controller
         // Fallback jika helper belum ada (sementara):
         // Jika kamu sudah punya helper hasAnyRole(array $roles) di User model, pakai itu.
         if (method_exists($user, 'hasAnyRole')) {
-            return (bool) $user->hasAnyRole(['TL', 'KBL', 'KTI', 'KSR', 'KSL', 'DIREKSI']);
+            return (bool) $user->hasAnyRole(['TL', 'KBL', 'KTI', 'KSLR', 'KSLU', 'DIREKSI']);
         }
 
         return false;

@@ -293,4 +293,185 @@ class RoVisitController extends Controller
             })
             ->first();
     }
+
+public function planToday(Request $request)
+{
+    $user = $request->user();
+    abort_if(!$user, 401);
+
+    $data = $request->validate([
+        'account_no'       => ['required','string','max:30'],
+        'nama_nasabah'     => ['nullable','string','max:255'],
+        'kolektibilitas'   => ['nullable','in:L0,LT,DPK'],
+        'jenis_kegiatan'   => ['nullable','string','max:255'],
+        'tujuan_kegiatan'  => ['nullable','string','max:255'],
+    ]);
+
+    $today     = now()->toDateString();
+    $accountNo = trim((string)$data['account_no']);
+    abort_if($accountNo === '', 422, 'account_no empty');
+
+    // ===== konfigurasi slot =====
+    $dayStart  = '09:00:00';
+    $durMin    = 120;  // 90 atau 120 (1.5 jam = 90)
+    $bufferMin = 0;    // misal 15 kalau ingin jeda antar visit
+    $maxPerDay = 5;
+
+    return DB::transaction(function () use (
+        $user, $today, $data, $accountNo,
+        $dayStart, $durMin, $bufferMin, $maxPerDay
+    ) {
+
+        // ==========================
+        // 1) HEADER: 1 user 1 tanggal
+        // ==========================
+        DB::table('rkh_headers')->updateOrInsert(
+            ['user_id' => (int)$user->id, 'tanggal' => $today],
+            [
+                'status'     => 'draft',
+                'total_jam'  => DB::raw('COALESCE(total_jam,0)'),
+                'updated_at' => now(),
+                'created_at' => now()
+            ]
+        );
+
+        // lock header biar aman dari race condition (klik cepat / multi tab)
+        $rkh = DB::table('rkh_headers')
+            ->where('user_id', (int)$user->id)
+            ->whereDate('tanggal', $today)
+            ->lockForUpdate()
+            ->first();
+
+        $rkhId = (int) ($rkh->id ?? 0);
+        abort_if($rkhId <= 0, 500, 'RKH header not found');
+
+        // ==========================
+        // 2) Jika account sudah diplan -> idempotent (jangan reset jam)
+        // ==========================
+        $existing = DB::table('rkh_details')
+            ->where('rkh_id', $rkhId)
+            ->where('account_no', $accountNo)
+            ->first();
+
+        if ($existing) {
+            return response()->json([
+                'ok'              => true,
+                'message'         => 'Sudah diplan (idempotent).',
+                'plan_visit_date' => $today,
+                'rkh_id'          => $rkhId,
+                'account_no'      => $accountNo,
+                'jam_mulai'       => $existing->jam_mulai,
+                'jam_selesai'     => $existing->jam_selesai,
+            ]);
+        }
+
+        // ==========================
+        // 3) Max 5 visit per hari
+        // ==========================
+        $countToday = DB::table('rkh_details')
+            ->where('rkh_id', $rkhId)
+            ->count();
+
+        abort_if($countToday >= $maxPerDay, 422, "Maksimal {$maxPerDay} visit per hari.");
+
+        // ==========================
+        // 4) AUTO FILL dari loan_accounts (posisi terakhir)
+        // ==========================
+        $nama  = $data['nama_nasabah'] ?? null;
+        $kolek = $data['kolektibilitas'] ?? null;
+
+        if ($nama === null || $kolek === null) {
+            $pos = DB::table('loan_accounts')
+                ->where(function($q) use ($accountNo) {
+                    $q->where('account_no', $accountNo)
+                      ->orWhereRaw("TRIM(LEADING '0' FROM account_no) = TRIM(LEADING '0' FROM ?)", [$accountNo]);
+                })
+                ->max('position_date');
+
+            if ($pos) {
+                $la = DB::table('loan_accounts')
+                    ->select('customer_name','ft_pokok','ft_bunga','kolek')
+                    ->whereDate('position_date', $pos)
+                    ->where(function($q) use ($accountNo) {
+                        $q->where('account_no', $accountNo)
+                          ->orWhereRaw("TRIM(LEADING '0' FROM account_no) = TRIM(LEADING '0' FROM ?)", [$accountNo]);
+                    })
+                    ->first();
+
+                if ($la) {
+                    if ($nama === null) $nama = $la->customer_name ?? null;
+
+                    if ($kolek === null) {
+                        $fp = (int)($la->ft_pokok ?? 0);
+                        $fb = (int)($la->ft_bunga ?? 0);
+                        $k  = (int)($la->kolek ?? 0);
+
+                        if ($fp === 2 || $fb === 2 || $k === 2) $kolek = 'DPK';
+                        elseif ($fp === 1 || $fb === 1)         $kolek = 'LT';
+                        else                                     $kolek = 'L0';
+                    }
+                }
+            }
+        }
+
+        // ==========================
+        // 5) AUTO SLOT JAM (append ke slot terakhir)
+        // ==========================
+        $lastEnd = DB::table('rkh_details')
+            ->where('rkh_id', $rkhId)
+            ->whereNotNull('jam_selesai')
+            ->orderByDesc('jam_selesai')
+            ->value('jam_selesai');
+
+        $start = $lastEnd ?: $dayStart;
+
+        // Carbon butuh tanggal + jam agar bisa addMinutes
+        $startAt = \Carbon\Carbon::parse($today.' '.$start)->addMinutes($bufferMin);
+        $endAt   = $startAt->copy()->addMinutes($durMin);
+
+        $jamMulai   = $startAt->format('H:i:s');
+        $jamSelesai = $endAt->format('H:i:s');
+
+        // ==========================
+        // 6) Anti tabrakan (overlap check)
+        // ==========================
+        $overlap = DB::table('rkh_details')
+            ->where('rkh_id', $rkhId)
+            ->where('jam_mulai', '<', $jamSelesai)
+            ->where('jam_selesai', '>', $jamMulai)
+            ->exists();
+
+        abort_if($overlap, 422, 'Tabrakan jadwal visit. (Overlap slot waktu)');
+
+        // ==========================
+        // 7) INSERT detail (bukan updateOrInsert)
+        // ==========================
+        DB::table('rkh_details')->insert([
+            'rkh_id'          => $rkhId,
+            'account_no'      => $accountNo,
+            'nama_nasabah'    => $nama,
+            'kolektibilitas'  => $kolek,
+            'jenis_kegiatan'  => $data['jenis_kegiatan'] ?? 'Visit',
+            'tujuan_kegiatan' => $data['tujuan_kegiatan'] ?? 'Kunjungan nasabah',
+            'jam_mulai'       => $jamMulai,
+            'jam_selesai'     => $jamSelesai,
+            'updated_at'      => now(),
+            'created_at'      => now(),
+        ]);
+
+        return response()->json([
+            'ok'              => true,
+            'message'         => 'Planned & masuk RKH + slot otomatis.',
+            'plan_visit_date' => $today,
+            'rkh_id'          => $rkhId,
+            'account_no'      => $accountNo,
+            'nama_nasabah'    => $nama,
+            'kolektibilitas'  => $kolek,
+            'jam_mulai'       => $jamMulai,
+            'jam_selesai'     => $jamSelesai,
+        ]);
+    });
+}
+
+
 }

@@ -20,7 +20,7 @@ class TargetApprovalKasiController extends Controller
      */
     protected function kasiLevels(): array
     {
-        $levels = (array) config('roles.kasi_levels', ['ksl','ksf','kso','ksa','ksr','kbl']);
+        $levels = (array) config('roles.kasi_levels', ['KSLU','KSLR','KSFE','KSBE','ksf','kso','ksa','ksr','kbl']);
 
         // normalize ke uppercase biar konsisten
         return array_values(array_unique(array_map(

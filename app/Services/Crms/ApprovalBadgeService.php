@@ -88,7 +88,7 @@ class ApprovalBadgeService
                       // leader_role bisa KASI / KSR / KSL tergantung data kamu
                       $x->active()
                         ->where('leader_id', $kasiUserId)
-                        ->whereIn('leader_role', ['KASI','KSR','KSL']);
+                        ->whereIn('leader_role', ['KASI','KSR','KSLU','KSLR','KSFE','KSBE']);
                   })
                   ->orWhereHas('proposer.orgAssignmentsAsStaff.leader', function ($x) use ($kasiUserId) {
                       // ✅ level-2: staff dibawah TL yang dibawah KASI
@@ -123,7 +123,7 @@ class ApprovalBadgeService
                   ->orWhereHas('proposer.orgAssignmentsAsStaff', function ($x) use ($kasiUserId) {
                       $x->active()
                         ->where('leader_id', $kasiUserId)
-                        ->whereIn('leader_role', ['KASI','KSR','KSL']);
+                        ->whereIn('leader_role', ['KASI','KSR','KSLU','KSLR','KSFE','KSBE']);
                   });
             })
             ->count();

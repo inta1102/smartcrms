@@ -17,7 +17,7 @@ class NonLitApprovalKasiController extends Controller
 {
     use EnsureKasiAccess;
     /** @var array<int, string> */
-    private array $kasiRoles = ['KSL','KSO','KSA','KSF','KSD','KSR'];
+    private array $kasiRoles = ['KSLU','KSLR','KSFE','KSBE','KSO','KSA','KSF','KSD','KSR'];
 
     public function __construct()
     {

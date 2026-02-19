@@ -40,32 +40,48 @@ class KpiOsDailySnapshot extends Command
          * Catatan:
          * - DPK subset dari LT (secara flag), tapi kita tetap simpan terpisah untuk dashboard.
          */
+
+        // ✅ supaya grouping konsisten, pakai ekspresi aoExpr yg sama untuk SELECT dan GROUP BY
+        $aoExpr = "LPAD(TRIM(COALESCE(loan_accounts.ao_code,'')),6,'0')";
+
         $rows = DB::table('loan_accounts')
             ->selectRaw("
-                LPAD(TRIM(COALESCE(ao_code,'')),6,'0') as ao_code,
+                {$aoExpr} as ao_code,
 
-                SUM(COALESCE(outstanding,0)) as os_total,
+                ROUND(SUM(COALESCE(outstanding,0)), 2) as os_total,
                 COUNT(*) as noa_total,
 
-                SUM(CASE WHEN COALESCE(ft_pokok,0)=0 AND COALESCE(ft_bunga,0)=0
-                         THEN COALESCE(outstanding,0) ELSE 0 END) as os_l0,
-                SUM(CASE WHEN COALESCE(ft_pokok,0)=0 AND COALESCE(ft_bunga,0)=0
-                         THEN 1 ELSE 0 END) as noa_l0,
+                ROUND(SUM(CASE
+                    WHEN COALESCE(ft_pokok,0)=0 AND COALESCE(ft_bunga,0)=0
+                    THEN COALESCE(outstanding,0) ELSE 0 END
+                ), 2) as os_l0,
+                SUM(CASE
+                    WHEN COALESCE(ft_pokok,0)=0 AND COALESCE(ft_bunga,0)=0
+                    THEN 1 ELSE 0 END
+                ) as noa_l0,
 
-                SUM(CASE WHEN COALESCE(ft_pokok,0)>0 OR COALESCE(ft_bunga,0)>0
-                         THEN COALESCE(outstanding,0) ELSE 0 END) as os_lt,
-                SUM(CASE WHEN COALESCE(ft_pokok,0)>0 OR COALESCE(ft_bunga,0)>0
-                         THEN 1 ELSE 0 END) as noa_lt,
+                ROUND(SUM(CASE
+                    WHEN COALESCE(ft_pokok,0)>0 OR COALESCE(ft_bunga,0)>0
+                    THEN COALESCE(outstanding,0) ELSE 0 END
+                ), 2) as os_lt,
+                SUM(CASE
+                    WHEN COALESCE(ft_pokok,0)>0 OR COALESCE(ft_bunga,0)>0
+                    THEN 1 ELSE 0 END
+                ) as noa_lt,
 
-                SUM(CASE WHEN COALESCE(ft_pokok,0)=2 OR COALESCE(ft_bunga,0)=2 OR COALESCE(kolek,0)=2
-                         THEN COALESCE(outstanding,0) ELSE 0 END) as os_dpk,
-                SUM(CASE WHEN COALESCE(ft_pokok,0)=2 OR COALESCE(ft_bunga,0)=2 OR COALESCE(kolek,0)=2
-                         THEN 1 ELSE 0 END) as noa_dpk
+                ROUND(SUM(CASE
+                    WHEN COALESCE(ft_pokok,0)=2 OR COALESCE(ft_bunga,0)=2 OR COALESCE(kolek,0)=2
+                    THEN COALESCE(outstanding,0) ELSE 0 END
+                ), 2) as os_dpk,
+                SUM(CASE
+                    WHEN COALESCE(ft_pokok,0)=2 OR COALESCE(ft_bunga,0)=2 OR COALESCE(kolek,0)=2
+                    THEN 1 ELSE 0 END
+                ) as noa_dpk
             ")
             ->whereDate('position_date', $date)
             ->whereNotNull('ao_code')
             ->whereRaw("TRIM(ao_code) <> ''")
-            ->groupBy('ao_code')
+            ->groupByRaw($aoExpr) // ✅ penting: group by ekspresi yang sama
             ->get();
 
         if ($rows->isEmpty()) {
@@ -79,20 +95,17 @@ class KpiOsDailySnapshot extends Command
             $ao = (string) ($r->ao_code ?? '000000');
             $ao = $ao !== '' ? $ao : '000000';
 
-            $osTotal = (string) ($r->os_total ?? 0);
-            $osL0    = (string) ($r->os_l0 ?? 0);
-            $osLT    = (string) ($r->os_lt ?? 0);
-            $osDPK   = (string) ($r->os_dpk ?? 0);
-
             return [
                 'position_date' => $date,
                 'ao_code'       => $ao,
 
-                'os_total'      => (int) round((float) $osTotal),
-                'os_l0'         => (float) $osL0,
-                'os_lt'         => (float) $osLT,
-                'os_dpk'        => (float) $osDPK,
+                // ✅ os_* decimals (18,2) → simpan float 2 desimal
+                'os_total'      => (float) ($r->os_total ?? 0),
+                'os_l0'         => (float) ($r->os_l0 ?? 0),
+                'os_lt'         => (float) ($r->os_lt ?? 0),
+                'os_dpk'        => (float) ($r->os_dpk ?? 0),
 
+                // ✅ noa_* int
                 'noa_total'     => (int) ($r->noa_total ?? 0),
                 'noa_l0'        => (int) ($r->noa_l0 ?? 0),
                 'noa_lt'        => (int) ($r->noa_lt ?? 0),

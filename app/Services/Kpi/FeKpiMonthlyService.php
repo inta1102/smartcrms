@@ -428,7 +428,10 @@ class FeKpiMonthlyService
 
         $roleAliases = match ($leaderRole) {
             'TLFE' => ['tlfe', 'tl', 'teamleader', 'leader'],
-            'KSL'  => ['ksl', 'kasi', 'kasi lending'],
+            'KSLU'=> ['kslu', 'kasi', 'kasi lending'],
+            'KSLR'=> ['kslr', 'kasi', 'kasi lending'],
+            'KSFE'=> ['ksfe', 'kasi', 'kasi lending'],
+            'KSBE'  => ['ksbe', 'kasi', 'kasi lending'],
             'KBL'  => ['kbl', 'kabag', 'kabag lending'],
             default => [strtolower($leaderRole)],
         };

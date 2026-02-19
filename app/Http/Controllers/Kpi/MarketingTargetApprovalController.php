@@ -19,7 +19,7 @@ class MarketingTargetApprovalController extends Controller
         $lvl = $this->levelCode($me);
 
         $isTl   = in_array($lvl, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
-        $isKasi = in_array($lvl, ['KSL','KSO','KSA','KSF','KSD','KSR'], true);
+        $isKasi = in_array($lvl, ['KSLU','KSLR','KSFE','KSBE','KSO','KSA','KSF','KSD','KSR'], true);
         abort_unless($isTl || $isKasi, 403);
 
         // ===== status (inbox per role) =====
@@ -133,7 +133,7 @@ class MarketingTargetApprovalController extends Controller
             $lvl = $this->levelCode($me);
 
             $isTl   = in_array($lvl, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
-            $isKasi = in_array($lvl, ['KSL','KSO','KSA','KSF','KSD','KSR'], true);
+            $isKasi = in_array($lvl, ['KSLU','KSLR','KSFE','KSBE','KSO','KSA','KSF','KSD','KSR'], true);
 
             if ($isTl) {
                 abort_unless($t->status === MarketingKpiTarget::STATUS_PENDING_TL, 422);
@@ -227,7 +227,7 @@ class MarketingTargetApprovalController extends Controller
                 ->all();
         }
 
-        if (in_array($lvl, ['KSL','KSO','KSA','KSF','KSD','KSR'], true)) {
+        if (in_array($lvl, ['KSLU','KSLR','KSFE','KSBE','KSO','KSA','KSF','KSD','KSR'], true)) {
 
             $directIds = (clone $base)
                 ->where('leader_id', $selfId)

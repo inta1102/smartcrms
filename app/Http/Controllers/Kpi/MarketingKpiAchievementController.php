@@ -27,7 +27,7 @@ class MarketingKpiAchievementController extends Controller
             // selain role AO dkk harus role supervisi
             abort_unless($me->hasAnyRole([
                 'KBL', // ✅ KBL boleh lihat
-                'KSL','KSR',
+                'KSLU','KSLR','KSFE','KSBE',
                 'KBO','KBF',
                 // tambah jika perlu: 'DIR','KOM','KSO', dst
             ]), 403);

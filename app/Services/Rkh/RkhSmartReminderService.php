@@ -304,7 +304,7 @@ class RkhSmartReminderService
 
         // Role yang normally punya ao_code sendiri (lihat data sendiri)
         $selfAo = trim((string)($user->ao_code ?? ''));
-        $leaderRoles = ['TL', 'TLRO', 'TLSO', 'TLFE', 'TLBE', 'TLUM', 'KSL', 'KSA', 'KBO', 'KSO', 'KOM', 'DIR', 'PE'];
+        $leaderRoles = ['TL', 'TLRO', 'TLSO', 'TLFE', 'TLBE', 'TLUM', 'KSLU','KSLR','KSFE','KSBE', 'KSA', 'KBO', 'KSO', 'KOM', 'DIR', 'PE'];
 
         // kalau bukan leader role dan punya ao_code -> pakai ao_code sendiri
         if ($selfAo !== '' && !in_array($role, $leaderRoles, true)) {

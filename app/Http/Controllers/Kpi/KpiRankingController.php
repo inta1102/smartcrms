@@ -104,7 +104,7 @@ class KpiRankingController extends Controller
         }
 
         // Management
-        if (in_array($role, ['KSL','KBL','DIR','DIREKSI','KABAG','PE'], true)) {
+        if (in_array($role, ['KSLU','KSLR','KBL','DIR','DIREKSI','KABAG','PE'], true)) {
             $q = DB::table('users')
                 ->whereRaw('TRIM(UPPER(level)) = ?', [strtoupper($targetLevel)]);
 
@@ -165,7 +165,7 @@ class KpiRankingController extends Controller
         }
 
         // ✅ management: boleh drilldown semua (sementara)
-        if (in_array($role, ['KSL','KBL','DIR','DIREKSI','KABAG','PE'], true)) {
+        if (in_array($role, ['KSLR','KSLU','KBL','DIR','DIREKSI','KABAG','PE'], true)) {
             return DB::table('users')
                 ->where('level', $targetLevel)
                 ->whereNotNull('ao_code')

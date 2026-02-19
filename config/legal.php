@@ -169,8 +169,10 @@ return [
             'KBF'   => ['in_progress','waiting','completed','failed','cancelled'],
             'KSO'   => ['prepared','submitted','in_progress'], // ✅ boleh approve // ⛔ tidak bisa completed/failed
             'KSF'   => ['prepared','submitted','in_progress'], // ✅ boleh approve
-            'KSL'   => ['prepared','submitted','in_progress'], // ✅ boleh approve
-            'KSR'   => ['prepared','submitted','in_progress'], // ✅ boleh approve
+            'KSLU'   => ['prepared','submitted','in_progress'], // ✅ boleh approve
+            'KSLR'   => ['prepared','submitted','in_progress'], // ✅ boleh approve
+            'KSFE'   => ['prepared','submitted','in_progress'], // ✅ boleh approve
+            'KSBE'   => ['prepared','submitted','in_progress'],
             'TI'    => ['submitted','in_progress','waiting'],
             'BO'    => ['submitted','in_progress'],
             'ADM'   => ['submitted'],

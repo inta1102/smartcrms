@@ -65,13 +65,13 @@ class AuthServiceProvider extends ServiceProvider
             'level_role_col' => $user->level_role ?? null,
         ]);
         // sesuaikan role yg boleh akses monitoring HT
-        return in_array($level, ['kbl', 'kti', 'ksl', 'ksr', 'tlr','ao','so','fe','be','tll','ro','kom','dir', 'direksi'], true);
+        return in_array($level, ['kbl', 'kti', 'KSLU','KSLR','KSFE','KSBE', 'ksr', 'tlr','ao','so','fe','be','tll','ro','kom','dir', 'direksi'], true);
         });
 
         Gate::policy(OrgAssignment::class, OrgAssignmentPolicy::class);
 
         Gate::define('is-supervisor', function ($user) {
-            return $user->inRoles(['DIREKSI','KABAG','KBL','KBO','KTI','KBF','KSR','KSL','KSO','KSA','KSF','KSD','TLR','TL','TLL','TLF','TLRO','TLSO','TLFE','TLBE','TLUM']);
+            return $user->inRoles(['DIREKSI','KABAG','KBL','KBO','KTI','KBF','KSR','KSLU','KSLR','KSFE','KSBE','KSO','KSA','KSF','KSD','TLR','TL','TLL','TLF','TLRO','TLSO','TLFE','TLBE','TLUM']);
         });
 
         Gate::define('manage-org-assignments', function ($user) {
@@ -83,7 +83,7 @@ class AuthServiceProvider extends ServiceProvider
             return true;
 
             // atau kalau mau strict:
-            // return $user->inRoles(['KTI','KBL','KBO','TL','KSL','KSR','DIREKSI','KOM']);
+            // return $user->inRoles(['KTI','KBL','KBO','TL','KSLU','KSLR','KSFE','KSBE','KSR','DIREKSI','KOM']);
         });
 
         Gate::define('viewLegalMenu', function ($user) {
@@ -124,7 +124,7 @@ class AuthServiceProvider extends ServiceProvider
 
         Gate::define('recalcMarketingKpi', function ($user) {
             return $user->hasAnyRole([
-                'KSR', 'KTI', 'DIR', 'KSL', 'KOM','KBL',
+                'KSR', 'KTI', 'DIR', 'KSLU','KSLR','KSFE','KSBE', 'KOM','KBL',
             ]);
         });
 
@@ -133,7 +133,7 @@ class AuthServiceProvider extends ServiceProvider
             $level = strtoupper(trim((string)($user->level instanceof \BackedEnum ? $user->level->value : $user->level)));
 
             // TL family + management boleh
-            return in_array($roleValue, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM','KSL','KSM','KBL','KBO','KSA','DIR','PE','KOM'], true)
+            return in_array($roleValue, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM','KSLU','KSLR','KSFE','KSBE','KSM','KBL','KBO','KSA','DIR','PE','KOM'], true)
                 || in_array($level, ['TL','SO','AO'], true); // kalau level TL dipakai
         });
 

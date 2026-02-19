@@ -83,7 +83,7 @@ class RestructureDashboardController extends Controller
         // ✅ Supervisor level TL + KASI: ambil bawahan
         if (method_exists($u, 'hasAnyRole') && $u->hasAnyRole([
             'TL','TLL','TLF','TLR','TLRO','TLSO','TLFE','TLBE','TLUM',
-            'KSL','KSO','KSA','KSF','KSD','KSR',
+            'KSLU','KSO','KSA','KSF','KSD','KSLR','KSFE','KSBE',
         ])) {
             if (!class_exists(\App\Models\OrgAssignment::class)) return [];
 

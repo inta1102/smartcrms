@@ -44,7 +44,7 @@
                         && $status === \App\Models\LegalActionProposal::STATUS_PENDING_TL;
 
                     // ✅ Kasi hanya approve dari approved_tl (antrian Kasi)
-                    $canApproveKasi = auth()->user()->hasAnyRole(['KSR','KSL'])
+                    $canApproveKasi = auth()->user()->hasAnyRole(['KSLU','KSLR','KSFE','KSBE'])
                         && $status === \App\Models\LegalActionProposal::STATUS_APPROVED_TL;
 
                     $canExecute = auth()->user()->hasAnyRole(['BE'])

@@ -97,7 +97,7 @@ class AppServiceProvider extends ServiceProvider
                 : strtoupper((string) ($u->level ?? ''));
 
             $tlRoles   = ['TL','TLL','TLF','TLR','TLRO','TLSO','TLFE','TLBE','TLUM'];
-            $kasiRoles = ['KSL','KSO','KSA','KSF','KSD','KSR','KASI']; // tambah KASI kalau dipakai
+            $kasiRoles = ['KSLU','KSLR','KSFE','KSBE','KSO','KSA','KSF','KSD','KSR','KASI']; // tambah KASI kalau dipakai
             $sadRoles  = ['SAD','KSA','KBO']; // sesuai kebutuhan badge SHM
 
             $isTl   = in_array($roleVal, $tlRoles, true);
@@ -249,7 +249,7 @@ class AppServiceProvider extends ServiceProvider
         // TL/KASI: bawahan langsung berdasar org_assignments
         if (method_exists($u, 'hasAnyRole') && $u->hasAnyRole([
             'TL','TLL','TLF','TLR','TLRO','TLSO','TLFE','TLBE','TLUM',
-            'KSL','KSO','KSA','KSF','KSD','KSR','KASI',
+            'KSLU','KSLR','KSFE','KSBE','KSO','KSA','KSF','KSD','KSR','KASI',
         ])) {
             $codes = OrgAssignment::query()
                 ->active()

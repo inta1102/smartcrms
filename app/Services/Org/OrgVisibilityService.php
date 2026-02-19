@@ -71,7 +71,7 @@ class OrgVisibilityService
         }
 
 
-        if (method_exists($me, 'hasAnyRole') && $me->hasAnyRole(['KSL', 'KSO', 'KSA', 'KSF', 'KSD', 'KSR'])) {
+        if (method_exists($me, 'hasAnyRole') && $me->hasAnyRole(['KSLU','KSLR','KSFE','KSBE', 'KSO', 'KSA', 'KSF', 'KSD', 'KSR'])) {
             $ids = $this->subordinateUserIdsForKasi($selfId);
 
             return collect([$selfId])

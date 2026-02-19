@@ -815,10 +815,18 @@ Route::middleware('auth')->group(function () {
  * RO Visits (auth) — di luar group besar juga aman
  * =======================================================
  */
-Route::middleware(['auth'])->prefix('ro-visits')->name('ro_visits.')->group(function () {
+// RO Visits (auth)
+Route::middleware(['auth'])
+  ->prefix('ro-visits')
+  ->name('ro_visits.')
+  ->group(function () {
+
     Route::post('/toggle', [RoVisitController::class, 'toggle'])->name('toggle');
     Route::get('/visit',   [RoVisitController::class, 'create'])->name('create');
     Route::post('/visit',  [RoVisitController::class, 'store'])->name('store');
+
+    // ✅ plan hari ini (langsung planned & masuk RKH)
+    Route::post('/plan-today', [RoVisitController::class, 'planToday'])->name('plan_today');
 });
 
 /**

@@ -12,8 +12,8 @@
     // - KASI (KSR/KSL) untuk kasus seperti Helmi (tanpa TL)
     // NOTE: final auth tetap di controller/policy, ini hanya untuk tampilkan UI.
     $canChecklist = $user && (
-        (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['TL','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM','TLF','KSR','KSL']))
-        || in_array($userLevel, ['tl','ksr','ksl'], true)
+        (method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['TL','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM','TLF','KSR','KSLU','KSLR','KSFE','KSBE']))
+        || in_array($userLevel, ['tl','ksr','KSLU','KSLR','KSFE','KSBE'], true)
     );
 @endphp
 

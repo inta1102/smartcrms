@@ -21,7 +21,7 @@ class KpiRoPolicy
         $role = $this->resolveViewerRole($viewer);
 
         // 3) management/admin roles: boleh lihat semua RO
-        if (in_array($role, ['DIR','DIREKSI','KOM','PE','KABAG','KBL','KSL','KTI'], true)) {
+        if (in_array($role, ['DIR','DIREKSI','KOM','PE','KABAG','KBL','KSLU','KSLR','KSFE','KSBE','KTI'], true)) {
             return true;
         }
 

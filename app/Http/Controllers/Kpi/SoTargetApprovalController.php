@@ -21,7 +21,7 @@ class SoTargetApprovalController extends Controller
         $meRole = strtoupper(trim((string)($me->roleValue() ?? '')));
 
         $isTl   = in_array($meRole, ['TL','TLL','TLR','TLF','TLRO','TLSO','TLFE','TLBE','TLUM'], true);
-        $isKasi = in_array($meRole, ['KSL','KSR','KSO','KSA','KSF','KSD','KBL'], true);
+        $isKasi = in_array($meRole, ['KSLU','KSLR','KSFE','KSBE','KSR','KSO','KSA','KSF','KSD','KBL'], true);
 
         abort_unless($isTl || $isKasi, 403);
 
@@ -171,7 +171,7 @@ class SoTargetApprovalController extends Controller
     private function isKasi($me): bool
     {
         $roleValue = strtoupper(trim((string)($me->roleValue() ?? '')));
-        return in_array($roleValue, ['KSL','KSR','KSO','KSA','KSF','KSD','KBL'], true);
+        return in_array($roleValue, ['KSLU','KSLR','KSFE','KSBE','KSR','KSO','KSA','KSF','KSD','KBL'], true);
     }
 
     private function subordinateUserIds(int $leaderId): array

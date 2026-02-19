@@ -7,7 +7,7 @@
       <h1 class="text-2xl font-bold">RKH RO</h1>
       <p class="text-sm text-slate-500">Rencana kerja harian kamu.</p>
     </div>
-    <a href="{{ route('rkh.create') }}" class="px-3 py-2 rounded border">+ Buat RKH</a>
+    <!-- <a href="{{ route('rkh.create') }}" class="px-3 py-2 rounded border">+ Buat RKH</a> -->
   </div>
 
   <div class="mt-4 border rounded overflow-auto">

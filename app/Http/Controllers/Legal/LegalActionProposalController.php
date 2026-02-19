@@ -77,7 +77,7 @@ class LegalActionProposalController extends Controller
         }
 
         // Kasi: default yg sudah approved TL (antrian Kasi)
-        elseif ($user->hasAnyRole(['KSR','KSL'])) {
+        elseif ($user->hasAnyRole(['KSLU','KSLR','KSFE','KSBE'])) {
             if (!$statusFromRequest) {
                 $q->where('status', LegalActionProposal::STATUS_APPROVED_TL);
             }

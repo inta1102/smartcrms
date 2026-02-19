@@ -72,7 +72,7 @@
 
                             $roleBadge = match(strtoupper((string)$a->leader_role)) {
                                 'KABAG' => 'bg-slate-900 text-white border-slate-900',
-                                'KSL'   => 'bg-indigo-50 text-indigo-700 border-indigo-200',
+                                'KSLU'   => 'bg-indigo-50 text-indigo-700 border-indigo-200',
                                 'TL'    => 'bg-sky-50 text-sky-700 border-sky-200',
                                 default => 'bg-slate-50 text-slate-700 border-slate-200',
                             };

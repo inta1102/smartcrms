@@ -7,6 +7,9 @@ use App\Models\RoVisit;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Http\JsonResponse;
+
+
 
 class RoOsDailyDashboardController extends Controller
 {
@@ -18,13 +21,12 @@ class RoOsDailyDashboardController extends Controller
         $ao = str_pad(trim((string)($me->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
         abort_unless($ao !== '' && $ao !== '000000', 403);
 
-
         /* 1) RANGE DEFAULT
          *    - from: tgl terakhir bulan lalu
          *    - to  : tgl terakhir yang ada di tabel kpi_os_daily_aos
          * =========================================================
          */
-        $latestInKpi = DB::table('kpi_os_daily_aos')->max('position_date'); // date
+        $latestInKpi = DB::table('kpi_os_daily_aos')->max('position_date'); // date/datetime
         $latestInKpi = $latestInKpi ? Carbon::parse($latestInKpi)->startOfDay() : now()->startOfDay();
 
         $lastMonthEndC = Carbon::now()->subMonthNoOverflow()->endOfMonth()->startOfDay();
@@ -37,13 +39,21 @@ class RoOsDailyDashboardController extends Controller
             ? Carbon::parse($request->input('to'))->startOfDay()
             : $latestInKpi->copy()->startOfDay();
 
+            logger()->info('range_debug', [
+                'from' => $from->toDateTimeString(),
+                'to'   => $to->toDateTimeString(),
+                'ao'   => $ao,
+                'db'   => config('database.default'),
+                'conn' => DB::connection()->getDatabaseName(),
+                ]);
+
         // guard kalau user input kebalik
         if ($from->gt($to)) {
             [$from, $to] = [$to->copy()->startOfDay(), $from->copy()->startOfDay()];
         }
 
         $mode = $request->input('mode', 'mtd'); // default: MtoD
-        $mode = in_array($mode, ['mtd','h'], true) ? $mode : 'mtd';
+        $mode = in_array($mode, ['mtd', 'h'], true) ? $mode : 'mtd';
 
         // =============================
         // LABELS tanggal lengkap
@@ -57,32 +67,38 @@ class RoOsDailyDashboardController extends Controller
         }
 
         // =============================
-        // LATEST + PREV (yang benar-benar ada snapshot)
+        // Tentukan baseline snapshot month (EOM bulan lalu)
+        // (dipakai untuk cohort & MtoD base)
         // =============================
-        $latestDate = count($labels) ? $labels[count($labels) - 1] : null;
-        
-        // =============================
-        // Posisi terakhir loan_accounts untuk tabel bawah
-        // =============================
-        $latestPosDate = $latestDate ? Carbon::parse($latestDate)->toDateString() : now()->toDateString();
-        $prevSnapMonth = Carbon::parse($latestPosDate)->subMonthNoOverflow()->startOfMonth()->toDateString();
-
+        // Nanti kita overwrite lagi setelah latestPosDate final ketemu,
+        // tapi ini jadi fallback aman.
+        $latestPosDateFallback = (count($labels) ? $labels[count($labels) - 1] : $latestInKpi->toDateString());
+        $prevSnapMonth = Carbon::parse($latestPosDateFallback)->subMonthNoOverflow()->startOfMonth()->toDateString();
 
         // =============================
         // DATA harian KPI (AO ini)
+        // FIX UTAMA: pakai whereDate supaya aman untuk DATETIME
         // =============================
         $rows = DB::table('kpi_os_daily_aos')
             ->selectRaw("
                 DATE(position_date) as d,
                 ROUND(SUM(os_total)) as os_total,
                 ROUND(SUM(os_l0))    as os_l0,
-                ROUND(SUM(os_lt))    as os_lt
+                ROUND(SUM(os_lt))    as os_lt,
+                ROUND(SUM(os_dpk))   as os_dpk
             ")
-            ->whereBetween('position_date', [$from->toDateString(), $to->toDateString()])
-            ->whereRaw("LPAD(TRIM(ao_code),6,'0') = ?", [$ao])
+            ->whereDate('position_date', '>=', $from->toDateString())
+            ->whereDate('position_date', '<=', $to->toDateString())
+            ->where('ao_code', $ao)
             ->groupBy('d')
             ->orderBy('d')
             ->get();
+
+            logger()->info('rows_debug', [
+                'count' => $rows->count(),
+                'first' => $rows->first(),
+                'sql'   => $rows->count() ? 'has_rows' : 'no_rows',
+                ]);
 
         $byDate = [];
         foreach ($rows as $r) {
@@ -102,7 +118,9 @@ class RoOsDailyDashboardController extends Controller
             ];
         }
 
+        // =============================
         // series (null kalau tanggal bolong)
+        // =============================
         $series = [
             'os_total' => [],
             'os_l0'    => [],
@@ -121,14 +139,22 @@ class RoOsDailyDashboardController extends Controller
 
         // =============================
         // LATEST + PREV (yang benar-benar ada snapshot)
+        // - latestDate harus tanggal terakhir yang ADA data (bukan sekadar label terakhir)
         // =============================
-        $latestDate = count($labels) ? $labels[count($labels) - 1] : null;
+        $latestDate = null;
+        if (!empty($byDate)) {
+            $datesWithData = array_keys($byDate);
+            sort($datesWithData);
+            $latestDate = end($datesWithData) ?: null;
+        }
 
         $prevAvailDate = null;
         if ($latestDate) {
-            for ($i = count($labels) - 2; $i >= 0; $i--) {
+            for ($i = count($labels) - 1; $i >= 0; $i--) {
                 $d = $labels[$i] ?? null;
-                if ($d && isset($byDate[$d])) {
+                if (!$d) continue;
+                if ($d === $latestDate) continue;
+                if (isset($byDate[$d])) {
                     $prevAvailDate = $d;
                     break;
                 }
@@ -138,20 +164,8 @@ class RoOsDailyDashboardController extends Controller
         $latestPack = $latestDate ? ($byDate[$latestDate] ?? null) : null;
         $prevPack   = $prevAvailDate ? ($byDate[$prevAvailDate] ?? null) : null;
 
-        // fallback jika latestDate tidak ada data (misal range ke depan)
-        if ($latestDate && !$latestPack) {
-            for ($i = count($labels) - 1; $i >= 0; $i--) {
-                $d = $labels[$i] ?? null;
-                if ($d && isset($byDate[$d])) {
-                    $latestDate = $d;
-                    $latestPack = $byDate[$d];
-                    break;
-                }
-            }
-        }
-
-        // kalau prev tidak ketemu, tetap null (delta tidak dihitung)
         $prevDate = $prevAvailDate;
+
         // =============================
         // Posisi terakhir untuk join loan_accounts & baseline MtoD
         // =============================
@@ -159,8 +173,10 @@ class RoOsDailyDashboardController extends Controller
             ? Carbon::parse($latestDate)->toDateString()
             : $latestInKpi->toDateString(); // fallback aman
 
-        $aoCodes = [$ao]; // biar when(!empty($aoCodes)) aman
+        // baseline snapshot month: startOfMonth dari bulan lalu
+        $prevSnapMonth = Carbon::parse($latestPosDate)->subMonthNoOverflow()->startOfMonth()->toDateString();
 
+        $aoCodes = [$ao]; // biar when(!empty($aoCodes)) aman
 
         // =============================
         // Cards value & delta (H vs H-1 snapshot available)
@@ -170,26 +186,65 @@ class RoOsDailyDashboardController extends Controller
         $latestLT    = (int)($latestPack['os_lt'] ?? 0);
         $latestRR    = $latestPack['rr'] ?? null;
         $latestPctLt = $latestPack['pct_lt'] ?? null;
+        $latestDPK = (int)($latestPack['os_dpk'] ?? 0);
+        $latestPctDpk = $latestOs > 0 ? round(($latestDPK / $latestOs) * 100, 2) : null;
 
+
+
+       
+        $prevDPK   = $prevPack ? (int)($prevPack['os_dpk'] ?? 0) : null;
         $prevOs    = $prevPack ? (int)($prevPack['os_total'] ?? 0) : null;
         $prevL0    = $prevPack ? (int)($prevPack['os_l0'] ?? 0) : null;
         $prevLT    = $prevPack ? (int)($prevPack['os_lt'] ?? 0) : null;
         $prevRR    = $prevPack ? ($prevPack['rr'] ?? null) : null;
         $prevPctLt = $prevPack ? ($prevPack['pct_lt'] ?? null) : null;
+        $prevPctDpk   = (!is_null($prevOs) && $prevOs > 0 && !is_null($prevDPK)) ? round(($prevDPK / $prevOs) * 100, 2) : null;
 
         $deltaOs    = is_null($prevOs) ? null : ($latestOs - $prevOs);
         $deltaL0    = is_null($prevL0) ? null : ($latestL0 - $prevL0);
         $deltaLT    = is_null($prevLT) ? null : ($latestLT - $prevLT);
         $deltaRR    = (is_null($prevRR) || is_null($latestRR)) ? null : round(((float)$latestRR - (float)$prevRR), 2);
         $deltaPctLt = (is_null($prevPctLt) || is_null($latestPctLt)) ? null : round(((float)$latestPctLt - (float)$prevPctLt), 2);
+        $deltaDPK  = is_null($prevDPK) ? null : ($latestDPK - $prevDPK);
+        $deltaPctDpk  = (is_null($latestPctDpk) || is_null($prevPctDpk)) ? null : round($latestPctDpk - $prevPctDpk, 2);
 
+        
         $cards = [
-            'os' => ['label' => 'OS',       'value' => $latestOs,    'prev' => $prevOs,    'delta' => $deltaOs],
-            'l0' => ['label' => 'L0',       'value' => $latestL0,    'prev' => $prevL0,    'delta' => $deltaL0],
-            'lt' => ['label' => 'LT',       'value' => $latestLT,    'prev' => $prevLT,    'delta' => $deltaLT],
-            'rr' => ['label' => 'RR (%L0)', 'value' => $latestRR,    'prev' => $prevRR,    'delta' => $deltaRR],
-            'pct_lt' => ['label' => '%LT',  'value' => $latestPctLt, 'prev' => $prevPctLt, 'delta' => $deltaPctLt],
+            'os' => [
+                'label' => 'OS',
+                'value' => $latestOs,
+                'base'  => $prevOs,
+                'delta' => $deltaOs,
+            ],
+            'l0' => [
+                'label' => 'L0',
+                'value' => $latestL0,
+                'base'  => $prevL0,
+                'delta' => $deltaL0,
+                'extra' => [
+                'rr' => ['label' => 'RR', 'value' => $latestRR, 'base' => $prevRR, 'delta' => $deltaRR], // points
+                ],
+            ],
+            'lt' => [
+                'label' => 'LT',
+                'value' => $latestLT,
+                'base'  => $prevLT,
+                'delta' => $deltaLT,
+                'extra' => [
+                'pct_lt' => ['label' => '%LT', 'value' => $latestPctLt, 'base' => $prevPctLt, 'delta' => $deltaPctLt], // points
+                ],
+            ],
+            'dpk' => [
+                'label' => 'DPK',
+                'value' => $latestDPK,
+                'base'  => $prevDPK,
+                'delta' => $deltaDPK,
+                'extra' => [
+                'pct_dpk' => ['label' => '%DPK', 'value' => $latestPctDpk, 'base' => $prevPctDpk, 'delta' => $deltaPctDpk], // points
+                ],
+            ],
         ];
+
 
         // =============================
         // Card Month to Date
@@ -203,9 +258,10 @@ class RoOsDailyDashboardController extends Controller
             ->selectRaw("
                 ROUND(SUM(m.outstanding)) as os,
                 ROUND(SUM(CASE WHEN COALESCE(m.ft_pokok,0)=0 AND COALESCE(m.ft_bunga,0)=0 THEN m.outstanding ELSE 0 END)) as l0,
-                ROUND(SUM(CASE WHEN COALESCE(m.ft_pokok,0)=1 OR COALESCE(m.ft_bunga,0)=1 THEN m.outstanding ELSE 0 END)) as lt
+                ROUND(SUM(CASE WHEN COALESCE(m.ft_pokok,0)=1 OR COALESCE(m.ft_bunga,0)=1 THEN m.outstanding ELSE 0 END)) as lt,
+                ROUND(SUM(CASE WHEN COALESCE(m.ft_pokok,0)=2 OR COALESCE(m.ft_bunga,0)=2 OR COALESCE(m.kolek,0)=2 THEN m.outstanding ELSE 0 END)) as dpk
             ")
-            ->whereDate('m.snapshot_month', $prevSnapMonth) // pakai prevSnapMonth yg sudah dihitung
+            ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereRaw("LPAD(TRIM(m.ao_code),6,'0') = ?", [$ao])
             ->first();
 
@@ -220,7 +276,8 @@ class RoOsDailyDashboardController extends Controller
             ->selectRaw("
                 ROUND(SUM(d.os_total)) as os,
                 ROUND(SUM(d.os_l0)) as l0,
-                ROUND(SUM(d.os_lt)) as lt
+                ROUND(SUM(d.os_lt)) as lt,
+                ROUND(SUM(d.os_dpk)) as dpk
             ")
             ->whereDate('d.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(d.ao_code),6,'0') = ?", [$ao])
@@ -233,45 +290,120 @@ class RoOsDailyDashboardController extends Controller
         $lastRr = $lastOs > 0 ? round(($lastL0 / $lastOs) * 100, 2) : null;
         $lastPl = $lastOs > 0 ? round(($lastLt / $lastOs) * 100, 2) : null;
 
+        $eomDpk  = (int)($eomAgg->dpk ?? 0);
+        $lastDpk = (int)($lastAgg->dpk ?? 0);
+
+        $eomPctDpk  = $eomOs > 0 ? round(($eomDpk / $eomOs) * 100, 2) : null;
+        $lastPctDpk = $lastOs > 0 ? round(($lastDpk / $lastOs) * 100, 2) : null;
+
+
         $cardsMtd = [
-        'os' => [
-            'value' => $lastOs,
-            'base'  => $eomOs,
-            'delta' => $lastOs - $eomOs,
-            'label' => 'Growth (MtoD)',
-        ],
-        'l0' => [
-            'value' => $lastL0,
-            'base'  => $eomL0,
-            'delta' => $lastL0 - $eomL0,
-            'label' => 'Growth (MtoD)',
-        ],
-        'lt' => [
-            'value' => $lastLt,
-            'base'  => $eomLt,
-            'delta' => $lastLt - $eomLt,
-            'label' => 'Growth (MtoD)',
-        ],
-        'rr' => [
-            'value' => $lastRr,
-            'base'  => $eomRr,
-            'delta' => (is_null($lastRr) || is_null($eomRr)) ? null : round($lastRr - $eomRr, 2), // points
-            'label' => 'Growth (MtoD)',
-        ],
-        'pct_lt' => [
-            'value' => $lastPl,
-            'base'  => $eomPl,
-            'delta' => (is_null($lastPl) || is_null($eomPl)) ? null : round($lastPl - $eomPl, 2), // points
-            'label' => 'Growth (MtoD)',
-        ],
+            'os' => [
+                'label' => 'OS',
+                'value' => $lastOs,
+                'base'  => $eomOs,
+                'delta' => $lastOs - $eomOs,
+            ],
+            'l0' => [
+                'label' => 'L0',
+                'value' => $lastL0,
+                'base'  => $eomL0,
+                'delta' => $lastL0 - $eomL0,
+                'extra' => [
+                'rr' => [
+                    'label' => 'RR',
+                    'value' => $lastRr,
+                    'base'  => $eomRr,
+                    'delta' => (is_null($lastRr) || is_null($eomRr)) ? null : round($lastRr - $eomRr, 2),
+                ],
+                ],
+            ],
+            'lt' => [
+                'label' => 'LT',
+                'value' => $lastLt,
+                'base'  => $eomLt,
+                'delta' => $lastLt - $eomLt,
+                'extra' => [
+                'pct_lt' => [
+                    'label' => '%LT',
+                    'value' => $lastPl,
+                    'base'  => $eomPl,
+                    'delta' => (is_null($lastPl) || is_null($eomPl)) ? null : round($lastPl - $eomPl, 2),
+                ],
+                ],
+            ],
+            'dpk' => [
+                'label' => 'DPK',
+                'value' => $lastDpk,
+                'base'  => $eomDpk,
+                'delta' => $lastDpk - $eomDpk,
+                'extra' => [
+                'pct_dpk' => [
+                    'label' => '%DPK',
+                    'value' => $lastPctDpk,
+                    'base'  => $eomPctDpk,
+                    'delta' => (is_null($lastPctDpk) || is_null($eomPctDpk)) ? null : round($lastPctDpk - $eomPctDpk, 2),
+                ],
+                ],
+            ],
         ];
 
         $cardsMtdMeta = [
-        'eomMonth' => $eomMonth,
-        'lastDate' => $latestPosDate,
+            'eomMonth' => $eomMonth,
+            'lastDate' => $latestPosDate,
         ];
 
         
+        // =============================
+        // datasetsbymetric
+        // =============================
+
+        // 1) ambil rows keyed by date
+        // $byDate = $rows->keyBy(fn($r) => (string)$r->position_date);
+
+        // 2) buat labels full range (biar tanggal tanpa snapshot tetap muncul sebagai gap)
+        $labels = [];
+        $cursor = $from->copy();
+        while ($cursor->lte($to)) {
+        $labels[] = $cursor->toDateString();
+        $cursor->addDay();
+        }
+
+        // 3) helper ambil nilai dengan gap null
+        $get = function(string $d, string $col) use ($byDate) {
+        if (!isset($byDate[$d])) return null;
+        $v = $byDate[$d]->{$col} ?? null;
+        if ($v === null) return null;
+        return is_numeric($v) ? (float)$v : null;
+        };
+
+        // 4) build arrays per metric
+        $osTotal = array_map(fn($d) => $get($d,'os_total'), $labels);
+        $osL0    = array_map(fn($d) => $get($d,'os_l0'),    $labels);
+        $osLt    = array_map(fn($d) => $get($d,'os_lt'),    $labels);
+
+        // RR dan %LT kalau mau dihitung on-the-fly
+        $rrL0 = [];
+        $pctLt = [];
+        foreach ($labels as $d) {
+        $osT = $get($d,'os_total');
+        $l0  = $get($d,'os_l0');
+        $lt  = $get($d,'os_lt');
+
+        $rrL0[]  = ($osT && $l0 !== null) ? round(($l0 / $osT) * 100, 2) : null;
+        $pctLt[] = ($osT && $lt !== null) ? round(($lt / $osT) * 100, 2) : null;
+        }
+
+        $datasetsByMetric = [
+        'os_total' => ['label'=>'OS Total', 'data'=>$osTotal],
+        'os_l0'    => ['label'=>'OS L0',    'data'=>$osL0],
+        'os_lt'    => ['label'=>'OS LT',    'data'=>$osLt],
+        'rr_l0'    => ['label'=>'RR (% L0)','data'=>$rrL0],
+        'pct_lt'   => ['label'=>'% LT',     'data'=>$pctLt],
+        ];
+
+       
+
         // =============================
         // Bounce compare date for per-account progress (H-1 snapshot available)
         // =============================
@@ -436,20 +568,18 @@ class RoOsDailyDashboardController extends Controller
 
         // =============================
         // Cohort LT EOM bulan lalu -> status hari ini:
-        // - LT EOM -> DPK hari ini (kritikal migrasi FE)
-        // - LT EOM -> L0 hari ini (cure sementara, rawan bounce)
         // =============================
         $ltEomToDpkAgg = DB::table('loan_account_snapshots_monthly as m')
             ->join('loan_accounts as la', 'la.account_no', '=', 'm.account_no')
-            ->selectRaw("COUNT(*) as noa, ROUND(SUM(la.outstanding)) as os")
-            ->whereDate('m.snapshot_month', $prevSnapMonth)
-            ->whereDate('la.position_date', $latestPosDate)
+            ->selectRaw("COUNT(*) as noa, ROUND(COALESCE(SUM(la.outstanding),0)) as os")
+            ->whereDate('m.snapshot_month', $prevSnapMonth)        // EOM bulan lalu
+            ->whereDate('la.position_date', $latestPosDate)        // posisi hari ini
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
             ->where(function ($q) {
-                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
+                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1); // LT saat EOM
             })
             ->where(function ($q) {
-                $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2);
+                $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2); // jadi DPK hari ini
             })
             ->first();
 
@@ -472,7 +602,72 @@ class RoOsDailyDashboardController extends Controller
         $ltEomToL0Noa = (int)($ltEomToL0Agg->noa ?? 0);
         $ltEomToL0Os  = (int)($ltEomToL0Agg->os ?? 0);
 
-        // bounce risk flag (rule sederhana tapi TLRO friendly)
+        $today = now()->toDateString();
+        $uid   = auth()->id();
+
+        $ltEomToDpk = DB::table('loan_account_snapshots_monthly as m')
+            ->join('loan_accounts as la', 'la.account_no', '=', 'm.account_no')
+            ->selectRaw("
+                la.account_no,
+                la.customer_name,
+                ROUND(la.outstanding) as os,
+                la.dpd,
+                la.kolek,
+                la.ft_pokok,
+                la.ft_bunga,
+
+                -- ✅ planned_today: kalau sudah masuk RKH hari ini milik user login
+                EXISTS(
+                    SELECT 1
+                    FROM rkh_headers h
+                    JOIN rkh_details d ON d.rkh_id = h.id
+                    WHERE h.user_id = ?
+                    AND h.tanggal = ?
+                    AND d.account_no = la.account_no
+                ) as planned_today,
+
+                -- ✅ tanggal plan
+                (
+                    SELECT h.tanggal
+                    FROM rkh_headers h
+                    JOIN rkh_details d ON d.rkh_id = h.id
+                    WHERE h.user_id = ?
+                    AND h.tanggal = ?
+                    AND d.account_no = la.account_no
+                    LIMIT 1
+                ) as plan_visit_date,
+
+                -- (opsional) status detail / header kalau perlu lock
+                (
+                    SELECT h.status
+                    FROM rkh_headers h
+                    JOIN rkh_details d ON d.rkh_id = h.id
+                    WHERE h.user_id = ?
+                    AND h.tanggal = ?
+                    AND d.account_no = la.account_no
+                    LIMIT 1
+                ) as plan_status
+            ", [$uid, $today, $uid, $today, $uid, $today])
+
+            ->whereDate('m.snapshot_month', $prevSnapMonth)
+            ->whereDate('la.position_date', $latestPosDate)
+            ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
+
+            // EOM: LT (FT=1)
+            ->where(function ($q) {
+                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
+            })
+
+            // Hari ini: DPK (FT=2) — bisa kamu tambah OR kolek=2 kalau definisimu begitu
+            ->where(function ($q) {
+                $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2)->orWhere('la.kolek', 2);
+            })
+
+            ->orderByDesc('la.outstanding')
+            ->limit(200)
+            ->get();
+
+        // bounce risk flag
         $bounce = [
             'prevPosDate' => $prevPosDate,
             'd1' => $d1,
@@ -488,13 +683,12 @@ class RoOsDailyDashboardController extends Controller
             'jt_next2_noa' => $jtNext2Noa,
             'jt_next2_os'  => $jtNext2Os,
 
-            // EOM -> Today (yang kamu jadikan fokus)
+            // EOM -> Today
             'lt_eom_to_dpk_noa' => $ltEomToDpkNoa,
             'lt_eom_to_dpk_os'  => $ltEomToDpkOs,
             'lt_eom_to_l0_noa'  => $ltEomToL0Noa,
             'lt_eom_to_l0_os'   => $ltEomToL0Os,
 
-            // sinyal: L0 naik & LT turun (indikasi cure), tapi ada JT dekat
             'signal_cure'   => (!is_null($deltaL0) && !is_null($deltaLT) && $deltaL0 > 0 && $deltaLT < 0),
             'signal_jtsoon' => ($jtNext2Noa > 0),
             'signal_bounce_risk' => (
@@ -503,16 +697,19 @@ class RoOsDailyDashboardController extends Controller
         ];
 
         // =============================
-        // TABEL 1) JT bulan ini (maturity_date)
+        // TABEL 1) JT bulan ini (maturity_date) + Plan/Last Visit
         // =============================
         $now        = Carbon::parse($latestPosDate);
         $monthStart = $now->copy()->startOfMonth()->toDateString();
         $monthEnd   = $now->copy()->endOfMonth()->toDateString();
 
+        $today = now()->toDateString();
+        $uid   = auth()->id();
+
         $dueThisMonth = DB::table('loan_accounts as la')
             ->leftJoin('loan_accounts as p', function ($j) use ($prevPosDate) {
                 $j->on('p.account_no', '=', 'la.account_no')
-                  ->whereDate('p.position_date', $prevPosDate);
+                ->whereDate('p.position_date', $prevPosDate);
             })
             ->select([
                 'la.account_no',
@@ -523,11 +720,54 @@ class RoOsDailyDashboardController extends Controller
                 'la.dpd',
                 'la.kolek',
 
-                // prev for progress (H-1 -> H)
                 DB::raw("COALESCE(p.ft_pokok, 0) as prev_ft_pokok"),
                 DB::raw("COALESCE(p.ft_bunga, 0) as prev_ft_bunga"),
                 DB::raw($bucketSql('p') . " as prev_bucket"),
                 DB::raw($bucketSql('la') . " as cur_bucket"),
+
+                // =============================
+                // ✅ LAST VISIT (ambil visit terakhir utk account ini dari rkh_visit_logs)
+                // =============================
+                DB::raw("(
+                    SELECT MAX(v.visited_at)
+                    FROM rkh_details d
+                    JOIN rkh_visit_logs v ON v.rkh_detail_id = d.id
+                    WHERE d.account_no = la.account_no
+                ) as last_visit_at"),
+
+                // =============================
+                // ✅ PLANNED TODAY (cek sudah masuk RKH hari ini milik user login)
+                // =============================
+                DB::raw("EXISTS(
+                    SELECT 1
+                    FROM rkh_headers h
+                    JOIN rkh_details d ON d.rkh_id = h.id
+                    WHERE h.user_id = " . (int)$uid . "
+                    AND h.tanggal = " . DB::getPdo()->quote($today) . "
+                    AND d.account_no = la.account_no
+                ) as planned_today"),
+
+                // ✅ tanggal plan visit (kalau sudah planned)
+                DB::raw("(
+                    SELECT h.tanggal
+                    FROM rkh_headers h
+                    JOIN rkh_details d ON d.rkh_id = h.id
+                    WHERE h.user_id = " . (int)$uid . "
+                    AND h.tanggal = " . DB::getPdo()->quote($today) . "
+                    AND d.account_no = la.account_no
+                    LIMIT 1
+                ) as plan_visit_date"),
+
+                // ✅ status header (buat lock kalau done / approved)
+                DB::raw("(
+                    SELECT h.status
+                    FROM rkh_headers h
+                    JOIN rkh_details d ON d.rkh_id = h.id
+                    WHERE h.user_id = " . (int)$uid . "
+                    AND h.tanggal = " . DB::getPdo()->quote($today) . "
+                    AND d.account_no = la.account_no
+                    LIMIT 1
+                ) as plan_status"),
             ])
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
             ->whereNotNull('la.maturity_date')
@@ -538,13 +778,45 @@ class RoOsDailyDashboardController extends Controller
             ->get();
 
         // =============================
-        // TABEL 2) COHORT: LT EOM bulan lalu (snapshot) -> status posisi terakhir
+        // TABEL 2) COHORT: LT EOM bulan lalu -> status posisi terakhir
         // =============================
+
+        $me = auth()->user();
+        $meId = (int)$me->id;
+
+        $today = now()->toDateString();
+
+        // last visit (DONE) per account
+        $subLastVisit = DB::table('ro_visits')
+            ->selectRaw('account_no, MAX(visited_at) as last_visit_at')
+            ->where('user_id', $meId)
+            ->where('status', 'done')
+            ->groupBy('account_no');
+
+        // plan status (untuk hari ini + tanggal plan terakhir)
+        $subPlan = DB::table('ro_visits')
+            ->selectRaw("
+                account_no,
+                MAX(CASE WHEN visit_date = ? AND status = 'planned' THEN 1 ELSE 0 END) as planned_today,
+                MAX(CASE WHEN visit_date = ? THEN status ELSE NULL END) as plan_status,
+                MAX(CASE WHEN status = 'planned' THEN visit_date ELSE NULL END) as plan_visit_date
+            ", [$today, $today])
+            ->where('user_id', $meId)
+            ->groupBy('account_no');
+
         $ltEom = DB::table('loan_account_snapshots_monthly as m')
             ->join('loan_accounts as la', 'la.account_no', '=', 'm.account_no')
+
+            ->leftJoinSub($subLastVisit, 'lv', function($j){
+                $j->on('lv.account_no', '=', 'la.account_no');
+            })
+            ->leftJoinSub($subPlan, 'pl', function($j){
+                $j->on('pl.account_no', '=', 'la.account_no');
+            })
+
             ->leftJoin('loan_accounts as p', function ($j) use ($prevPosDate) {
                 $j->on('p.account_no', '=', 'la.account_no')
-                  ->whereDate('p.position_date', $prevPosDate);
+                ->whereDate('p.position_date', $prevPosDate);
             })
             ->select([
                 'la.account_no',
@@ -556,13 +828,17 @@ class RoOsDailyDashboardController extends Controller
                 'la.dpd',
                 'la.kolek',
 
-                // snapshot EOM (basis cohort)
                 DB::raw("COALESCE(m.ft_pokok,0) as eom_ft_pokok"),
                 DB::raw("COALESCE(m.ft_bunga,0) as eom_ft_bunga"),
 
-                // prev hari H-1 (opsional)
                 DB::raw("COALESCE(p.ft_pokok,0) as prev_ft_pokok"),
                 DB::raw("COALESCE(p.ft_bunga,0) as prev_ft_bunga"),
+
+                // ✅ tambahan TLRO-style columns
+                DB::raw("lv.last_visit_at as last_visit_at"),
+                DB::raw("pl.planned_today as planned_today"),
+                DB::raw("pl.plan_status as plan_status"),
+                DB::raw("pl.plan_visit_date as plan_visit_date"),
             ])
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
@@ -576,78 +852,187 @@ class RoOsDailyDashboardController extends Controller
             ->get();
 
         // =============================
-        // TABEL 3) JT Angsuran minggu ini
+        // PARTISI: LT EOM -> (DPK only) + (LT only) ; L0 drop
         // =============================
-        $weekStart = Carbon::parse($latestPosDate)->startOfWeek(Carbon::MONDAY)->toDateString();
-        $weekEnd   = Carbon::parse($latestPosDate)->endOfWeek(Carbon::SUNDAY)->toDateString();
+        $isDpk = function ($r) {
+            return ((int)($r->ft_pokok ?? 0) === 2)
+                || ((int)($r->ft_bunga ?? 0) === 2)
+                || ((int)($r->kolek ?? 0) === 2);
+        };
 
-        $ym = Carbon::parse($latestPosDate)->format('Y-m');
-        $dueDateExpr = "STR_TO_DATE(CONCAT('$ym','-',LPAD(la.installment_day,2,'0')),'%Y-%m-%d')";
+        $isL0 = function ($r) {
+            return ((int)($r->ft_pokok ?? 0) === 0)
+                && ((int)($r->ft_bunga ?? 0) === 0);
+        };
 
-        $jtAngsuran = DB::table('loan_accounts as la')
-            ->leftJoin('loan_accounts as p', function ($j) use ($prevPosDate) {
-                $j->on('p.account_no', '=', 'la.account_no')
-                  ->whereDate('p.position_date', $prevPosDate);
-            })
-            ->select([
-                'la.account_no',
-                'la.customer_name',
-                DB::raw("LPAD(TRIM(la.ao_code),6,'0') as ao_code"),
-                DB::raw("ROUND(la.outstanding) as os"),
-                'la.installment_day',
-                'la.ft_pokok',
-                'la.ft_bunga',
-                'la.dpd',
-                'la.kolek',
-                DB::raw("$dueDateExpr as due_date"),
+        $isLtOnly = function ($r) use ($isDpk, $isL0) {
+            // LT hari ini (FT=1) dan bukan DPK, dan bukan L0
+            if ($isDpk($r)) return false;
+            if ($isL0($r))  return false;
 
-                // prev for progress (H-1 -> H)
-                DB::raw("COALESCE(p.ft_pokok, 0) as prev_ft_pokok"),
-                DB::raw("COALESCE(p.ft_bunga, 0) as prev_ft_bunga"),
-                DB::raw($bucketSql('p') . " as prev_bucket"),
-                DB::raw($bucketSql('la') . " as cur_bucket"),
-            ])
-            ->whereDate('la.position_date', $latestPosDate)
-            ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
-            ->whereNotNull('la.installment_day')
-            ->where('la.installment_day', '>=', 1)
-            ->where('la.installment_day', '<=', 31)
-            ->whereBetween(DB::raw($dueDateExpr), [$weekStart, $weekEnd])
-            ->orderBy(DB::raw($dueDateExpr))
-            ->orderByDesc('la.outstanding')
-            ->limit(200)
-            ->get();
+            return ((int)($r->ft_pokok ?? 0) === 1) || ((int)($r->ft_bunga ?? 0) === 1);
+        };
 
-        // =============================
-        // TABEL 4) OS >= 500jt
-        // =============================
-        $osBig = DB::table('loan_accounts as la')
-            ->leftJoin('loan_accounts as p', function ($j) use ($prevPosDate) {
-                $j->on('p.account_no', '=', 'la.account_no')
-                  ->whereDate('p.position_date', $prevPosDate);
-            })
-            ->select([
-                'la.account_no',
-                'la.customer_name',
-                DB::raw("LPAD(TRIM(la.ao_code),6,'0') as ao_code"),
-                DB::raw("ROUND(la.outstanding) as os"),
-                'la.ft_pokok',
-                'la.ft_bunga',
-                'la.dpd',
-                'la.kolek',
+        $ltToDpk = collect($ltEom)->filter($isDpk)->values();
+        $ltStillLt = collect($ltEom)->filter($isLtOnly)->values();
 
-                // prev for progress (H-1 -> H)
-                DB::raw("COALESCE(p.ft_pokok, 0) as prev_ft_pokok"),
-                DB::raw("COALESCE(p.ft_bunga, 0) as prev_ft_bunga"),
-                DB::raw($bucketSql('p') . " as prev_bucket"),
-                DB::raw($bucketSql('la') . " as cur_bucket"),
-            ])
-            ->whereDate('la.position_date', $latestPosDate)
-            ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
-            ->where('la.outstanding', '>=', 500000000)
-            ->orderByDesc('la.outstanding')
-            ->limit(200)
-            ->get();
+        // (opsional) buat meta counter biar gampang dipakai di card / badge
+        $ltToDpkNoa = (int) $ltToDpk->count();
+        $ltToDpkOs  = (int) $ltToDpk->sum(fn($r) => (int)($r->os ?? 0));
+
+// =============================
+// TABEL 3) JT Angsuran minggu ini
+// =============================
+$weekStart = Carbon::parse($latestPosDate)->startOfWeek(Carbon::MONDAY)->toDateString();
+$weekEnd   = Carbon::parse($latestPosDate)->endOfWeek(Carbon::SUNDAY)->toDateString();
+
+$ym = Carbon::parse($latestPosDate)->format('Y-m');
+$dueDateExpr = "STR_TO_DATE(CONCAT('$ym','-',LPAD(la.installment_day,2,'0')),'%Y-%m-%d')";
+
+$today = now()->toDateString();
+$uid   = (int) auth()->id();
+
+$jtAngsuran = DB::table('loan_accounts as la')
+    ->leftJoin('loan_accounts as p', function ($j) use ($prevPosDate) {
+        $j->on('p.account_no', '=', 'la.account_no')
+          ->whereDate('p.position_date', $prevPosDate);
+    })
+    ->select([
+        'la.account_no',
+        'la.customer_name',
+        DB::raw("LPAD(TRIM(la.ao_code),6,'0') as ao_code"),
+        DB::raw("ROUND(la.outstanding) as os"),
+        'la.installment_day',
+        'la.ft_pokok',
+        'la.ft_bunga',
+        'la.dpd',
+        'la.kolek',
+        DB::raw("$dueDateExpr as due_date"),
+
+        DB::raw("COALESCE(p.ft_pokok, 0) as prev_ft_pokok"),
+        DB::raw("COALESCE(p.ft_bunga, 0) as prev_ft_bunga"),
+        DB::raw($bucketSql('p') . " as prev_bucket"),
+        DB::raw($bucketSql('la') . " as cur_bucket"),
+
+        // ===== Last visit (global per account_no) =====
+        DB::raw("(
+            SELECT MAX(v.visited_at)
+            FROM rkh_details d
+            JOIN rkh_visit_logs v ON v.rkh_detail_id = d.id
+            WHERE TRIM(d.account_no) = TRIM(la.account_no)
+        ) as last_visit_at"),
+
+        // ===== Planned today (by user & today header) =====
+        DB::raw("EXISTS(
+            SELECT 1
+            FROM rkh_headers h
+            JOIN rkh_details d ON d.rkh_id = h.id
+            WHERE h.user_id = $uid
+              AND h.tanggal = " . DB::getPdo()->quote($today) . "
+              AND TRIM(d.account_no) = TRIM(la.account_no)
+        ) as planned_today"),
+
+        // ===== plan date (today) =====
+        DB::raw("(
+            SELECT h.tanggal
+            FROM rkh_headers h
+            JOIN rkh_details d ON d.rkh_id = h.id
+            WHERE h.user_id = $uid
+              AND h.tanggal = " . DB::getPdo()->quote($today) . "
+              AND TRIM(d.account_no) = TRIM(la.account_no)
+            LIMIT 1
+        ) as plan_visit_date"),
+
+        // ===== plan status (today) =====
+        DB::raw("(
+            SELECT h.status
+            FROM rkh_headers h
+            JOIN rkh_details d ON d.rkh_id = h.id
+            WHERE h.user_id = $uid
+              AND h.tanggal = " . DB::getPdo()->quote($today) . "
+              AND TRIM(d.account_no) = TRIM(la.account_no)
+            LIMIT 1
+        ) as plan_status"),
+    ])
+    ->whereDate('la.position_date', $latestPosDate)
+    ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
+    ->whereNotNull('la.installment_day')
+    ->where('la.installment_day', '>=', 1)
+    ->where('la.installment_day', '<=', 31)
+    ->whereBetween(DB::raw($dueDateExpr), [$weekStart, $weekEnd])
+    ->orderBy(DB::raw($dueDateExpr))
+    ->orderByDesc('la.outstanding')
+    ->limit(200)
+    ->get();
+
+
+// =============================
+// TABEL 4) OS >= 500jt
+// =============================
+$osBig = DB::table('loan_accounts as la')
+    ->leftJoin('loan_accounts as p', function ($j) use ($prevPosDate) {
+        $j->on('p.account_no', '=', 'la.account_no')
+          ->whereDate('p.position_date', $prevPosDate);
+    })
+    ->select([
+        'la.account_no',
+        'la.customer_name',
+        DB::raw("LPAD(TRIM(la.ao_code),6,'0') as ao_code"),
+        DB::raw("ROUND(la.outstanding) as os"),
+        'la.ft_pokok',
+        'la.ft_bunga',
+        'la.dpd',
+        'la.kolek',
+
+        DB::raw("COALESCE(p.ft_pokok, 0) as prev_ft_pokok"),
+        DB::raw("COALESCE(p.ft_bunga, 0) as prev_ft_bunga"),
+        DB::raw($bucketSql('p') . " as prev_bucket"),
+        DB::raw($bucketSql('la') . " as cur_bucket"),
+
+        // ===== Last visit =====
+        DB::raw("(
+            SELECT MAX(v.visited_at)
+            FROM rkh_details d
+            JOIN rkh_visit_logs v ON v.rkh_detail_id = d.id
+            WHERE TRIM(d.account_no) = TRIM(la.account_no)
+        ) as last_visit_at"),
+
+        // ===== Planned today =====
+        DB::raw("EXISTS(
+            SELECT 1
+            FROM rkh_headers h
+            JOIN rkh_details d ON d.rkh_id = h.id
+            WHERE h.user_id = $uid
+              AND h.tanggal = " . DB::getPdo()->quote($today) . "
+              AND TRIM(d.account_no) = TRIM(la.account_no)
+        ) as planned_today"),
+
+        DB::raw("(
+            SELECT h.tanggal
+            FROM rkh_headers h
+            JOIN rkh_details d ON d.rkh_id = h.id
+            WHERE h.user_id = $uid
+              AND h.tanggal = " . DB::getPdo()->quote($today) . "
+              AND TRIM(d.account_no) = TRIM(la.account_no)
+            LIMIT 1
+        ) as plan_visit_date"),
+
+        DB::raw("(
+            SELECT h.status
+            FROM rkh_headers h
+            JOIN rkh_details d ON d.rkh_id = h.id
+            WHERE h.user_id = $uid
+              AND h.tanggal = " . DB::getPdo()->quote($today) . "
+              AND TRIM(d.account_no) = TRIM(la.account_no)
+            LIMIT 1
+        ) as plan_status"),
+    ])
+    ->whereDate('la.position_date', $latestPosDate)
+    ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
+    ->where('la.outstanding', '>=', 500000000)
+    ->orderByDesc('la.outstanding')
+    ->limit(200)
+    ->get();
 
         // =============================
         // Inject visit meta ke tabel-tabel
@@ -671,13 +1056,55 @@ class RoOsDailyDashboardController extends Controller
             'bounce'       => $bounce,
         ]);
 
+        $datasetsByMetric = [
+            'os_total' => [
+                [
+                    'label' => 'OS Total',
+                    'data'  => $series['os_total'],
+                ],
+            ],
+            'os_l0' => [
+                [
+                    'label' => 'OS L0',
+                    'data'  => $series['os_l0'],
+                ],
+            ],
+            'os_lt' => [
+                [
+                    'label' => 'OS LT',
+                    'data'  => $series['os_lt'],
+                ],
+            ],
+            'rr' => [
+                [
+                    'label' => 'RR (% L0)',
+                    'data'  => $series['rr'],
+                ],
+            ],
+            'pct_lt' => [
+                [
+                    'label' => '% LT',
+                    'data'  => $series['pct_lt'],
+                ],
+            ],
+        ];
+
+
+        logger()->info('chart_debug', [
+            'labels_count' => count($labels ?? []),
+            'sample_labels'=> array_slice($labels ?? [], 0, 3),
+            'dataset_keys' => array_keys($datasetByMetric ?? []),
+            'sample_os_total' => array_slice($datasetByMetric['os_total']['data'] ?? [], 0, 5),
+        ]);
+
         return view('kpi.ro.os_daily', [
             'from' => $from->toDateString(),
             'to'   => $to->toDateString(),
 
             'labels' => $labels,
-            'series' => $series,
-
+            // 'series' => $series,
+            'datasetsByMetric' => $datasetsByMetric,
+        
             'latestDate' => $latestDate,
             'prevDate'   => $prevDate,
 
@@ -712,13 +1139,18 @@ class RoOsDailyDashboardController extends Controller
             'bounce'  => $bounce,
             'insight' => $insight,
 
-            'cardsMtd' => $cardsMtd,                 // array 5 parameter
+            'cardsMtd' => $cardsMtd,
             'cardsMtdMeta' => [
-            'eomMonth' => $eomMonth,              // 'YYYY-MM-01'
-            'lastDate' => $latestPosDate,         // 'YYYY-MM-DD'
+                'eomMonth' => $eomMonth,
+                'lastDate' => $latestPosDate,
             ],
             'mode' => $mode,
 
+            'ltToDpk'=>$ltToDpk, 
+            'ltStillLt'=>$ltStillLt, 
+            'ltToDpkNoa'=>$ltToDpkNoa, 
+            'ltToDpkOs'=>$ltToDpkOs,
+            'ltEomToDpk'=>$ltEomToDpk,
         ]);
     }
 
@@ -775,42 +1207,36 @@ class RoOsDailyDashboardController extends Controller
         // Bounce pack + fokus EOM->DPK
         $bounce = (array)($x['bounce'] ?? []);
         if (!empty($bounce)) {
-            // EOM -> DPK (paling kritikal)
             $eomToDpkNoa = (int)($bounce['lt_eom_to_dpk_noa'] ?? 0);
             $eomToDpkOs  = (int)($bounce['lt_eom_to_dpk_os'] ?? 0);
             if ($eomToDpkNoa > 0) {
                 $risk[] = "Kritis: LT EOM → DPK (FT=2): {$eomToDpkNoa} NOA, OS ± Rp " . number_format($eomToDpkOs, 0, ',', '.') . " (potensi migrasi ke FE & OS RO turun).";
             }
 
-            // EOM -> L0 (cure sementara)
             $eomToL0Noa = (int)($bounce['lt_eom_to_l0_noa'] ?? 0);
             $eomToL0Os  = (int)($bounce['lt_eom_to_l0_os'] ?? 0);
             if ($eomToL0Noa > 0) {
                 $why[] = "Cure sementara: LT EOM → L0 hari ini: {$eomToL0Noa} NOA, OS ± Rp " . number_format($eomToL0Os, 0, ',', '.') . " (rawan bounce-back bila JT dekat tidak dibayar).";
             }
 
-            // H-1 -> H: LT->DPK (harian)
             $ltToDpkNoa = (int)($bounce['lt_to_dpk_noa'] ?? 0);
             $ltToDpkOs  = (int)($bounce['lt_to_dpk_os'] ?? 0);
             if ($ltToDpkNoa > 0) {
                 $risk[] = "Eskalasi harian: LT → DPK (FT=2): {$ltToDpkNoa} NOA, OS ± Rp " . number_format($ltToDpkOs, 0, ',', '.') . " → siapkan rencana migrasi/koordinasi FE & update LKH.";
             }
 
-            // H-1 -> H: LT->L0 (harian)
             $ltToL0Noa = (int)($bounce['lt_to_l0_noa'] ?? 0);
             $ltToL0Os  = (int)($bounce['lt_to_l0_os'] ?? 0);
             if ($ltToL0Noa > 0) {
                 $why[] = "Ada perbaikan LT → L0 hari ini (H-1→H): {$ltToL0Noa} NOA, OS ± Rp " . number_format($ltToL0Os, 0, ',', '.') . ".";
             }
 
-            // JT dekat
             $jtNoa = (int)($bounce['jt_next2_noa'] ?? 0);
             $jtOs  = (int)($bounce['jt_next2_os'] ?? 0);
             if ($jtNoa > 0) {
                 $risk[] = "Ada JT angsuran 1–2 hari ke depan: {$jtNoa} NOA, OS ± Rp " . number_format($jtOs, 0, ',', '.') . " → potensi LT naik lagi jika tidak bayar.";
             }
 
-            // sinyal bounce-back
             $signalBounce = (bool)($bounce['signal_bounce_risk'] ?? false);
             if ($signalBounce) {
                 $risk[] = "Sinyal *bounce-back*: L0 naik & LT turun (indikasi bayar/cure), tetapi ada JT dekat → besok RR bisa turun lagi jika gagal bayar.";
@@ -819,4 +1245,101 @@ class RoOsDailyDashboardController extends Controller
 
         return compact('good', 'bad', 'why', 'risk');
     }
+
+    public function planToday(Request $request)
+    {
+        $user = $request->user();
+        abort_if(!$user, 401);
+
+        $data = $request->validate([
+            'account_no' => ['required','string','max:30'],
+            'nama_nasabah' => ['nullable','string','max:255'],
+            'kolektibilitas' => ['nullable','in:L0,LT'],
+            'jenis_kegiatan' => ['nullable','string','max:255'],
+            'tujuan_kegiatan' => ['nullable','string','max:255'],
+        ]);
+
+        $today = now()->toDateString();
+
+        // 1) header
+        $rkhId = DB::table('rkh_headers')->where([
+            ['user_id', '=', $user->id],
+            ['tanggal', '=', $today],
+        ])->value('id');
+
+        if (!$rkhId) {
+            $rkhId = DB::table('rkh_headers')->insertGetId([
+                'user_id' => $user->id,
+                'tanggal' => $today,
+                'total_jam' => 0,
+                'status' => 'draft',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        // 2) detail (upsert by rkh_id + account_no)
+        $exists = DB::table('rkh_details')->where([
+            ['rkh_id', '=', $rkhId],
+            ['account_no', '=', $data['account_no']],
+        ])->exists();
+
+        if (!$exists) {
+            DB::table('rkh_details')->insert([
+                'rkh_id' => $rkhId,
+                'account_no' => $data['account_no'],
+                'nama_nasabah' => $data['nama'] ?? null,
+                'kolektibilitas' => $data['kolek'] ?? 'LT',
+                'jenis_kegiatan' => $data['jenis_kegiatan'] ?? 'Visit',
+                'tujuan_kegiatan' => $data['tujuan_kegiatan'] ?? 'Penagihan / Monitoring',
+                'jam_mulai' => now()->format('H:i:s'),
+                'jam_selesai' => now()->format('H:i:s'),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        return response()->json([
+            'ok' => true,
+            'planned_today' => true,
+            'plan_visit_date' => $today,
+            'locked' => false,
+        ]);
+    }
+
+
+    /**
+     * Masukkan ke RKH Header+Detail hari ini (auto create kalau belum ada)
+     */
+    private function pushPlannedToRkh(int $userId, string $acc, string $date): void
+    {
+        // contoh struktur (sesuaikan dengan tabelmu)
+        $headerId = DB::table('rkh_headers')->where('user_id',$userId)->whereDate('tanggal',$date)->value('id');
+        if (!$headerId) {
+            $headerId = DB::table('rkh_headers')->insertGetId([
+                'user_id' => $userId,
+                'tanggal' => $date,
+                'status'  => 'draft',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        // detail: jangan dobel
+        $exists = DB::table('rkh_details')
+            ->where('header_id', $headerId)
+            ->where('account_no', $acc)
+            ->exists();
+
+        if (!$exists) {
+            DB::table('rkh_details')->insert([
+                'header_id'  => $headerId,
+                'account_no' => $acc,
+                'jenis'      => 'visit',
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+    }
+
 }

@@ -26,7 +26,7 @@ class LegalActionProposalPolicy
     public function viewAny(User $user): bool
     {
         return method_exists($user, 'hasAnyRole')
-            && $user->hasAnyRole(['BE','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM','KSR','KSL','KBL','KTI','DIR','DIREKSI','KOM']);
+            && $user->hasAnyRole(['BE','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM','KSR','KSLU','KSLR','KSFE','KSBE','KBL','KTI','DIR','DIREKSI','KOM']);
     }
 
     public function view(User $user, LegalActionProposal $p): bool
@@ -52,7 +52,7 @@ class LegalActionProposalPolicy
 
     public function approveKasi(User $user, LegalActionProposal $p): bool
     {
-        return $user->hasAnyRole(['KSR','KSL'])
+        return $user->hasAnyRole(['KSLU','KSLR','KSFE','KSBE'])
             && $p->status === LegalActionProposal::STATUS_PENDING_KASI;
     }
 
@@ -78,7 +78,7 @@ class LegalActionProposalPolicy
     public function rejectKasi(User $user, LegalActionProposal $p): bool
     {
         return method_exists($user, 'hasAnyRole')
-            && $user->hasAnyRole(['KSR','KSL'])
+            && $user->hasAnyRole(['KSLU','KSLR','KSFE','KSBE'])
             && ($p->status === LegalActionProposal::STATUS_APPROVED_TL);
     }
 }

@@ -110,7 +110,7 @@
     // Jika di users.level kamu: TLL=TL, KSL=KASI, KBL=KABAG
     const roleToAllowedUserLevels = {
         'TL':   ['TLL','TLF','TLR','TLRO','TLSO','TLFE','TLBE','TLUM'],
-        'KASI': ['KSL','KSR', 'KSF', 'KSO', 'KSA', 'KSD'],
+        'KASI': ['KSLU','KSLR','KSFE','KSBE','KSR', 'KSF', 'KSO', 'KSA', 'KSD'],
         'KABAG':['KBL','KBF', 'KBO', 'KTI'],
         'PE':   ['PE'],
         'DIR':  ['DIR','DIRUT','DIREKSI'],

@@ -9,8 +9,8 @@
     // ✅ Verifikator dokumen: TL atau KASI (karena tidak semua AO punya TL)
     // Sesuaikan role kalau di sistemmu nama role-nya beda.
     $isVerifier = $user && method_exists($user, 'hasAnyRole')
-        ? $user->hasAnyRole(['TL','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM','TLF','KSL','KSR'])
-        : in_array(strtolower((string)($user?->level)), ['tl','ksl','ksr'], true);
+        ? $user->hasAnyRole(['TL','TLL','TLR','TLRO','TLSO','TLFE','TLBE','TLUM','TLF','KSLU','KSLR','KSFE','KSBE','KSR'])
+        : in_array(strtolower((string)($user?->level)), ['tl','KSLU','KSLR','KSFE','KSBE','ksr'], true);
 
     // Kalau kamu SUDAH bereskan Policy verifyDocument buat TL/Kasi,
     // kamu bisa balik pakai @can saja dan hapus $isVerifier.

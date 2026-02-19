@@ -12,7 +12,10 @@ return [
     */
 
     'kasi_levels' => [
-        'ksl', // Kasi Legal
+        'kslu',
+        'kslr',
+        'ksbe',
+        'ksfe', // Kasi Legal
         'ksf', // Kasi Funding
         'kso', // Kasi Operasional
         'ksr', // Kasi Remedial

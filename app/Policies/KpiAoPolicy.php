@@ -24,7 +24,7 @@ class KpiAoPolicy
 
         // 2) management/admin roles (sesuaikan daftar sesuai enum/levelmu)
         $viewerRole = $this->roleOf($viewer);
-        if (in_array($viewerRole, ['ORGADMIN','ADMIN','DIR','DIREKSI','KOM','PE','KABAG','KBL','KSL','KTI'], true)) {
+        if (in_array($viewerRole, ['ORGADMIN','ADMIN','DIR','DIREKSI','KOM','PE','KABAG','KBL','KSLR','KSLU','KSBE','KSFE','KTI'], true)) {
             return true;
         }
 

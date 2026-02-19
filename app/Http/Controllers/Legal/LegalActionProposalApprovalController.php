@@ -80,7 +80,7 @@ class LegalActionProposalApprovalController extends Controller
     {
         $user = auth()->user();
         abort_unless($user, 403);
-        abort_unless($user->hasAnyRole(['KSR','KSL']), 403);
+        abort_unless($user->hasAnyRole(['KSLU','KSLR','KSFE','KSBE']), 403);
 
         $data = $request->validate([
             'approval_notes' => ['required', 'string', 'max:2000'],

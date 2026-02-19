@@ -64,7 +64,10 @@ class MarketingKpiSheetController
 
         $roleAliases = match ($leaderRole) {
             'TLRO' => ['tlro', 'tl', 'teamleader', 'leader'],
-            'KSL'  => ['ksl', 'kasi', 'kasi lending'],
+            'KSLU'  => ['kslu', 'kasi', 'kasi lending'],
+            'KSLR'  => ['kslr', 'kasi', 'kasi lending'],
+            'KSFE'  => ['ksbe', 'kasi', 'kasi lending'],
+            'KSBE'  => ['ksfe', 'kasi', 'kasi lending'],
             'KBL'  => ['kbl', 'kabag', 'kabag lending'],
             default => [strtolower($leaderRole)],
         };
@@ -200,7 +203,7 @@ class MarketingKpiSheetController
             $scopeAoCodes = $this->scopeAoCodesForLeader($leader, $periodDate);
 
             // kalau leader TLRO/KSL/KBL, default hanya scope (kalau ada)
-            $isLeader = in_array($leaderRole, ['TLRO','KSL','KBL','PE','DIR','KOM','DIREKSI'], true);
+            $isLeader = in_array($leaderRole, ['TLRO','KSLU','KSLR','KSBE','KSFE','KBL','PE','DIR','KOM','DIREKSI'], true);
 
             $rowsQ = DB::table('users as u')
                 ->whereRaw("UPPER(TRIM(u.level)) = 'RO'")

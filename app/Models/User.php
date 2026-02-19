@@ -238,8 +238,10 @@ class User extends Authenticatable
             'TLFE',
             'TLUM',
             'TLR',      // team leader remedial/loan
-            'KSL',     // kasi legal (atau role kamu)
-            'KSR',
+            'KSLU',     // kasi legal (atau role kamu)
+            'KSLR',
+            'KSFE',
+            'KSBE',
             'KBL',     // kabag lending (opsional)
             'DIREKSI',
             'DIR',
