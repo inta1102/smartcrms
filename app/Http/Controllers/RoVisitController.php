@@ -121,41 +121,102 @@ class RoVisitController extends Controller
         $user = $request->user();
         abort_if(!$user, 401);
 
+        $backUrl = (string) $request->query('back', url()->previous());
+
+        // =========================
+        // MODE A: RKH (punya rkh_detail_id)
+        // =========================
+        $rkhDetailId = (int) $request->query('rkh_detail_id', 0);
+        if ($rkhDetailId > 0) {
+
+            $detail = \App\Models\RkhDetail::with('header')->findOrFail($rkhDetailId);
+
+            // pastikan ini RKH milik user tsb
+            abort_if((int)($detail->header?->user_id ?? 0) !== (int)$user->id, 403, 'Bukan RKH kamu.');
+
+            $accountNo = trim((string)($detail->account_no ?? ''));
+
+            // Kalau belum ada account_no => arahkan ke form RKH visit log
+            if ($accountNo === '') {
+                return redirect()
+                    ->route('rkh_visits.create', $detail->id)
+                    ->with('status', 'Prospect belum punya account_no. Isi log kunjungan dulu. Setelah jadi nasabah, lakukan Link account.');
+            }
+
+            // ensure ro_visits planned hari ini ada
+            $today = now()->toDateString();
+
+            $visit = \App\Models\RoVisit::query()
+                ->where('user_id', $user->id)
+                ->where('account_no', $accountNo)
+                ->where('visit_date', $today)
+                ->first();
+
+            if (!$visit) {
+                $visit = \App\Models\RoVisit::create([
+                    'user_id'    => $user->id,
+                    'account_no' => $accountNo,
+                    'ao_code'    => $user->ao_code ?? null,
+                    'visit_date' => $today,
+                    'status'     => 'planned',
+                    'source'     => 'rkh',
+                ]);
+            }
+
+            // ✅ ambil debitur info dari loan_accounts
+            $deb = $this->getLoanAccountLatest((string) $visit->account_no);
+
+            // ✅ ambil foto jika ada table ro_visit_photos
+            $photos = collect();
+            if (Schema::hasTable('ro_visit_photos')) {
+                $photos = DB::table('ro_visit_photos')
+                    ->where('ro_visit_id', (int) $visit->id)
+                    ->orderBy('id')
+                    ->get();
+            }
+
+            return view('ro_visits.form', [
+                'visit'         => $visit,
+                'deb'           => $deb,
+                'photos'        => $photos,
+                'back'          => $backUrl,
+                'rkh_detail_id' => $detail->id,
+                'from_rkh'      => true,
+            ]);
+        }
+
+        // =========================
+        // MODE B: PLAN TODAY (legacy)
+        // =========================
         $accountNo = trim((string)$request->query('account_no', ''));
         abort_if($accountNo === '', 422, 'account_no required');
 
         $today = now()->toDateString();
 
-        $visit = DB::table('ro_visits')
-            ->where('user_id', (int)$user->id)
+        $visit = \App\Models\RoVisit::query()
+            ->where('user_id', $user->id)
             ->where('account_no', $accountNo)
             ->where('visit_date', $today)
             ->first();
 
         abort_if(!$visit, 404, 'Visit belum di-plan.');
 
-        // ✅ Back URL (prioritas: query back, fallback: previous, terakhir: /kpi/ro/os-daily)
-        $back = (string) $request->query('back', '');
-        if ($back === '') $back = url()->previous();
-        if ($back === '') $back = route('kpi.ro.os-daily'); // kalau route beda, ganti sekali di sini
+        $deb = $this->getLoanAccountLatest((string) $visit->account_no);
 
-        // ✅ ambil info debitur dari loan_accounts posisi terakhir
-        $deb = $this->getLoanAccountLatest($accountNo);
-
-        // ✅ photos (kalau tabel ro_visit_photos ada)
         $photos = collect();
         if (Schema::hasTable('ro_visit_photos')) {
             $photos = DB::table('ro_visit_photos')
-                ->where('ro_visit_id', (int)$visit->id)
-                ->orderBy('id', 'asc')
+                ->where('ro_visit_id', (int) $visit->id)
+                ->orderBy('id')
                 ->get();
         }
 
         return view('ro_visits.form', [
-            'visit'  => $visit,
-            'deb'    => $deb,
-            'photos' => $photos,
-            'back'   => $back,
+            'visit'    => $visit,
+            'deb'      => $deb,
+            'photos'   => $photos,
+            'back'     => $backUrl,
+            'from_rkh' => false,
         ]);
     }
 
@@ -262,216 +323,265 @@ class RoVisitController extends Controller
         $accountNo = trim($accountNo);
         if ($accountNo === '') return null;
 
-        // 1) pos terakhir exact match
-        $pos = DB::table('loan_accounts')
-            ->where('account_no', $accountNo)
-            ->max('position_date');
+        // tentukan nama kolom yang ada
+        $osCol = null;
+        foreach (['outstanding', 'os', 'baki_debet', 'saldo_pokok'] as $c) {
+            if (Schema::hasColumn('loan_accounts', $c)) { $osCol = $c; break; }
+        }
+
+        $dpdCol = null;
+        foreach (['dpd', 'hari_tunggakan', 'days_past_due'] as $c) {
+            if (Schema::hasColumn('loan_accounts', $c)) { $dpdCol = $c; break; }
+        }
+
+        $kolekCol = null;
+        foreach (['kolek', 'kolektibilitas'] as $c) {
+            if (Schema::hasColumn('loan_accounts', $c)) { $kolekCol = $c; break; }
+        }
+
+        // minimal field wajib
+        $select = ['account_no'];
+
+        if (Schema::hasColumn('loan_accounts', 'customer_name')) {
+            $select[] = 'customer_name';
+        } elseif (Schema::hasColumn('loan_accounts', 'nama_nasabah')) {
+            $select[] = DB::raw('nama_nasabah as customer_name');
+        } else {
+            $select[] = DB::raw("NULL as customer_name");
+        }
+
+        $select[] = $osCol
+            ? DB::raw("ROUND($osCol) as outstanding")
+            : DB::raw("0 as outstanding");
+
+        $select[] = $dpdCol
+            ? DB::raw("$dpdCol as dpd")
+            : DB::raw("0 as dpd");
+
+        $select[] = $kolekCol
+            ? DB::raw("$kolekCol as kolek")
+            : DB::raw("NULL as kolek");
+
+        if (Schema::hasColumn('loan_accounts', 'position_date')) {
+            $select[] = 'position_date';
+        } else {
+            $select[] = DB::raw("NULL as position_date");
+        }
+
+        // 1) posisi terakhir exact match
+        $pos = Schema::hasColumn('loan_accounts', 'position_date')
+            ? DB::table('loan_accounts')->where('account_no', $accountNo)->max('position_date')
+            : null;
 
         // 2) fallback: compare tanpa leading zero
-        if (!$pos) {
+        if (!$pos && Schema::hasColumn('loan_accounts', 'position_date')) {
             $pos = DB::table('loan_accounts')
                 ->whereRaw("TRIM(LEADING '0' FROM account_no) = TRIM(LEADING '0' FROM ?)", [$accountNo])
                 ->max('position_date');
         }
 
+        // kalau tidak ada position_date, ambil latest row by id saja
+        if (!Schema::hasColumn('loan_accounts', 'position_date')) {
+            return DB::table('loan_accounts')
+                ->select($select)
+                ->where(function ($q) use ($accountNo) {
+                    $q->where('account_no', $accountNo)
+                    ->orWhereRaw("TRIM(LEADING '0' FROM account_no) = TRIM(LEADING '0' FROM ?)", [$accountNo]);
+                })
+                ->orderByDesc('id')
+                ->first();
+        }
+
         if (!$pos) return null;
 
-        // ambil row posisi terakhir
         return DB::table('loan_accounts')
-            ->select([
-                'account_no',
-                'customer_name',
-                DB::raw('ROUND(outstanding) as outstanding'),
-                'dpd',
-                'kolek',
-                'position_date',
-            ])
+            ->select($select)
             ->whereDate('position_date', $pos)
             ->where(function ($q) use ($accountNo) {
                 $q->where('account_no', $accountNo)
-                  ->orWhereRaw("TRIM(LEADING '0' FROM account_no) = TRIM(LEADING '0' FROM ?)", [$accountNo]);
+                ->orWhereRaw("TRIM(LEADING '0' FROM account_no) = TRIM(LEADING '0' FROM ?)", [$accountNo]);
             })
             ->first();
     }
 
-public function planToday(Request $request)
-{
-    $user = $request->user();
-    abort_if(!$user, 401);
+    public function planToday(Request $request)
+    {
+        $user = $request->user();
+        abort_if(!$user, 401);
 
-    $data = $request->validate([
-        'account_no'       => ['required','string','max:30'],
-        'nama_nasabah'     => ['nullable','string','max:255'],
-        'kolektibilitas'   => ['nullable','in:L0,LT,DPK'],
-        'jenis_kegiatan'   => ['nullable','string','max:255'],
-        'tujuan_kegiatan'  => ['nullable','string','max:255'],
-    ]);
+        $data = $request->validate([
+            'account_no'       => ['required','string','max:30'],
+            'nama_nasabah'     => ['nullable','string','max:255'],
+            'kolektibilitas'   => ['nullable','in:L0,LT,DPK'],
+            'jenis_kegiatan'   => ['nullable','string','max:255'],
+            'tujuan_kegiatan'  => ['nullable','string','max:255'],
+        ]);
 
-    $today     = now()->toDateString();
-    $accountNo = trim((string)$data['account_no']);
-    abort_if($accountNo === '', 422, 'account_no empty');
+        $today     = now()->toDateString();
+        $accountNo = trim((string)$data['account_no']);
+        abort_if($accountNo === '', 422, 'account_no empty');
 
-    // ===== konfigurasi slot =====
-    $dayStart  = '09:00:00';
-    $durMin    = 120;  // 90 atau 120 (1.5 jam = 90)
-    $bufferMin = 0;    // misal 15 kalau ingin jeda antar visit
-    $maxPerDay = 5;
+        // ===== konfigurasi slot =====
+        $dayStart  = '09:00:00';
+        $durMin    = 120;  // 90 atau 120 (1.5 jam = 90)
+        $bufferMin = 0;    // misal 15 kalau ingin jeda antar visit
+        $maxPerDay = 5;
 
-    return DB::transaction(function () use (
-        $user, $today, $data, $accountNo,
-        $dayStart, $durMin, $bufferMin, $maxPerDay
-    ) {
+        return DB::transaction(function () use (
+            $user, $today, $data, $accountNo,
+            $dayStart, $durMin, $bufferMin, $maxPerDay
+        ) {
 
-        // ==========================
-        // 1) HEADER: 1 user 1 tanggal
-        // ==========================
-        DB::table('rkh_headers')->updateOrInsert(
-            ['user_id' => (int)$user->id, 'tanggal' => $today],
-            [
-                'status'     => 'draft',
-                'total_jam'  => DB::raw('COALESCE(total_jam,0)'),
-                'updated_at' => now(),
-                'created_at' => now()
-            ]
-        );
+            // ==========================
+            // 1) HEADER: 1 user 1 tanggal
+            // ==========================
+            DB::table('rkh_headers')->updateOrInsert(
+                ['user_id' => (int)$user->id, 'tanggal' => $today],
+                [
+                    'status'     => 'draft',
+                    'total_jam'  => DB::raw('COALESCE(total_jam,0)'),
+                    'updated_at' => now(),
+                    'created_at' => now()
+                ]
+            );
 
-        // lock header biar aman dari race condition (klik cepat / multi tab)
-        $rkh = DB::table('rkh_headers')
-            ->where('user_id', (int)$user->id)
-            ->whereDate('tanggal', $today)
-            ->lockForUpdate()
-            ->first();
+            // lock header biar aman dari race condition (klik cepat / multi tab)
+            $rkh = DB::table('rkh_headers')
+                ->where('user_id', (int)$user->id)
+                ->whereDate('tanggal', $today)
+                ->lockForUpdate()
+                ->first();
 
-        $rkhId = (int) ($rkh->id ?? 0);
-        abort_if($rkhId <= 0, 500, 'RKH header not found');
+            $rkhId = (int) ($rkh->id ?? 0);
+            abort_if($rkhId <= 0, 500, 'RKH header not found');
 
-        // ==========================
-        // 2) Jika account sudah diplan -> idempotent (jangan reset jam)
-        // ==========================
-        $existing = DB::table('rkh_details')
-            ->where('rkh_id', $rkhId)
-            ->where('account_no', $accountNo)
-            ->first();
+            // ==========================
+            // 2) Jika account sudah diplan -> idempotent (jangan reset jam)
+            // ==========================
+            $existing = DB::table('rkh_details')
+                ->where('rkh_id', $rkhId)
+                ->where('account_no', $accountNo)
+                ->first();
 
-        if ($existing) {
-            return response()->json([
-                'ok'              => true,
-                'message'         => 'Sudah diplan (idempotent).',
-                'plan_visit_date' => $today,
-                'rkh_id'          => $rkhId,
-                'account_no'      => $accountNo,
-                'jam_mulai'       => $existing->jam_mulai,
-                'jam_selesai'     => $existing->jam_selesai,
-            ]);
-        }
+            if ($existing) {
+                return response()->json([
+                    'ok'              => true,
+                    'message'         => 'Sudah diplan (idempotent).',
+                    'plan_visit_date' => $today,
+                    'rkh_id'          => $rkhId,
+                    'account_no'      => $accountNo,
+                    'jam_mulai'       => $existing->jam_mulai,
+                    'jam_selesai'     => $existing->jam_selesai,
+                ]);
+            }
 
-        // ==========================
-        // 3) Max 5 visit per hari
-        // ==========================
-        $countToday = DB::table('rkh_details')
-            ->where('rkh_id', $rkhId)
-            ->count();
+            // ==========================
+            // 3) Max 5 visit per hari
+            // ==========================
+            $countToday = DB::table('rkh_details')
+                ->where('rkh_id', $rkhId)
+                ->count();
 
-        abort_if($countToday >= $maxPerDay, 422, "Maksimal {$maxPerDay} visit per hari.");
+            abort_if($countToday >= $maxPerDay, 422, "Maksimal {$maxPerDay} visit per hari.");
 
-        // ==========================
-        // 4) AUTO FILL dari loan_accounts (posisi terakhir)
-        // ==========================
-        $nama  = $data['nama_nasabah'] ?? null;
-        $kolek = $data['kolektibilitas'] ?? null;
+            // ==========================
+            // 4) AUTO FILL dari loan_accounts (posisi terakhir)
+            // ==========================
+            $nama  = $data['nama_nasabah'] ?? null;
+            $kolek = $data['kolektibilitas'] ?? null;
 
-        if ($nama === null || $kolek === null) {
-            $pos = DB::table('loan_accounts')
-                ->where(function($q) use ($accountNo) {
-                    $q->where('account_no', $accountNo)
-                      ->orWhereRaw("TRIM(LEADING '0' FROM account_no) = TRIM(LEADING '0' FROM ?)", [$accountNo]);
-                })
-                ->max('position_date');
-
-            if ($pos) {
-                $la = DB::table('loan_accounts')
-                    ->select('customer_name','ft_pokok','ft_bunga','kolek')
-                    ->whereDate('position_date', $pos)
+            if ($nama === null || $kolek === null) {
+                $pos = DB::table('loan_accounts')
                     ->where(function($q) use ($accountNo) {
                         $q->where('account_no', $accountNo)
-                          ->orWhereRaw("TRIM(LEADING '0' FROM account_no) = TRIM(LEADING '0' FROM ?)", [$accountNo]);
+                        ->orWhereRaw("TRIM(LEADING '0' FROM account_no) = TRIM(LEADING '0' FROM ?)", [$accountNo]);
                     })
-                    ->first();
+                    ->max('position_date');
 
-                if ($la) {
-                    if ($nama === null) $nama = $la->customer_name ?? null;
+                if ($pos) {
+                    $la = DB::table('loan_accounts')
+                        ->select('customer_name','ft_pokok','ft_bunga','kolek')
+                        ->whereDate('position_date', $pos)
+                        ->where(function($q) use ($accountNo) {
+                            $q->where('account_no', $accountNo)
+                            ->orWhereRaw("TRIM(LEADING '0' FROM account_no) = TRIM(LEADING '0' FROM ?)", [$accountNo]);
+                        })
+                        ->first();
 
-                    if ($kolek === null) {
-                        $fp = (int)($la->ft_pokok ?? 0);
-                        $fb = (int)($la->ft_bunga ?? 0);
-                        $k  = (int)($la->kolek ?? 0);
+                    if ($la) {
+                        if ($nama === null) $nama = $la->customer_name ?? null;
 
-                        if ($fp === 2 || $fb === 2 || $k === 2) $kolek = 'DPK';
-                        elseif ($fp === 1 || $fb === 1)         $kolek = 'LT';
-                        else                                     $kolek = 'L0';
+                        if ($kolek === null) {
+                            $fp = (int)($la->ft_pokok ?? 0);
+                            $fb = (int)($la->ft_bunga ?? 0);
+                            $k  = (int)($la->kolek ?? 0);
+
+                            if ($fp === 2 || $fb === 2 || $k === 2) $kolek = 'DPK';
+                            elseif ($fp === 1 || $fb === 1)         $kolek = 'LT';
+                            else                                     $kolek = 'L0';
+                        }
                     }
                 }
             }
-        }
 
-        // ==========================
-        // 5) AUTO SLOT JAM (append ke slot terakhir)
-        // ==========================
-        $lastEnd = DB::table('rkh_details')
-            ->where('rkh_id', $rkhId)
-            ->whereNotNull('jam_selesai')
-            ->orderByDesc('jam_selesai')
-            ->value('jam_selesai');
+            // ==========================
+            // 5) AUTO SLOT JAM (append ke slot terakhir)
+            // ==========================
+            $lastEnd = DB::table('rkh_details')
+                ->where('rkh_id', $rkhId)
+                ->whereNotNull('jam_selesai')
+                ->orderByDesc('jam_selesai')
+                ->value('jam_selesai');
 
-        $start = $lastEnd ?: $dayStart;
+            $start = $lastEnd ?: $dayStart;
 
-        // Carbon butuh tanggal + jam agar bisa addMinutes
-        $startAt = \Carbon\Carbon::parse($today.' '.$start)->addMinutes($bufferMin);
-        $endAt   = $startAt->copy()->addMinutes($durMin);
+            // Carbon butuh tanggal + jam agar bisa addMinutes
+            $startAt = \Carbon\Carbon::parse($today.' '.$start)->addMinutes($bufferMin);
+            $endAt   = $startAt->copy()->addMinutes($durMin);
 
-        $jamMulai   = $startAt->format('H:i:s');
-        $jamSelesai = $endAt->format('H:i:s');
+            $jamMulai   = $startAt->format('H:i:s');
+            $jamSelesai = $endAt->format('H:i:s');
 
-        // ==========================
-        // 6) Anti tabrakan (overlap check)
-        // ==========================
-        $overlap = DB::table('rkh_details')
-            ->where('rkh_id', $rkhId)
-            ->where('jam_mulai', '<', $jamSelesai)
-            ->where('jam_selesai', '>', $jamMulai)
-            ->exists();
+            // ==========================
+            // 6) Anti tabrakan (overlap check)
+            // ==========================
+            $overlap = DB::table('rkh_details')
+                ->where('rkh_id', $rkhId)
+                ->where('jam_mulai', '<', $jamSelesai)
+                ->where('jam_selesai', '>', $jamMulai)
+                ->exists();
 
-        abort_if($overlap, 422, 'Tabrakan jadwal visit. (Overlap slot waktu)');
+            abort_if($overlap, 422, 'Tabrakan jadwal visit. (Overlap slot waktu)');
 
-        // ==========================
-        // 7) INSERT detail (bukan updateOrInsert)
-        // ==========================
-        DB::table('rkh_details')->insert([
-            'rkh_id'          => $rkhId,
-            'account_no'      => $accountNo,
-            'nama_nasabah'    => $nama,
-            'kolektibilitas'  => $kolek,
-            'jenis_kegiatan'  => $data['jenis_kegiatan'] ?? 'Visit',
-            'tujuan_kegiatan' => $data['tujuan_kegiatan'] ?? 'Kunjungan nasabah',
-            'jam_mulai'       => $jamMulai,
-            'jam_selesai'     => $jamSelesai,
-            'updated_at'      => now(),
-            'created_at'      => now(),
-        ]);
+            // ==========================
+            // 7) INSERT detail (bukan updateOrInsert)
+            // ==========================
+            DB::table('rkh_details')->insert([
+                'rkh_id'          => $rkhId,
+                'account_no'      => $accountNo,
+                'nama_nasabah'    => $nama,
+                'kolektibilitas'  => $kolek,
+                'jenis_kegiatan'  => $data['jenis_kegiatan'] ?? 'Visit',
+                'tujuan_kegiatan' => $data['tujuan_kegiatan'] ?? 'Kunjungan nasabah',
+                'jam_mulai'       => $jamMulai,
+                'jam_selesai'     => $jamSelesai,
+                'updated_at'      => now(),
+                'created_at'      => now(),
+            ]);
 
-        return response()->json([
-            'ok'              => true,
-            'message'         => 'Planned & masuk RKH + slot otomatis.',
-            'plan_visit_date' => $today,
-            'rkh_id'          => $rkhId,
-            'account_no'      => $accountNo,
-            'nama_nasabah'    => $nama,
-            'kolektibilitas'  => $kolek,
-            'jam_mulai'       => $jamMulai,
-            'jam_selesai'     => $jamSelesai,
-        ]);
-    });
-}
+            return response()->json([
+                'ok'              => true,
+                'message'         => 'Planned & masuk RKH + slot otomatis.',
+                'plan_visit_date' => $today,
+                'rkh_id'          => $rkhId,
+                'account_no'      => $accountNo,
+                'nama_nasabah'    => $nama,
+                'kolektibilitas'  => $kolek,
+                'jam_mulai'       => $jamMulai,
+                'jam_selesai'     => $jamSelesai,
+            ]);
+        });
+    }
 
 
 }

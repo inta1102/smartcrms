@@ -83,13 +83,23 @@ class RkhVisitController extends Controller
             'account_no' => ['required', 'string', 'max:255'],
         ]);
 
-        $accountNo = trim($data['account_no']);
+        $accountNo = trim((string) $data['account_no']);
+        if ($accountNo === '') {
+            return back()->withErrors(['account_no' => 'Account no wajib diisi.']);
+        }
 
+        // Pastikan detail + header ada (untuk scheduledAt)
+        $detail->load('header');
+        if (!$detail->header) {
+            abort(500, 'RKH header tidak ditemukan untuk detail ini.');
+        }
+
+        // ==== 1) Pastikan LoanAccount valid ====
         $loan = LoanAccount::query()
-            ->where('account_no', $accountNo)
+            ->whereRaw('TRIM(account_no) = ?', [$accountNo])
             ->firstOrFail();
 
-        // ensure open case for this loan
+        // ==== 2) Ensure open NPL case untuk loan ini ====
         $case = NplCase::query()
             ->where('loan_account_id', $loan->id)
             ->where('status', 'open')
@@ -107,15 +117,13 @@ class RkhVisitController extends Controller
             ]);
         }
 
-        // ensure visit schedule (pending) for this rkh detail
-        $detail->load('header');
-
+        // ==== 3) Ensure ActionSchedule (visit) utk rkh_detail ini ====
         $scheduledAt = Carbon::parse($detail->header->tanggal)
             ->setTimeFromTimeString($detail->jam_mulai);
 
         $schedule = ActionSchedule::query()
             ->where('type', 'visit')
-            ->whereIn('status', ['pending','in_progress'])
+            ->whereIn('status', ['pending', 'in_progress'])
             ->where('source_system', 'rkh')
             ->where('source_ref_id', $detail->id)
             ->first();
@@ -132,16 +140,28 @@ class RkhVisitController extends Controller
                 'source_system' => 'rkh',
                 'source_ref_id' => $detail->id,
             ]);
+        } else {
+            // optional sync jadwal
+            $schedule->scheduled_at = $scheduledAt;
+            $schedule->save();
         }
 
-        // update rkh detail link
-        $detail->account_no = $accountNo;
-        $detail->linked_npl_case_id = $case->id;
-        $detail->visit_schedule_id = $schedule->id; // ini ActionSchedule ID
+        // ==== 4) Update link di RKH detail (PENTING: pakai kolom yg benar) ====
+        $detail->account_no          = $accountNo;
+        $detail->linked_npl_case_id  = $case->id;
+
+        // ✅ simpan ActionSchedule id di kolom baru
+        if (Schema::hasColumn('rkh_details', 'action_schedule_id')) {
+            $detail->action_schedule_id = $schedule->id;
+        }
+
+        // ⚠️ JANGAN isi visit_schedule_id dengan ActionSchedule id lagi
+        // $detail->visit_schedule_id = $schedule->id; // ❌ STOP
+
         $detail->save();
 
-        // promote all unpromoted rkh_visit_logs -> CaseAction (and optionally VisitLog)
-        $userId = $request->user()->id;
+        // ==== 5) Promote semua rkh_visit_logs yg belum promoted ke timeline ====
+        $userId = (int) $request->user()->id;
 
         DB::transaction(function () use ($detail, $case, $schedule, $userId) {
 
@@ -152,7 +172,8 @@ class RkhVisitController extends Controller
                 ->get();
 
             foreach ($logs as $log) {
-                // 1) create VisitLog (optional but bagus agar muncul di modul visits recent)
+
+                // (A) buat VisitLog (agar muncul di modul visits/recent)
                 $visit = VisitLog::create([
                     'npl_case_id'        => $case->id,
                     'action_schedule_id' => $schedule->id,
@@ -166,7 +187,7 @@ class RkhVisitController extends Controller
                     'photo_path'         => $log->photo_path,
                 ]);
 
-                // 2) create CaseAction for timeline
+                // (B) masuk timeline penanganan (CaseAction)
                 $action = CaseAction::create([
                     'npl_case_id'   => $case->id,
                     'user_id'       => $log->user_id,
@@ -194,8 +215,9 @@ class RkhVisitController extends Controller
                     ],
                 ]);
 
-                $log->promoted_at = now();
-                $log->promoted_to_case_id = $case->id;
+                // (C) tanda promoted
+                $log->promoted_at        = now();
+                $log->promoted_to_case_id= $case->id;
                 $log->promoted_action_id = $action->id;
                 $log->save();
             }
@@ -205,4 +227,107 @@ class RkhVisitController extends Controller
             ->route('rkh.show', $detail->rkh_id)
             ->with('status', 'Account berhasil dilink & riwayat kunjungan RKH sudah masuk timeline penanganan.');
     }
+
+    public function start(Request $request, RkhDetail $detail)
+    {
+        $detail->load('header');
+
+        if (!$detail->header) {
+            abort(500, 'RKH header tidak ditemukan untuk detail ini.');
+        }
+
+        // === 1) Kalau sudah ada account_no => existing nasabah => masuk flow timeline (ActionSchedule / Visits)
+        $accountNo = trim((string)($detail->account_no ?? ''));
+        if ($accountNo !== '') {
+
+            // ensure open case
+            $case = $this->ensureCaseByAccountNo($accountNo);
+
+            // ensure action schedule (visit) utk sumber rkh_detail ini
+            $scheduledAt = Carbon::parse($detail->header->tanggal)
+                ->setTimeFromTimeString($detail->jam_mulai);
+
+            $schedule = $this->ensureActionScheduleFromRkhDetail($detail, (int)$case->id, $scheduledAt);
+
+            // sync link di rkh_details (pakai kolom yang benar: linked_npl_case_id)
+            $detail->linked_npl_case_id = $case->id;
+
+            // ⚠️ penting: JANGAN pakai visit_schedule_id untuk ActionSchedule
+            // kita tambah kolom baru action_schedule_id (lihat migration di bawah)
+            if (property_exists($detail, 'action_schedule_id')) {
+                $detail->action_schedule_id = $schedule->id;
+            }
+
+            $detail->save();
+
+            // redirect ke form Visit (timeline) yang sudah kamu punya
+            // asumsi route visits.create menerima ActionSchedule model binding
+            // jika route kamu beda, tinggal adjust paramnya.
+            // return redirect()->route('visits.create', ['schedule' => $schedule->id]);
+            return redirect()->route('ro_visits.create', [
+                'rkh_detail_id' => $detail->id,
+                'back' => url()->previous(),
+            ]);
+
+        }
+
+        // === 2) Kalau prospect / belum ada account_no => pakai form RKH visit log (rkh_visit_logs)
+        // kamu sudah punya method create(Request $request, RkhDetail $detail)
+        return $this->create($request, $detail);
+    }
+
+    private function ensureCaseByAccountNo(string $accountNo): NplCase
+    {
+        $accountNo = trim($accountNo);
+
+        $loan = LoanAccount::query()
+            ->where('account_no', $accountNo)
+            ->firstOrFail();
+
+        $case = NplCase::query()
+            ->where('loan_account_id', $loan->id)
+            ->where('status', 'open')
+            ->whereNull('closed_at')
+            ->first();
+
+        if ($case) return $case;
+
+        return NplCase::create([
+            'loan_account_id' => $loan->id,
+            'pic_user_id'     => auth()->id(),
+            'status'          => 'open',
+            'priority'        => 'normal',
+            'opened_at'       => now()->toDateString(),
+            'summary'         => 'Auto-created from RKH visit',
+        ]);
+    }
+
+    private function ensureActionScheduleFromRkhDetail(RkhDetail $detail, int $caseId, Carbon $scheduledAt): ActionSchedule
+    {
+        $existing = ActionSchedule::query()
+            ->where('type', 'visit')
+            ->whereIn('status', ['pending','in_progress'])
+            ->where('source_system', 'rkh')
+            ->where('source_ref_id', $detail->id)
+            ->first();
+
+        if ($existing) {
+            $existing->scheduled_at = $scheduledAt;
+            $existing->save();
+            return $existing;
+        }
+
+        return ActionSchedule::create([
+            'npl_case_id'   => $caseId,
+            'type'          => 'visit',
+            'title'         => 'Kunjungan Lapangan',
+            'notes'         => 'LKH RKH: ' . ($detail->nama_nasabah ?? '-'),
+            'scheduled_at'  => $scheduledAt,
+            'status'        => 'pending',
+            'created_by'    => auth()->id(),
+            'source_system' => 'rkh',
+            'source_ref_id' => $detail->id,
+        ]);
+    }
+
 }

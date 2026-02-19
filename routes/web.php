@@ -110,6 +110,7 @@ use App\Http\Controllers\NplCaseAssessmentController;
 use App\Http\Controllers\Kpi\CommunityController;
 use App\Http\Controllers\Kpi\CommunityHandlingController;
 
+
 /**
  * =======================================================
  * Model binding
@@ -834,8 +835,10 @@ Route::middleware(['auth'])
  * BRIDGE ROUTES (legacy / helper)
  * =======================================================
  */
-Route::get('/rkh/details/{detail}/visit-start', [\App\Http\Controllers\RkhVisitBridgeController::class, 'start'])
+
+Route::get('/rkh/details/{detail}/visit-start', [RkhVisitController::class, 'start'])
     ->name('rkh.details.visitStart');
+
 
 Route::get('/visits/loan/{loan}/start', [VisitController::class, 'startFromLoan'])->name('visits.loan.start');
 

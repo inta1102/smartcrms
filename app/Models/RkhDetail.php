@@ -30,11 +30,10 @@ class RkhDetail extends Model
     ];
 
 
-    public function header(): BelongsTo
+    public function header()
     {
-        return $this->belongsTo(\App\Models\RkhHeader::class, 'rkh_header_id');
+        return $this->belongsTo(RkhHeader::class, 'rkh_id');
     }
-
 
     public function lkh(): HasOne
     {

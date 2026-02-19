@@ -705,9 +705,27 @@
   {{-- Insight --}}
   <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
     <div class="font-extrabold text-slate-900 text-sm sm:text-base">🧠 Catatan Kinerja (Auto Insight)</div>
+{{-- UPDATED RISK PANEL --}}
+      <div class="rounded-2xl border border-amber-200 bg-amber-50 p-3">
+        <div class="text-[11px] font-extrabold text-amber-800 mb-2">⚠️ Risiko Besok (Bounce-back + EOM)</div>
+        <ul class="text-sm text-amber-900 space-y-1 list-disc pl-5">
+          @forelse(($insight['risk'] ?? []) as $t)
+            <li>{{ $t }}</li>
+          @empty
+            <li>Tidak ada sinyal bounce-back yang kuat.</li>
+          @endforelse
+        </ul>
 
+        <div class="mt-3 text-[11px] text-amber-900/80 space-y-1">
+          <div>Sinyal: <b>L0 naik & LT turun</b> + ada <b>JT angsuran 1–2 hari</b>.</div>
+          <div>Tambahan: <b>LT→DPK</b> saat <b>FT Pokok/Bunga/Kolek = 2</b> (indikasi mulai masuk bucket risiko lebih tinggi).</div>
+          @if($toDpkNoa > 0)
+            <div>Terbaca: <b>{{ $toDpkNoa }}</b> NOA migrasi ke DPK (OS ± <b>Rp {{ number_format($toDpkOs,0,',','.') }}</b>).</div>
+          @endif
+        </div>
+      </div>
     <div class="grid grid-cols-1 md:grid-cols-4 gap-2 sm:gap-3 mt-3">
-      <div class="rounded-2xl border border-slate-200 bg-slate-50 p-3">
+      <!-- <div class="rounded-2xl border border-slate-200 bg-slate-50 p-3">
         <div class="text-[11px] font-bold text-slate-700 mb-2">Yang Baik</div>
         <ul class="text-sm text-slate-700 space-y-1 list-disc pl-5">
           @forelse(($insight['good'] ?? []) as $t)
@@ -738,9 +756,9 @@
             <li>-</li>
           @endforelse
         </ul>
-      </div>
+      </div> -->
 
-      {{-- UPDATED RISK PANEL --}}
+      <!-- {{-- UPDATED RISK PANEL --}}
       <div class="rounded-2xl border border-amber-200 bg-amber-50 p-3">
         <div class="text-[11px] font-extrabold text-amber-800 mb-2">⚠️ Risiko Besok (Bounce-back + EOM)</div>
         <ul class="text-sm text-amber-900 space-y-1 list-disc pl-5">
@@ -758,7 +776,7 @@
             <div>Terbaca: <b>{{ $toDpkNoa }}</b> NOA migrasi ke DPK (OS ± <b>Rp {{ number_format($toDpkOs,0,',','.') }}</b>).</div>
           @endif
         </div>
-      </div>
+      </div> -->
     </div>
   </div>
 
@@ -848,15 +866,20 @@
               </td>
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
+                 @php
+                  $isPlanned = (int)($plannedToday ?? 0) === 1;
+                  $acc = trim((string)($r->account_no ?? ''));
+                @endphp
+
                 <button
                   type="button"
                   class="ro-plan-today-btn inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-bold border
-                    {{ $plannedToday ? 'bg-slate-900 text-white border-slate-900 opacity-80 cursor-not-allowed' : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50' }}"
+                    {{ $isPlanned ? 'bg-slate-900 text-white border-slate-900 opacity-80 cursor-not-allowed' : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50' }}"
                   data-account="{{ $acc }}"
                   data-url="{{ route('ro_visits.plan_today') }}"
-                  {{ $locked ? 'disabled' : '' }}
+                  {{ $isPlanned ? 'disabled' : '' }}
                 >
-                  {{ $plannedToday ? 'Planned' : 'Ya' }}
+                  {{ $isPlanned ? 'Planned' : 'Ya' }}
                 </button>
               </td>
 
@@ -967,18 +990,20 @@
 
               {{-- PLAN BUTTON --}}
               <td class="px-3 py-2 text-center whitespace-nowrap">
+                 @php
+                  $isPlanned = (int)($plannedToday ?? 0) === 1;
+                  $acc = trim((string)($r->account_no ?? ''));
+                @endphp
+
                 <button
                   type="button"
-                  class="ro-plan-today-btn inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-bold border transition
-                    {{ $plannedToday 
-                        ? 'bg-slate-900 text-white border-slate-900 opacity-80 cursor-not-allowed'
-                        : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50 hover:border-slate-400'
-                    }}"
+                  class="ro-plan-today-btn inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-bold border
+                    {{ $isPlanned ? 'bg-slate-900 text-white border-slate-900 opacity-80 cursor-not-allowed' : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50' }}"
                   data-account="{{ $acc }}"
                   data-url="{{ route('ro_visits.plan_today') }}"
-                  {{ $locked ? 'disabled' : '' }}
+                  {{ $isPlanned ? 'disabled' : '' }}
                 >
-                  {{ $plannedToday ? 'Planned' : 'Ya' }}
+                  {{ $isPlanned ? 'Planned' : 'Ya' }}
                 </button>
               </td>
 
@@ -1124,15 +1149,20 @@
 
               
               <td class="px-3 py-2 text-center whitespace-nowrap">
+                 @php
+                  $isPlanned = (int)($plannedToday ?? 0) === 1;
+                  $acc = trim((string)($r->account_no ?? ''));
+                @endphp
+
                 <button
                   type="button"
                   class="ro-plan-today-btn inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-bold border
-                    {{ $plannedToday ? 'bg-slate-900 text-white border-slate-900 opacity-80 cursor-not-allowed' : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50' }}"
+                    {{ $isPlanned ? 'bg-slate-900 text-white border-slate-900 opacity-80 cursor-not-allowed' : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50' }}"
                   data-account="{{ $acc }}"
                   data-url="{{ route('ro_visits.plan_today') }}"
-                  {{ $locked ? 'disabled' : '' }}
+                  {{ $isPlanned ? 'disabled' : '' }}
                 >
-                  {{ $plannedToday ? 'Planned' : 'Ya' }}
+                  {{ $isPlanned ? 'Planned' : 'Ya' }}
                 </button>
               </td>
 
@@ -1243,16 +1273,22 @@
 
               {{-- PLAN BUTTON: seragam tabel A --}}
               <td class="px-3 py-2 text-center whitespace-nowrap">
+                @php
+                  $isPlanned = (int)($plannedToday ?? 0) === 1;
+                  $acc = trim((string)($r->account_no ?? ''));
+                @endphp
+
                 <button
                   type="button"
                   class="ro-plan-today-btn inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-bold border
-                    {{ $plannedToday ? 'bg-slate-900 text-white border-slate-900 opacity-80 cursor-not-allowed' : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50' }}"
+                    {{ $isPlanned ? 'bg-slate-900 text-white border-slate-900 opacity-80 cursor-not-allowed' : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50' }}"
                   data-account="{{ $acc }}"
                   data-url="{{ route('ro_visits.plan_today') }}"
-                  {{ $locked ? 'disabled' : '' }}
+                  {{ $isPlanned ? 'disabled' : '' }}
                 >
-                  {{ $plannedToday ? 'Planned' : 'Ya' }}
+                  {{ $isPlanned ? 'Planned' : 'Ya' }}
                 </button>
+
               </td>
 
               <td class="px-3 py-2 whitespace-nowrap">
@@ -1269,6 +1305,127 @@
     </div>
   </div>
 
+{{-- ===========================
+      4) >500juta
+      =========================== --}}
+  <div class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+    <div class="p-3 sm:p-4 border-b border-slate-200">
+      <div class="font-bold text-slate-900 text-sm sm:text-base">
+        Debitur besar > 500juta
+        @if(!empty($weekStart) && !empty($weekEnd))
+          <span class="text-slate-500 font-normal text-sm">({{ $weekStart }} s/d {{ $weekEnd }})</span>
+        @endif
+      </div>
+      <!-- <div class="text-[11px] sm:text-xs text-slate-500 mt-1">
+        Sumber: installment_day. Dibaca terhadap posisi terakhir: <b>{{ $latestPosDate ?? '-' }}</b>.
+      </div> -->
+    </div>
+
+    <div class="p-3 sm:p-4 overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50">
+          <tr class="text-slate-700">
+            <th class="text-left px-3 py-2 whitespace-nowrap">JT (Tanggal)</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">No Rek</th>
+            <th class="text-left px-3 py-2 min-w-[220px]">Nama Debitur</th>
+            <th class="text-right px-3 py-2 whitespace-nowrap">OS</th>
+            <th class="text-right px-3 py-2 whitespace-nowrap">FT Pokok</th>
+            <th class="text-right px-3 py-2 whitespace-nowrap">FT Bunga</th>
+            <th class="text-right px-3 py-2 whitespace-nowrap">DPD</th>
+            <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Progres (H-1→H)</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Umur Visit</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit</th>
+            <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
+          </tr>
+        </thead>
+
+        <tbody class="divide-y divide-slate-200">
+          @forelse(($osBig ?? []) as $r)
+            @php
+              $due = !empty($r->due_date) ? \Carbon\Carbon::parse($r->due_date) : null;
+
+              $acc = (string)($r->account_no ?? '');
+
+              // ===== progress =====
+              $prog = $progressText($r);
+              $progClass = $progressBadgeClass((string)$prog);
+
+              // ===== last visit =====
+              $lastVisitAt = $r->last_visit_at ?? null;
+              $ageDays = null;
+              if (!empty($lastVisitAt)) {
+                try { $ageDays = \Carbon\Carbon::parse($lastVisitAt)->diffInDays(now()); } catch (\Throwable $e) {}
+              }
+
+              // ===== plan state =====
+              $plannedToday = (int)($r->planned_today ?? 0) === 1;
+              $planStatus   = strtolower(trim((string)($r->plan_status ?? '')));
+              $planVisitRaw = $r->plan_visit_date ?? null;
+              $planVisit    = !empty($planVisitRaw) ? \Carbon\Carbon::parse($planVisitRaw)->format('d/m/Y') : '-';
+
+              // seragam dengan tabel A: kalau sudah planned -> disable juga
+              $locked = ($planStatus === 'done' || $plannedToday);
+            @endphp
+
+            <tr>
+              <td class="px-3 py-2 whitespace-nowrap">{{ $due ? $due->format('d/m/Y') : '-' }}</td>
+              <td class="px-3 py-2 font-mono whitespace-nowrap">{{ $acc !== '' ? $acc : '-' }}</td>
+              <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
+              <td class="px-3 py-2 text-right whitespace-nowrap">Rp {{ number_format((int)($r->os ?? 0),0,',','.') }}</td>
+              <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->ft_pokok ?? 0) }}</td>
+              <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->ft_bunga ?? 0) }}</td>
+              <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->dpd ?? 0) }}</td>
+              <td class="px-3 py-2 text-right whitespace-nowrap">{{ $r->kolek ?? '-' }}</td>
+
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold {{ $progClass }}">
+                  {{ $prog }}
+                </span>
+              </td>
+
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                {{ !empty($lastVisitAt) ? \Carbon\Carbon::parse($lastVisitAt)->format('d/m/Y') : '-' }}
+              </td>
+
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                {{ is_null($ageDays) ? '-' : ($ageDays.' hari') }}
+              </td>
+
+              {{-- PLAN BUTTON: seragam tabel A --}}
+              <td class="px-3 py-2 text-center whitespace-nowrap">
+                @php
+                  $isPlanned = (int)($plannedToday ?? 0) === 1;
+                  $acc = trim((string)($r->account_no ?? ''));
+                @endphp
+
+                <button
+                  type="button"
+                  class="ro-plan-today-btn inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-bold border
+                    {{ $isPlanned ? 'bg-slate-900 text-white border-slate-900 opacity-80 cursor-not-allowed' : 'bg-white text-slate-800 border-slate-300 hover:bg-slate-50' }}"
+                  data-account="{{ $acc }}"
+                  data-url="{{ route('ro_visits.plan_today') }}"
+                  {{ $isPlanned ? 'disabled' : '' }}
+                >
+                  {{ $isPlanned ? 'Planned' : 'Ya' }}
+                </button>
+
+              </td>
+
+              <td class="px-3 py-2 whitespace-nowrap">
+                <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
+              </td>
+            </tr>
+          @empty
+            <tr>
+              <td colspan="13" class="px-3 py-6 text-center text-slate-500">Tidak ada JT angsuran minggu ini.</td>
+            </tr>
+          @endforelse
+        </tbody>
+      </table>
+    </div>
+  </div>
 
 </div>
 
@@ -1496,12 +1653,18 @@
           beginAtZero: false,
           grace: '5%',
           ticks: {
-            callback: (v) => isPercentMetric(metric) ? fmtPct(v) : ('Rp ' + Number(v).toLocaleString('id-ID'))
-          }
+            display: !isMobile(), // ✅ HILANGKAN angka sumbu Y di mobile
+            callback: (v) => isPercentMetric(metric)
+              ? fmtPct(v)
+              : ('Rp ' + Number(v).toLocaleString('id-ID')),
+          },
+          // opsional: tick kecil di sumbu Y ikut dihemat
+          // grid: { drawTicks: !isMobile() }
         }
       }
     },
   }) : null;
+
 
   function refreshChart() {
     if (!chart) return;
