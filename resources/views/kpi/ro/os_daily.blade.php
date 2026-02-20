@@ -537,8 +537,9 @@
     </div>
 
     {{-- L0 (+ RR) --}}
-  
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 flex flex-col h-full">
+
+      {{-- Header --}}
       <div class="text-[11px] sm:text-xs text-slate-500 leading-tight">
         <div class="flex items-start justify-between gap-2">
           <span class="font-semibold text-slate-600">L0</span>
@@ -548,56 +549,76 @@
         </div>
       </div>
 
+      {{-- Latest --}}
       <div class="mt-2">
         <div class="text-[11px] text-slate-500">Latest</div>
         <div class="text-[15px] sm:text-lg font-extrabold text-slate-900 leading-tight break-words">
           {{ $fmtRpFull($cL0['value'] ?? 0) }}
         </div>
 
-        <div class="mt-2 flex items-center justify-between gap-2">
-          <div>
+        {{-- EOM + RR dalam 1 row (biar rapi) --}}
+        <div class="mt-2 flex items-start justify-between gap-3">
+          <div class="min-w-0">
             <div class="text-[11px] text-slate-500">EOM</div>
             <div class="text-[13px] sm:text-sm font-semibold text-slate-800 leading-tight">
               {{ $fmtRpFull($cL0['base'] ?? ($cL0['prev'] ?? 0)) }}
             </div>
           </div>
-        </div>
-      </div>
-      <div class="text-right">
-        <div class="text-[11px] text-slate-500">RR</div>
-        <div class="text-sm font-extrabold text-slate-900">
-          {{ $fmtPct($rrV) }}
-        </div>
-        <div class="text-[10px] text-slate-400">
-          EOM: {{ $fmtPct($rrB) }}
+
+          <div class="text-right shrink-0">
+            <div class="text-[11px] text-slate-500">RR</div>
+            <div class="text-[13px] sm:text-sm font-extrabold text-slate-900 leading-tight">
+              {{ $fmtPct($rrV) }}
+            </div>
+            <div class="text-[10px] text-slate-400 leading-tight">
+              EOM: {{ $fmtPct($rrB) }}
+            </div>
+          </div>
         </div>
       </div>
 
-      {{-- push growth area to bottom (biar sejajar antar card) --}}
-      <div class="mt-auto pt-3">
-        <div class="mt-3 space-y-2">
+      {{-- Growth area: nempel bawah --}}
+      <div class="mt-auto pt-3 space-y-2">
+
+        {{-- Growth L0 --}}
         <div>
           <div class="text-[11px] text-slate-500">{{ $growthLabel }} L0</div>
-          <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $l0Bg }}">
-            <span class="text-sm font-bold {{ $l0Text }}">{{ $fmtDeltaRp($cL0['delta'] ?? null) }}</span>
-            <span class="text-[11px] text-slate-500">{{ $deltaHint('l0', $cL0['delta'] ?? null) }}</span>
+
+          {{-- ✅ pill full width, bukan inline-flex --}}
+          <div class="mt-1 w-full rounded-xl border px-3 py-2 {{ $l0Bg }}">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-bold {{ $l0Text }} whitespace-nowrap">
+                {{ $fmtDeltaRp($cL0['delta'] ?? null) }}
+              </span>
+              <span class="text-[11px] text-slate-500 truncate">
+                {{ $deltaHint('l0', $cL0['delta'] ?? null) }}
+              </span>
+            </div>
           </div>
         </div>
 
+        {{-- Growth RR --}}
         <div>
           <div class="text-[11px] text-slate-500">{{ $growthLabel }} RR</div>
-          <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $rrBg }}">
-            <span class="text-sm font-bold {{ $rrText }}">{{ $fmtDeltaPts($rrDeltaPts) }}</span>
-            <span class="text-[11px] text-slate-500">{{ $deltaHint('rr', $rrDeltaPts) }}</span>
+
+          <div class="mt-1 w-full rounded-xl border px-3 py-2 {{ $rrBg }}">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-bold {{ $rrText }} whitespace-nowrap">
+                {{ $fmtDeltaPts($rrDeltaPts) }}
+              </span>
+              <span class="text-[11px] text-slate-500 truncate">
+                {{ $deltaHint('rr', $rrDeltaPts) }}
+              </span>
+            </div>
           </div>
         </div>
-      </div>
+
       </div>
     </div>
       
     {{-- LT (+ %LT) --}}
-  
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 flex flex-col h-full">
+
       <div class="text-[11px] sm:text-xs text-slate-500 leading-tight">
         <div class="flex items-start justify-between gap-2">
           <span class="font-semibold text-slate-600">LT</span>
@@ -613,51 +634,62 @@
           {{ $fmtRpFull($cLt['value'] ?? 0) }}
         </div>
 
-        <div class="mt-2 flex items-center justify-between gap-2">
-          <div>
+        <div class="mt-2 flex items-start justify-between gap-3">
+          <div class="min-w-0">
             <div class="text-[11px] text-slate-500">EOM</div>
             <div class="text-[13px] sm:text-sm font-semibold text-slate-800 leading-tight">
               {{ $fmtRpFull($cLt['base'] ?? ($cLt['prev'] ?? 0)) }}
             </div>
           </div>
-        </div>
-       
-        <div class="text-right">
-          <div class="text-[11px] text-slate-500">%LT</div>
-          <div class="text-sm font-extrabold text-slate-900">
-            {{ $fmtPct($pctLtV) }}
+
+          <div class="text-right shrink-0">
+            <div class="text-[11px] text-slate-500">%LT</div>
+            <div class="text-[13px] sm:text-sm font-extrabold text-slate-900 leading-tight">
+              {{ $fmtPct($pctLtV) }}
+            </div>
+            <div class="text-[10px] text-slate-400 leading-tight">
+              EOM: {{ $fmtPct($pctLtB) }}
+            </div>
           </div>
-          <div class="text-[10px] text-slate-400">
-            EOM: {{ $fmtPct($pctLtB) }}
-          </div>
         </div>
-       
       </div>
-      
-      {{-- push growth area to bottom (biar sejajar antar card) --}}
-      <div class="mt-auto pt-3">
-        <div class="mt-3 space-y-2">
+
+      <div class="mt-auto pt-3 space-y-2">
+
         <div>
           <div class="text-[11px] text-slate-500">{{ $growthLabel }} LT</div>
-          <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $ltBg }}">
-            <span class="text-sm font-bold {{ $ltText }}">{{ $fmtDeltaRp($cLt['delta'] ?? null) }}</span>
-            <span class="text-[11px] text-slate-500">{{ $deltaHint('lt', $cLt['delta'] ?? null) }}</span>
+          <div class="mt-1 w-full rounded-xl border px-3 py-2 {{ $ltBg }}">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-bold {{ $ltText }} whitespace-nowrap">
+                {{ $fmtDeltaRp($cLt['delta'] ?? null) }}
+              </span>
+              <span class="text-[11px] text-slate-500 truncate">
+                {{ $deltaHint('lt', $cLt['delta'] ?? null) }}
+              </span>
+            </div>
           </div>
         </div>
 
         <div>
           <div class="text-[11px] text-slate-500">{{ $growthLabel }} %LT</div>
-          <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $plBg }}">
-            <span class="text-sm font-bold {{ $plText }}">{{ $fmtDeltaPts($pctLtDeltaPts) }}</span>
-            <span class="text-[11px] text-slate-500">{{ $deltaHint('pct_lt', $pctLtDeltaPts) }}</span>
+          <div class="mt-1 w-full rounded-xl border px-3 py-2 {{ $plBg }}">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-bold {{ $plText }} whitespace-nowrap">
+                {{ $fmtDeltaPts($pctLtDeltaPts) }}
+              </span>
+              <span class="text-[11px] text-slate-500 truncate">
+                {{ $deltaHint('pct_lt', $pctLtDeltaPts) }}
+              </span>
+            </div>
           </div>
         </div>
-      </div>
+
       </div>
     </div>
-    
+
     {{-- DPK (+ %DPK) --}}
     <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 flex flex-col h-full">
+
       <div class="text-[11px] sm:text-xs text-slate-500 leading-tight">
         <div class="flex items-start justify-between gap-2">
           <span class="font-semibold text-slate-600">DPK</span>
@@ -673,49 +705,58 @@
           {{ $fmtRpFull($cDpk['value'] ?? 0) }}
         </div>
 
-        <div class="mt-2 flex items-center justify-between gap-2">
-          <div>
+        <div class="mt-2 flex items-start justify-between gap-3">
+          <div class="min-w-0">
             <div class="text-[11px] text-slate-500">EOM</div>
             <div class="text-[13px] sm:text-sm font-semibold text-slate-800 leading-tight">
               {{ $fmtRpFull($cDpk['base'] ?? ($cDpk['prev'] ?? 0)) }}
             </div>
           </div>
-        </div>
-       
-        <div class="text-right">
-          <div class="text-[11px] text-slate-500">%DPK</div>
-          <div class="text-sm font-extrabold text-slate-900">
-            {{ $fmtPct($pctDpkV) }}
+
+          <div class="text-right shrink-0">
+            <div class="text-[11px] text-slate-500">%DPK</div>
+            <div class="text-[13px] sm:text-sm font-extrabold text-slate-900 leading-tight">
+              {{ $fmtPct($pctDpkV) }}
+            </div>
+            <div class="text-[10px] text-slate-400 leading-tight">
+              EOM: {{ $fmtPct($pctDpkB) }}
+            </div>
           </div>
-          <div class="text-[10px] text-slate-400">
-            EOM: {{ $fmtPct($pctDpkB) }}
-          </div>
         </div>
-      
       </div>
-      
-      {{-- push growth area to bottom (biar sejajar antar card) --}}
-      <div class="mt-auto pt-3">
-        <div class="mt-3 space-y-2">
+
+      <div class="mt-auto pt-3 space-y-2">
+
         <div>
           <div class="text-[11px] text-slate-500">{{ $growthLabel }} DPK</div>
-          <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $dpkBg }}">
-            <span class="text-sm font-bold {{ $dpkText }}">{{ $fmtDeltaRp($cDpk['delta'] ?? null) }}</span>
-            <span class="text-[11px] text-slate-500">{{ $deltaHint('lt', $cDpk['delta'] ?? null) }}</span>
+          <div class="mt-1 w-full rounded-xl border px-3 py-2 {{ $dpkBg }}">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-bold {{ $dpkText }} whitespace-nowrap">
+                {{ $fmtDeltaRp($cDpk['delta'] ?? null) }}
+              </span>
+              <span class="text-[11px] text-slate-500 truncate">
+                {{ $deltaHint('dpk', $cDpk['delta'] ?? null) }}
+              </span>
+            </div>
           </div>
         </div>
 
         <div>
           <div class="text-[11px] text-slate-500">{{ $growthLabel }} %DPK</div>
-          <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $pdBg }}">
-            <span class="text-sm font-bold {{ $pdText }}">{{ $fmtDeltaPts($pctDpkDeltaPts) }}</span>
-            <span class="text-[11px] text-slate-500">{{ $deltaHint('pct_lt', $pctDpkDeltaPts) }}</span>
+          <div class="mt-1 w-full rounded-xl border px-3 py-2 {{ $pdBg }}">
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-sm font-bold {{ $pdText }} whitespace-nowrap">
+                {{ $fmtDeltaPts($pctDpkDeltaPts) }}
+              </span>
+              <span class="text-[11px] text-slate-500 truncate">
+                {{ $deltaHint('pct_dpk', $pctDpkDeltaPts) }}
+              </span>
+            </div>
           </div>
         </div>
-      </div>
+
       </div>
     </div>
-
   </div>
 
   {{-- TLRO Narrative --}}
