@@ -379,7 +379,7 @@
                 'icon'   => '📁',
                 'href'   => route('cases.index'),
                 'active' => $isNplActive,
-                'show'   => (in_array($roleValue, ['BE','FE'], true)) && !$isPimpinan,
+                'show'   => (!in_array($roleValue, ['KOM','RO'], true)) ,
             ],
             [
                 'label'  => 'Overdue',
@@ -387,7 +387,7 @@
                 'href'   => route('cases.overdue'),
                 'active' => $isOverdueActive,
                 'badge'  => $overdueCount > 0 ? $overdueCount : null,
-                'show'   => (in_array($roleValue, ['BE','FE'], true)) && !$isPimpinan,
+                'show'   => (!in_array($roleValue, ['KOM','RO'], true)) ,
             ],
             [
                 'label'  => 'Agenda Saya',
