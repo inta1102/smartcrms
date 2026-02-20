@@ -852,6 +852,150 @@ class RoOsDailyDashboardController extends Controller
         $ltToDpkOs  = (int) $ltToDpk->sum(fn($r) => (int)($r->os ?? 0));
 
 
+       // =============================
+        // TABEL 2A) COHORT: L0 EOM bulan lalu -> status posisi terakhir
+        // ✅ planned from RKH (plan_today), last_visit from ro_visits (DONE)
+        // =============================
+
+        // =============================
+        // TABEL 2A) COHORT: L0 EOM bulan lalu -> status posisi terakhir
+        // =============================
+
+        $today = now()->toDateString();
+        $uid   = (int) auth()->id();
+
+        // 1) Latest posisi hari ini (loan_accounts)
+        $subLaLatestAccKey = DB::table('loan_accounts')
+            ->whereDate('position_date', $latestPosDate)
+            ->selectRaw("
+                TRIM(LEADING '0' FROM account_no) as acc_key,
+                account_no,
+                customer_name,
+                LPAD(TRIM(ao_code),6,'0') as ao_code,
+                ROUND(outstanding) as os,
+                ft_pokok,
+                ft_bunga,
+                dpd,
+                kolek,
+                position_date
+            ");
+
+        // 2) Posisi H-1 (untuk progress H-1 -> H)
+        $subLaPrevAccKey = DB::table('loan_accounts')
+            ->whereDate('position_date', $prevPosDate)
+            ->selectRaw("
+                TRIM(LEADING '0' FROM account_no) as acc_key,
+                COALESCE(ft_pokok,0) as prev_ft_pokok,
+                COALESCE(ft_bunga,0) as prev_ft_bunga
+            ");
+
+        // 3) Planned hari ini dari RKH (plan_today)
+        $subPlanTodayAccKey = DB::table('rkh_headers as h')
+            ->join('rkh_details as d', 'd.rkh_id', '=', 'h.id')
+            ->where('h.user_id', $uid)
+            ->whereDate('h.tanggal', $today)
+            ->selectRaw("
+                TRIM(LEADING '0' FROM d.account_no) as acc_key,
+                1 as planned_today,
+                MAX(h.tanggal) as plan_visit_date,
+                MAX(h.status) as plan_status
+            ")
+            ->groupBy('acc_key');
+
+        // 4) Last visit (DONE) dari ro_visits
+        $subLastVisitAccKey = DB::table('ro_visits as rv')
+            ->where('rv.user_id', $uid)
+            ->where('rv.status', 'done')
+            ->selectRaw("
+                TRIM(LEADING '0' FROM rv.account_no) as acc_key,
+                MAX(COALESCE(rv.visited_at, rv.updated_at)) as last_visit_at
+            ")
+            ->groupBy('acc_key');
+
+            $debugSnapTotal = DB::table('loan_account_snapshots_monthly')
+                ->whereDate('snapshot_month', $prevSnapMonth)
+                ->count();
+
+            $debugSnapL0 = DB::table('loan_account_snapshots_monthly')
+                ->whereDate('snapshot_month', $prevSnapMonth)
+                ->whereRaw("COALESCE(ft_pokok,0)=0 AND COALESCE(ft_bunga,0)=0")
+                ->count();
+
+            $debugSnapL0Ao = DB::table('loan_account_snapshots_monthly')
+                ->whereDate('snapshot_month', $prevSnapMonth)
+                ->whereRaw("LPAD(TRIM(ao_code),6,'0') = ?", [$ao])
+                ->whereRaw("COALESCE(ft_pokok,0)=0 AND COALESCE(ft_bunga,0)=0")
+                ->count();
+
+            $debugLaLatestAo = DB::table('loan_accounts')
+                ->whereDate('position_date', $latestPosDate)
+                ->whereRaw("LPAD(TRIM(ao_code),6,'0') = ?", [$ao])
+                ->count();
+
+            logger()->info('L0EOM_CHAIN_DEBUG', [
+                'prevSnapMonth' => $prevSnapMonth,
+                'latestPosDate' => $latestPosDate,
+                'snap_total'    => $debugSnapTotal,
+                'snap_l0_total' => $debugSnapL0,
+                'snap_l0_ao'    => $debugSnapL0Ao,
+                'la_latest_ao'  => $debugLaLatestAo,
+            ]);
+
+        // 5) Query utama: cohort dari monthly (m), join ke posisi latest (la) via acc_key
+        $l0Eom = DB::table('loan_account_snapshots_monthly as m')
+            ->joinSub($subLaLatestAccKey, 'la', function ($j) {
+                $j->on(
+                    DB::raw("TRIM(LEADING '0' FROM m.account_no)"),
+                    '=',
+                    DB::raw("la.acc_key")
+                );
+            })
+            ->leftJoinSub($subPlanTodayAccKey, 'pl', function ($j) {
+                $j->on(DB::raw("la.acc_key"), '=', DB::raw("pl.acc_key"));
+            })
+            ->leftJoinSub($subLastVisitAccKey, 'lv', function ($j) {
+                $j->on(DB::raw("la.acc_key"), '=', DB::raw("lv.acc_key"));
+            })
+            ->leftJoinSub($subLaPrevAccKey, 'p', function ($j) {
+                $j->on(DB::raw("la.acc_key"), '=', DB::raw("p.acc_key"));
+            })
+            ->select([
+                'la.account_no',
+                'la.customer_name',
+                'la.ao_code',
+                'la.os',
+                'la.ft_pokok',
+                'la.ft_bunga',
+                'la.dpd',
+                'la.kolek',
+
+                DB::raw("COALESCE(m.ft_pokok,0) as eom_ft_pokok"),
+                DB::raw("COALESCE(m.ft_bunga,0) as eom_ft_bunga"),
+
+                DB::raw("COALESCE(p.prev_ft_pokok,0) as prev_ft_pokok"),
+                DB::raw("COALESCE(p.prev_ft_bunga,0) as prev_ft_bunga"),
+
+                DB::raw("lv.last_visit_at as last_visit_at"),
+
+                DB::raw("COALESCE(pl.planned_today,0) as planned_today"),
+                DB::raw("pl.plan_status as plan_status"),
+                DB::raw("pl.plan_visit_date as plan_visit_date"),
+            ])
+            ->whereDate('m.snapshot_month', $prevSnapMonth)
+
+            // scope robust
+            ->whereRaw("
+            LPAD(TRIM(COALESCE(NULLIF(m.ao_code,''), la.ao_code)),6,'0') = ?
+            ", [$ao])
+
+            // L0 EOM
+            ->whereRaw("COALESCE(m.ft_pokok,0)=0 AND COALESCE(m.ft_bunga,0)=0")
+
+            ->orderByDesc('la.dpd')
+            ->orderByDesc('la.os')
+            ->limit(300)
+            ->get();
+                
         // =============================
         // TABEL 3) JT Angsuran minggu ini
         // =============================
@@ -1074,6 +1218,7 @@ class RoOsDailyDashboardController extends Controller
             'ltToDpkNoa'=>$ltToDpkNoa, 
             'ltToDpkOs'=>$ltToDpkOs,
             'ltEomToDpk'=>$ltEomToDpk,
+            'l0Eom' => $l0Eom,
         ]);
     }
 

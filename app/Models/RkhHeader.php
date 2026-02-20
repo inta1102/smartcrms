@@ -50,4 +50,9 @@ class RkhHeader extends Model
     {
         return $q->whereDate('tanggal', $ymd);
     }
+
+    public function rejector()
+    {
+        return $this->belongsTo(User::class, 'rejected_by');
+    }
 }

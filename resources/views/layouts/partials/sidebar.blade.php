@@ -307,10 +307,10 @@
         $dashboardRouteName = 'executive.targets.index';
     } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['BE'])) {
         $dashboardRouteName = 'legal-actions.index';
-    // } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['RO'])) {
-    //    $dashboardRouteName = 'kpi.ro.os-daily';
-    //} elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['TLRO'])) {
-    //    $dashboardRouteName = 'kpi.tl.os-daily';
+    } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['RO'])) {
+        $dashboardRouteName = 'kpi.ro.os-daily';
+    } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['TLRO'])) {
+        $dashboardRouteName = 'kpi.tl.os-daily';
     }
 
     $badge = (int) $badgeApprovalTarget;

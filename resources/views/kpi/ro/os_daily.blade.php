@@ -1263,7 +1263,7 @@
   <div class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
     <div class="p-3 sm:p-4 border-b border-slate-200">
       <div class="font-bold text-slate-900 text-sm sm:text-base">
-        L0 migrasi ke LT
+        L0 (EOM ) -> Posisi Hari ini
         @if(!empty($weekStart) && !empty($weekEnd))
           <span class="text-slate-500 font-normal text-sm">({{ $weekStart }} s/d {{ $weekEnd }})</span>
         @endif
@@ -1294,7 +1294,7 @@
         </thead>
 
         <tbody class="divide-y divide-slate-200">
-          @forelse(($jtAngsuran ?? []) as $r)
+          @forelse(($l0Eom ?? []) as $r)
             @php
               $due = !empty($r->due_date) ? \Carbon\Carbon::parse($r->due_date) : null;
 
@@ -1371,7 +1371,7 @@
             </tr>
           @empty
             <tr>
-              <td colspan="13" class="px-3 py-6 text-center text-slate-500">Tidak ada JT angsuran minggu ini.</td>
+              <td colspan="13" class="px-3 py-6 text-center text-slate-500">Tidak ada L0 EOM.</td>
             </tr>
           @endforelse
         </tbody>
@@ -1521,7 +1521,7 @@
       <table class="min-w-full text-sm">
         <thead class="bg-slate-50">
           <tr class="text-slate-700">
-            <th class="text-left px-3 py-2 whitespace-nowrap">JT (Tanggal)</th>
+            
             <th class="text-left px-3 py-2 whitespace-nowrap">No Rek</th>
             <th class="text-left px-3 py-2 min-w-[220px]">Nama Debitur</th>
             <th class="text-right px-3 py-2 whitespace-nowrap">OS</th>
@@ -1566,7 +1566,7 @@
             @endphp
 
             <tr>
-              <td class="px-3 py-2 whitespace-nowrap">{{ $due ? $due->format('d/m/Y') : '-' }}</td>
+              
               <td class="px-3 py-2 font-mono whitespace-nowrap">{{ $acc !== '' ? $acc : '-' }}</td>
               <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap">Rp {{ number_format((int)($r->os ?? 0),0,',','.') }}</td>

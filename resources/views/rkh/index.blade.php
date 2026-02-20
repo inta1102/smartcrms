@@ -1,48 +1,120 @@
 @extends('layouts.app')
 
+@section('title', $role === 'TLRO' ? 'RKH - Monitoring TLRO' : 'RKH RO')
+
 @section('content')
-<div class="max-w-6xl mx-auto p-4">
-  <div class="flex items-center justify-between">
-    <div>
-      <h1 class="text-2xl font-bold">RKH RO</h1>
-      <p class="text-sm text-slate-500">Rencana kerja harian kamu.</p>
+<div class="max-w-6xl mx-auto p-4 space-y-4">
+
+  <div class="rounded-2xl border bg-white p-4">
+    <div class="text-2xl font-black text-slate-900">
+      {{ $role === 'TLRO' ? 'RKH TLRO' : 'RKH RO' }}
     </div>
-    <!-- <a href="{{ route('rkh.create') }}" class="px-3 py-2 rounded border">+ Buat RKH</a> -->
+    <div class="text-sm text-slate-600 mt-1">
+      {{ $role === 'TLRO' ? 'Monitoring RKH scope RO bawahan.' : 'Rencana kerja harian kamu.' }}
+    </div>
+
+    {{-- FILTER --}}
+    <form method="GET" class="mt-4 flex flex-wrap gap-2 items-end">
+      <div>
+        <label class="text-xs text-slate-500">From</label>
+        <input type="date" name="from" value="{{ $from }}" class="border rounded-lg px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="text-xs text-slate-500">To</label>
+        <input type="date" name="to" value="{{ $to }}" class="border rounded-lg px-3 py-2 text-sm">
+      </div>
+
+      <div>
+        <label class="text-xs text-slate-500">Status</label>
+        <select name="status" class="border rounded-lg px-3 py-2 text-sm">
+          <option value="">Semua</option>
+          @foreach(['draft','submitted','approved','done'] as $st)
+            <option value="{{ $st }}" @selected($status===$st)>{{ strtoupper($st) }}</option>
+          @endforeach
+        </select>
+      </div>
+
+      @if($role === 'TLRO')
+        <div>
+          <label class="text-xs text-slate-500">RO</label>
+          <select name="ro_id" class="border rounded-lg px-3 py-2 text-sm">
+            <option value="">Semua RO</option>
+            @foreach($ros as $ro)
+              <option value="{{ $ro->id }}" @selected((string)$roId === (string)$ro->id)>
+                {{ $ro->name }}
+              </option>
+            @endforeach
+          </select>
+        </div>
+      @endif
+
+      <button class="rounded-lg bg-slate-900 text-white px-4 py-2 text-sm">Filter</button>
+      <a href="{{ url()->current() }}" class="rounded-lg border px-4 py-2 text-sm">Reset</a>
+    </form>
   </div>
 
-  <div class="mt-4 border rounded overflow-auto">
-    <table class="min-w-full text-sm">
-      <thead class="bg-slate-50">
-        <tr>
-          <th class="text-left p-2">Tanggal</th>
-          <th class="text-left p-2">Total Jam</th>
-          <th class="text-left p-2">Status</th>
-          <th class="text-left p-2">Aksi</th>
-        </tr>
-      </thead>
-      <tbody>
-        @forelse($items as $rkh)
-          <tr class="border-t">
-            <td class="p-2">{{ $rkh->tanggal->format('d-m-Y') }}</td>
-            <td class="p-2">{{ number_format((float)$rkh->total_jam, 2) }}</td>
-            <td class="p-2">
-              <span class="px-2 py-1 rounded bg-slate-100">
-                {{ strtoupper($rkh->status) }}
-              </span>
-            </td>
-            <td class="p-2">
-              <a class="underline" href="{{ route('rkh.show', $rkh->id) }}">Detail</a>
-              @if(in_array($rkh->status, ['draft','rejected']))
-                <span class="mx-2 text-slate-300">|</span>
-                <a class="underline" href="{{ route('rkh.edit', $rkh->id) }}">Edit</a>
-              @endif
-            </td>
+  {{-- TABLE --}}
+  <div class="rounded-2xl border bg-white overflow-hidden">
+    <div class="p-4 border-b">
+      <div class="font-bold text-slate-900">Daftar RKH</div>
+      <div class="text-xs text-slate-500">Range: {{ $from }} s/d {{ $to }}</div>
+    </div>
+
+    <div class="overflow-x-auto">
+      <table class="min-w-full text-sm">
+        <thead class="bg-slate-50 text-slate-600">
+          <tr class="border-b">
+            <th class="text-left px-4 py-3">Tanggal</th>
+            @if($role === 'TLRO')
+              <th class="text-left px-4 py-3">RO</th>
+            @endif
+            <th class="text-right px-4 py-3">Total Jam</th>
+            <th class="text-center px-4 py-3">Items</th>
+            <th class="text-center px-4 py-3">Status</th>
+            <th class="text-right px-4 py-3">Aksi</th>
           </tr>
-        @empty
-          <tr><td class="p-4 text-slate-500" colspan="4">Belum ada RKH.</td></tr>
-        @endforelse
-      </tbody>
-    </table>
+        </thead>
+        <tbody class="divide-y">
+          @forelse($rows as $r)
+            <tr>
+              <td class="px-4 py-3">
+                {{ \Carbon\Carbon::parse($r->tanggal)->format('d-m-Y') }}
+              </td>
+
+              @if($role === 'TLRO')
+                <td class="px-4 py-3">{{ $r->ro_name }}</td>
+              @endif
+
+              <td class="px-4 py-3 text-right">{{ number_format((float)$r->total_jam, 2) }}</td>
+              <td class="px-4 py-3 text-center">{{ (int)($r->total_items ?? 0) }}</td>
+
+              <td class="px-4 py-3 text-center">
+                <span class="px-2 py-1 rounded-full text-xs border">
+                  {{ strtoupper($r->status) }}
+                </span>
+              </td>
+
+              <td class="px-4 py-3 text-right">
+                <a href="{{ route('rkh.show', $r->id) }}" class="rounded-lg border px-3 py-1.5 text-xs">
+                  Detail
+                </a>
+              </td>
+            </tr>
+          @empty
+            <tr>
+              <td class="px-4 py-6 text-center text-slate-500" colspan="{{ $role === 'TLRO' ? 6 : 5 }}">
+                Belum ada RKH.
+              </td>
+            </tr>
+          @endforelse
+        </tbody>
+      </table>
+    </div>
+
+    <div class="p-4">
+      {{ $rows->links() }}
+    </div>
   </div>
+
 </div>
 @endsection

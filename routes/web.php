@@ -798,6 +798,10 @@ Route::middleware('auth')->group(function () {
         Route::post('/details/{detail}/link-account', [RkhVisitController::class, 'linkAccount'])->name('details.linkAccount');
     });
 
+    // TLRO approve/reject
+    Route::post('/rkh/{rkh}/approve', [RkhController::class, 'approve'])->name('rkh.approve');
+    Route::post('/rkh/{rkh}/reject', [RkhController::class, 'reject'])->name('rkh.reject');
+
     // create LKH by detail
     Route::get('/lkh/{detail}/create', [LkhController::class, 'create'])->name('lkh.create');
     Route::post('/lkh/{detail}', [LkhController::class, 'store'])->name('lkh.store');
