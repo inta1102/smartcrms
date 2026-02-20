@@ -34,6 +34,7 @@ class CommunityController extends Controller
 
     public function create()
     {
+            
         return view('kpi.communities.create');
     }
 

@@ -748,29 +748,29 @@ Route::middleware('auth')->group(function () {
             Route::get('/', [CommunityController::class, 'index'])->name('index');
 
             Route::get('/create', [CommunityController::class, 'create'])
-                ->middleware('role:AO,SO,TLUM,TLSO,KBL')
+                ->middleware('role:AO,SO,TLUM,TLSO,KBL,KSLR,KSLU')
                 ->name('create');
 
             Route::post('/', [CommunityController::class, 'store'])
-                ->middleware('role:AO,SO,TLUM,TLSO,KBL')
+                ->middleware('role:AO,SO,TLUM,TLSO,KBL,KSLR,KSLU')
                 ->name('store');
 
             Route::get('/{community}', [CommunityController::class, 'show'])->name('show');
 
             Route::get('/{community}/edit', [CommunityController::class, 'edit'])
-                ->middleware('role:KBL')
+                ->middleware('role:AO,SO,TLUM,TLSO,KBL,KSLR,KSLU')
                 ->name('edit');
 
             Route::put('/{community}', [CommunityController::class, 'update'])
-                ->middleware('role:KBL')
+                ->middleware('role:AO,SO,TLUM,TLSO,KBL,KSLR,KSLU')
                 ->name('update');
 
             Route::post('/{community}/handlings', [CommunityHandlingController::class, 'store'])
-                ->middleware('role:AO,SO,KBL')
+                ->middleware('role:AO,SO,TLUM,TLSO,KBL,KSLR,KSLU')
                 ->name('handlings.store');
 
             Route::post('/handlings/{handling}/end', [CommunityHandlingController::class, 'end'])
-                ->middleware('role:AO,SO,KBL')
+                ->middleware('role:AO,SO,TLUM,TLSO,KBL,KSLR,KSLU')
                 ->name('handlings.end');
         });
     });

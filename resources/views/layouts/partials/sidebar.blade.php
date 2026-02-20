@@ -403,7 +403,7 @@
                 'icon'   => '🏘️',
                 'href'   => route('kpi.communities.index'),
                 'active' => $isKpiCommunityActive,
-                'show' => (in_array($roleValue, ['AO','SO'], true)) && !$isPimpinan,
+                'show' => (in_array($roleValue, ['AO','SO','TLUM','KSLR'], true)) && !$isPimpinan,
             ],
         ],
 

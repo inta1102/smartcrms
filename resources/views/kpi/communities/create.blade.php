@@ -11,7 +11,7 @@
       $raw = $u?->level;
       $lvl = strtoupper(trim((string)($raw instanceof \BackedEnum ? $raw->value : $raw)));
   }
-  abort_unless(in_array($lvl, ['AO','SO','KBL'], true), 403);
+  abort_unless(in_array($lvl, ['AO','SO','TLUM','KSLR','KSLU','KBL'], true), 403);
 
   $input = 'w-full px-3 py-2 rounded-xl border border-slate-200 bg-white text-slate-900 shadow-sm
             focus:outline-none focus:ring-4 focus:ring-indigo-100 focus:border-indigo-400';
@@ -22,7 +22,7 @@
     <div>
       <h1 class="text-2xl font-bold text-slate-900">Input Komunitas</h1>
       <p class="text-sm text-slate-500">
-        Diinput oleh AO/SO/KBL. Otomatis dihitung sebagai <b>Actual Komunitas</b> untuk KPI user yang input.
+        Diinput oleh AO/SO. Otomatis dihitung sebagai <b>Actual Komunitas</b> untuk KPI user yang input.
       </p>
     </div>
 
