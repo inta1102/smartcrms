@@ -493,72 +493,89 @@
   <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
 
     {{-- OS --}}
-    <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
-      <div class="text-[11px] sm:text-xs text-slate-500">
-        OS
-        @if($mode==='mtd')
-          <div class="text-[10px] text-slate-400 mt-0.5">{{ $baselineText }}</div>
-        @endif
+    <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 flex flex-col h-full">
+      <div class="text-[11px] sm:text-xs text-slate-500 leading-tight">
+        <div class="flex items-start justify-between gap-2">
+          <span class="font-semibold text-slate-600">OS</span>
+          @if($mode==='mtd')
+            <span class="text-[10px] text-slate-400 text-right">{{ $baselineText }}</span>
+          @endif
+        </div>
       </div>
 
-      <div class="mt-1">
+      <div class="mt-2">
         <div class="text-[11px] text-slate-500">Latest</div>
-        <div class="text-base sm:text-lg font-extrabold text-slate-900 leading-snug">
+        <div class="text-[15px] sm:text-lg font-extrabold text-slate-900 leading-tight break-words">
           {{ $fmtRpFull($cOs['value'] ?? 0) }}
         </div>
 
-        <div class="text-[11px] text-slate-500 mt-2">EOM</div>
-        <div class="text-sm font-semibold text-slate-800">
-          {{ $fmtRpFull($cOs['base'] ?? ($cOs['prev'] ?? 0)) }}
+        <div class="mt-2 flex items-center justify-between gap-2">
+          <div>
+            <div class="text-[11px] text-slate-500">EOM</div>
+            <div class="text-[13px] sm:text-sm font-semibold text-slate-800 leading-tight">
+              {{ $fmtRpFull($cOs['base'] ?? ($cOs['prev'] ?? 0)) }}
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="mt-3">
+      {{-- push growth area to bottom (biar sejajar antar card) --}}
+      <div class="mt-auto pt-3">
         <div class="text-[11px] text-slate-500">{{ $growthLabel }}</div>
-        <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $osBg }}">
-          <span class="text-sm font-bold {{ $osText }}">{{ $fmtDeltaRp($cOs['delta'] ?? null) }}</span>
-          <span class="text-[11px] text-slate-500">
-            @if($mode==='mtd') vs EOM @else {{ $prevDate ? '' : '(prev n/a)' }} @endif
-          </span>
+
+        <div class="mt-1 rounded-xl border px-3 py-2 {{ $osBg }}">
+          <div class="flex items-center justify-between gap-2">
+            <span class="text-sm font-bold {{ $osText }} whitespace-nowrap">
+              {{ $fmtDeltaRp($cOs['delta'] ?? null) }}
+            </span>
+            <span class="text-[11px] text-slate-500 truncate">
+              @if($mode==='mtd') vs EOM @else {{ $prevDate ? '' : '(prev n/a)' }} @endif
+            </span>
+          </div>
         </div>
       </div>
     </div>
 
     {{-- L0 (+ RR) --}}
-    <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
-      <div class="text-[11px] sm:text-xs text-slate-500">
-        L0
-        @if($mode==='mtd')
-          <div class="text-[10px] text-slate-400 mt-0.5">{{ $baselineText }}</div>
-        @endif
+  
+    <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 flex flex-col h-full">
+      <div class="text-[11px] sm:text-xs text-slate-500 leading-tight">
+        <div class="flex items-start justify-between gap-2">
+          <span class="font-semibold text-slate-600">L0</span>
+          @if($mode==='mtd')
+            <span class="text-[10px] text-slate-400 text-right">{{ $baselineText }}</span>
+          @endif
+        </div>
       </div>
 
-      <div class="mt-1">
+      <div class="mt-2">
         <div class="text-[11px] text-slate-500">Latest</div>
-        <div class="text-base sm:text-lg font-extrabold text-slate-900 leading-snug">
+        <div class="text-[15px] sm:text-lg font-extrabold text-slate-900 leading-tight break-words">
           {{ $fmtRpFull($cL0['value'] ?? 0) }}
         </div>
 
-        <div class="flex items-center justify-between mt-2">
+        <div class="mt-2 flex items-center justify-between gap-2">
           <div>
             <div class="text-[11px] text-slate-500">EOM</div>
-            <div class="text-sm font-semibold text-slate-800">
+            <div class="text-[13px] sm:text-sm font-semibold text-slate-800 leading-tight">
               {{ $fmtRpFull($cL0['base'] ?? ($cL0['prev'] ?? 0)) }}
-            </div>
-          </div>
-          <div class="text-right">
-            <div class="text-[11px] text-slate-500">RR</div>
-            <div class="text-sm font-extrabold text-slate-900">
-              {{ $fmtPct($rrV) }}
-            </div>
-            <div class="text-[10px] text-slate-400">
-              EOM: {{ $fmtPct($rrB) }}
             </div>
           </div>
         </div>
       </div>
+      <div class="text-right">
+        <div class="text-[11px] text-slate-500">RR</div>
+        <div class="text-sm font-extrabold text-slate-900">
+          {{ $fmtPct($rrV) }}
+        </div>
+        <div class="text-[10px] text-slate-400">
+          EOM: {{ $fmtPct($rrB) }}
+        </div>
+      </div>
 
-      <div class="mt-3 space-y-2">
+      {{-- push growth area to bottom (biar sejajar antar card) --}}
+      <div class="mt-auto pt-3">
+        <div class="mt-3 space-y-2">
         <div>
           <div class="text-[11px] text-slate-500">{{ $growthLabel }} L0</div>
           <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $l0Bg }}">
@@ -575,43 +592,51 @@
           </div>
         </div>
       </div>
+      </div>
     </div>
-
+      
     {{-- LT (+ %LT) --}}
-    <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
-      <div class="text-[11px] sm:text-xs text-slate-500">
-        LT
-        @if($mode==='mtd')
-          <div class="text-[10px] text-slate-400 mt-0.5">{{ $baselineText }}</div>
-        @endif
+  
+    <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 flex flex-col h-full">
+      <div class="text-[11px] sm:text-xs text-slate-500 leading-tight">
+        <div class="flex items-start justify-between gap-2">
+          <span class="font-semibold text-slate-600">LT</span>
+          @if($mode==='mtd')
+            <span class="text-[10px] text-slate-400 text-right">{{ $baselineText }}</span>
+          @endif
+        </div>
       </div>
 
-      <div class="mt-1">
+      <div class="mt-2">
         <div class="text-[11px] text-slate-500">Latest</div>
-        <div class="text-base sm:text-lg font-extrabold text-slate-900 leading-snug">
+        <div class="text-[15px] sm:text-lg font-extrabold text-slate-900 leading-tight break-words">
           {{ $fmtRpFull($cLt['value'] ?? 0) }}
         </div>
 
-        <div class="flex items-center justify-between mt-2">
+        <div class="mt-2 flex items-center justify-between gap-2">
           <div>
             <div class="text-[11px] text-slate-500">EOM</div>
-            <div class="text-sm font-semibold text-slate-800">
+            <div class="text-[13px] sm:text-sm font-semibold text-slate-800 leading-tight">
               {{ $fmtRpFull($cLt['base'] ?? ($cLt['prev'] ?? 0)) }}
             </div>
           </div>
-          <div class="text-right">
-            <div class="text-[11px] text-slate-500">%LT</div>
-            <div class="text-sm font-extrabold text-slate-900">
-              {{ $fmtPct($pctLtV) }}
-            </div>
-            <div class="text-[10px] text-slate-400">
-              EOM: {{ $fmtPct($pctLtB) }}
-            </div>
+        </div>
+       
+        <div class="text-right">
+          <div class="text-[11px] text-slate-500">%LT</div>
+          <div class="text-sm font-extrabold text-slate-900">
+            {{ $fmtPct($pctLtV) }}
+          </div>
+          <div class="text-[10px] text-slate-400">
+            EOM: {{ $fmtPct($pctLtB) }}
           </div>
         </div>
+       
       </div>
-
-      <div class="mt-3 space-y-2">
+      
+      {{-- push growth area to bottom (biar sejajar antar card) --}}
+      <div class="mt-auto pt-3">
+        <div class="mt-3 space-y-2">
         <div>
           <div class="text-[11px] text-slate-500">{{ $growthLabel }} LT</div>
           <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $ltBg }}">
@@ -628,43 +653,50 @@
           </div>
         </div>
       </div>
+      </div>
     </div>
-
+    
     {{-- DPK (+ %DPK) --}}
-    <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4">
-      <div class="text-[11px] sm:text-xs text-slate-500">
-        DPK
-        @if($mode==='mtd')
-          <div class="text-[10px] text-slate-400 mt-0.5">{{ $baselineText }}</div>
-        @endif
+    <div class="rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 flex flex-col h-full">
+      <div class="text-[11px] sm:text-xs text-slate-500 leading-tight">
+        <div class="flex items-start justify-between gap-2">
+          <span class="font-semibold text-slate-600">DPK</span>
+          @if($mode==='mtd')
+            <span class="text-[10px] text-slate-400 text-right">{{ $baselineText }}</span>
+          @endif
+        </div>
       </div>
 
-      <div class="mt-1">
+      <div class="mt-2">
         <div class="text-[11px] text-slate-500">Latest</div>
-        <div class="text-base sm:text-lg font-extrabold text-slate-900 leading-snug">
+        <div class="text-[15px] sm:text-lg font-extrabold text-slate-900 leading-tight break-words">
           {{ $fmtRpFull($cDpk['value'] ?? 0) }}
         </div>
 
-        <div class="flex items-center justify-between mt-2">
+        <div class="mt-2 flex items-center justify-between gap-2">
           <div>
             <div class="text-[11px] text-slate-500">EOM</div>
-            <div class="text-sm font-semibold text-slate-800">
+            <div class="text-[13px] sm:text-sm font-semibold text-slate-800 leading-tight">
               {{ $fmtRpFull($cDpk['base'] ?? ($cDpk['prev'] ?? 0)) }}
             </div>
           </div>
-          <div class="text-right">
-            <div class="text-[11px] text-slate-500">%DPK</div>
-            <div class="text-sm font-extrabold text-slate-900">
-              {{ $fmtPct($pctDpkV) }}
-            </div>
-            <div class="text-[10px] text-slate-400">
-              EOM: {{ $fmtPct($pctDpkB) }}
-            </div>
+        </div>
+       
+        <div class="text-right">
+          <div class="text-[11px] text-slate-500">%DPK</div>
+          <div class="text-sm font-extrabold text-slate-900">
+            {{ $fmtPct($pctDpkV) }}
+          </div>
+          <div class="text-[10px] text-slate-400">
+            EOM: {{ $fmtPct($pctDpkB) }}
           </div>
         </div>
+      
       </div>
-
-      <div class="mt-3 space-y-2">
+      
+      {{-- push growth area to bottom (biar sejajar antar card) --}}
+      <div class="mt-auto pt-3">
+        <div class="mt-3 space-y-2">
         <div>
           <div class="text-[11px] text-slate-500">{{ $growthLabel }} DPK</div>
           <div class="inline-flex items-center gap-2 mt-1 rounded-xl border px-3 py-1.5 {{ $dpkBg }}">
@@ -680,6 +712,7 @@
             <span class="text-[11px] text-slate-500">{{ $deltaHint('pct_lt', $pctDpkDeltaPts) }}</span>
           </div>
         </div>
+      </div>
       </div>
     </div>
 
