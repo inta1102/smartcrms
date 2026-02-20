@@ -307,10 +307,10 @@
         $dashboardRouteName = 'executive.targets.index';
     } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['BE'])) {
         $dashboardRouteName = 'legal-actions.index';
-    } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['RO'])) {
-        $dashboardRouteName = 'kpi.ro.os-daily';
-    } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['TLRO'])) {
-        $dashboardRouteName = 'kpi.tl.os-daily';
+    // } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['RO'])) {
+    //    $dashboardRouteName = 'kpi.ro.os-daily';
+    //} elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['TLRO'])) {
+    //    $dashboardRouteName = 'kpi.tl.os-daily';
     }
 
     $badge = (int) $badgeApprovalTarget;
@@ -379,7 +379,7 @@
                 'icon'   => '📁',
                 'href'   => route('cases.index'),
                 'active' => $isNplActive,
-                'show'   => (in_array($roleValue, ['BE','FE','KBL'], true)) && !$isPimpinan,
+                'show'   => (in_array($roleValue, ['BE','FE'], true)) && !$isPimpinan,
             ],
             [
                 'label'  => 'Overdue',
@@ -387,14 +387,14 @@
                 'href'   => route('cases.overdue'),
                 'active' => $isOverdueActive,
                 'badge'  => $overdueCount > 0 ? $overdueCount : null,
-                'show'   => (in_array($roleValue, ['BE','FE','KBL'], true)) && !$isPimpinan,
+                'show'   => (in_array($roleValue, ['BE','FE'], true)) && !$isPimpinan,
             ],
             [
                 'label'  => 'Agenda Saya',
                 'icon'   => '🗓️',
                 'href'   => route('ao-agendas.my'),
                 'active' => $isAgendaMine,
-                'show'   => (in_array($roleValue, ['BE','FE','KBL'], true)) && !$isPimpinan,
+                'show'   => (in_array($roleValue, ['BE','FE'], true)) && !$isPimpinan,
                 'badge'  => ($agendaBadge ?? 0) > 0 ? $agendaBadge : null,
             ],
             
@@ -403,7 +403,7 @@
                 'icon'   => '🏘️',
                 'href'   => route('kpi.communities.index'),
                 'active' => $isKpiCommunityActive,
-                'show' => (in_array($roleValue, ['AO','SO','KBL'], true)) && !$isPimpinan,
+                'show' => (in_array($roleValue, ['AO','SO'], true)) && !$isPimpinan,
             ],
         ],
 

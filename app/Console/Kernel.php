@@ -30,6 +30,7 @@ class Kernel extends ConsoleKernel
         \App\Console\Commands\KpiOsDailySnapshot::class,
         \App\Console\Commands\KpiRoRealtime::class,
         \App\Console\Commands\KpiRoLock::class,
+        \App\Console\Commands\KpiVisitDailySnapshot::class,
     ];
 
     protected function schedule(Schedule $schedule): void
@@ -110,6 +111,14 @@ class Kernel extends ConsoleKernel
             ->withoutOverlapping()
             ->onOneServer();
     
+        $schedule->command('kpi:visit-daily-snapshot --yesterday')
+            ->dailyAt('09:00')
+            ->withoutOverlapping()
+            ->onOneServer();
+
+        $schedule->command('kpi:visit-daily-snapshot')
+            ->hourly()
+            ->withoutOverlapping();
     }
 
     /**

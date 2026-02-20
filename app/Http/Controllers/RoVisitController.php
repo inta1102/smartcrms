@@ -154,13 +154,23 @@ class RoVisitController extends Controller
 
             if (!$visit) {
                 $visit = \App\Models\RoVisit::create([
-                    'user_id'    => $user->id,
-                    'account_no' => $accountNo,
-                    'ao_code'    => $user->ao_code ?? null,
-                    'visit_date' => $today,
-                    'status'     => 'planned',
-                    'source'     => 'rkh',
+                    'rkh_detail_id' => $detail->id,         // ✅ penting
+                    'user_id'       => $user->id,
+                    'account_no'    => $accountNo,
+                    'ao_code'       => $detail->header?->ao_code
+                                    ?? $detail->ao_code
+                                    ?? ($request->user()->ao_code ?? null), // optional sesuai strukturmu
+                    'visit_date'    => $today,
+                    'status'        => 'planned',
+                    'source'        => 'rkh',
                 ]);
+            } else {
+                // kalau sudah ada visit tapi rkh_detail_id kosong, kita isi biar nyambung
+                if (empty($visit->rkh_detail_id)) {
+                    $visit->rkh_detail_id = $detail->id;
+                    $visit->source = $visit->source ?: 'rkh';
+                    $visit->save();
+                }
             }
 
             // ✅ ambil debitur info dari loan_accounts
