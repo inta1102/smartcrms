@@ -38,7 +38,16 @@
 
       $src = $isObj ? ($it->source ?? 'realtime') : ($it['source'] ?? 'realtime');
       $status = $isObj ? ($it->status ?? null) : ($it['status'] ?? null);
+
+      // ✅ NORMALIZE utk match aman
+      $nameUp = strtoupper(trim((string)$name));
+      $code13 = trim((string)$code);
     @endphp
+
+    {{-- ✅ SKIP: jangan tampilkan WINDA (atau BE code 000033) --}}
+    @if($nameUp === 'WINDA' || $code13 === '000033')
+      @continue
+    @endif
 
     <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
       <div class="px-5 py-4 border-b border-slate-200 flex items-start justify-between gap-4">

@@ -302,6 +302,44 @@
             </span>
         </div>
 
+        {{-- ✅ MESSAGE BOX KHUSUS STEP 1B --}}
+        @php
+            $instStatus = session('installments_status'); // success|failed|null
+            $instMsg    = session('installments_message');
+            $instErrs   = session('installments_errors'); // optional array
+        @endphp
+
+        @if($instStatus === 'success')
+            <div class="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            <div class="font-semibold">✅ Import Installments berhasil</div>
+            <div class="mt-1 text-[12px] whitespace-pre-line">{{ $instMsg ?: 'Selesai.' }}</div>
+            </div>
+        @elseif($instStatus === 'failed')
+            <div class="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            <div class="font-semibold">❌ Import Installments gagal</div>
+            <div class="mt-1 text-[12px] whitespace-pre-line">{{ $instMsg ?: 'Terjadi error. Cek log.' }}</div>
+
+            {{-- optional: tampilkan error baris --}}
+            @if(is_array($instErrs) && count($instErrs))
+                <div class="mt-2 text-[12px]">
+                <div class="font-semibold mb-1">Detail error (contoh):</div>
+                <ul class="list-disc list-inside space-y-1">
+                    @foreach(array_slice($instErrs, 0, 8) as $e)
+                    <li>
+                        Row {{ $e['row'] ?? '-' }} — {{ $e['reason'] ?? 'Invalid data' }}
+                    </li>
+                    @endforeach
+                </ul>
+                @if(count($instErrs) > 8)
+                    <div class="mt-1 text-[11px] text-rose-700">
+                    (+{{ count($instErrs) - 8 }} error lain tidak ditampilkan)
+                    </div>
+                @endif
+                </div>
+            @endif
+            </div>
+        @endif
+
         <form method="POST"
                 action="{{ route('loans.installments.import') }}"
                 enctype="multipart/form-data"
@@ -349,7 +387,132 @@
                     text-sm font-semibold rounded-lg
                     bg-msa-blue text-white
                     hover:bg-blue-900 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-msa-blue">
-            Import Installments
+            Import Angsuran
+            </button>
+        </form>
+        </div>
+
+        {{-- =========================
+            STEP 1C - IMPORT PELUNASAN / CLOSURE (LN/WO/AYDA)
+        ========================= --}}
+        <div class="mt-4 rounded-2xl border border-slate-100 bg-white px-5 py-4">
+        <div class="flex items-start justify-between">
+            <div>
+            <div class="text-sm font-semibold text-slate-800">Step 1C — Import Pelunasan (LN/WO/AYDA)</div>
+            <div class="text-xs text-slate-500">
+                Upload file Excel pelunasan untuk membedakan metrik <b>LUNAS</b> vs <b>EXIT OTHER</b>.
+            </div>
+            </div>
+            <span class="text-[11px] px-2 py-1 rounded-full bg-slate-100 text-slate-700 ring-1 ring-slate-200">
+            WAJIB (utk KPI BE)
+            </span>
+        </div>
+
+        <div class="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-[11px] text-slate-600">
+            Header minimal yang dibutuhkan: <b>nofas, sldakhir, tgllunas, stskrd, cno, kdcollector</b>.
+            <div class="mt-1">
+            Mapping status: <b>LN→LUNAS</b>, <b>WO→WRITE_OFF</b>, <b>AYDA→AYDA</b>.
+            </div>
+        </div>
+
+        {{-- ✅ MESSAGE BOX KHUSUS STEP 1C --}}
+        @php
+            $pelStatus = session('pelunasan_status'); // success|failed|null
+            $pelMsg    = session('pelunasan_message');
+            $pelErrs   = session('pelunasan_errors'); // optional array
+            $pelBatch  = session('pelunasan_batch_id'); // optional
+        @endphp
+
+        @if($pelStatus === 'success')
+            <div class="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            <div class="font-semibold">✅ Import Pelunasan berhasil</div>
+            <div class="mt-1 text-[12px] whitespace-pre-line">{{ $pelMsg ?: 'Selesai.' }}</div>
+            @if($pelBatch)
+                <div class="mt-1 text-[11px] text-emerald-700">
+                Batch: <b>{{ $pelBatch }}</b>
+                </div>
+            @endif
+            </div>
+        @elseif($pelStatus === 'failed')
+            <div class="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">
+            <div class="font-semibold">❌ Import Pelunasan gagal</div>
+            <div class="mt-1 text-[12px] whitespace-pre-line">{{ $pelMsg ?: 'Terjadi error. Cek log.' }}</div>
+
+            {{-- optional: tampilkan error baris --}}
+            @if(is_array($pelErrs) && count($pelErrs))
+                <div class="mt-2 text-[12px]">
+                <div class="font-semibold mb-1">Detail error (contoh):</div>
+                <ul class="list-disc list-inside space-y-1">
+                    @foreach(array_slice($pelErrs, 0, 8) as $e)
+                    <li>
+                        Row {{ $e['row'] ?? '-' }} — {{ $e['reason'] ?? 'Invalid data' }}
+                    </li>
+                    @endforeach
+                </ul>
+                @if(count($pelErrs) > 8)
+                    <div class="mt-1 text-[11px] text-rose-700">
+                    (+{{ count($pelErrs) - 8 }} error lain tidak ditampilkan)
+                    </div>
+                @endif
+                </div>
+            @endif
+            </div>
+        @endif
+
+        <form method="POST"
+                action="{{ route('import.pelunasan') }}"
+                enctype="multipart/form-data"
+                class="mt-4 space-y-4">
+            @csrf
+
+            {{-- pakai posisi yang sama --}}
+            <input type="hidden" name="position_date" value="{{ old('position_date', $posForStepStr) }}"/>
+
+            <div>
+            <label class="block text-sm font-medium text-slate-700 mb-1">Pilih File Pelunasan (.xls/.xlsx)</label>
+            <input
+                type="file"
+                name="file_pelunasan"
+                accept=".xls,.xlsx"
+                required
+                class="block w-full text-sm text-slate-700
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-md file:border-0
+                    file:text-sm file:font-semibold
+                    file:bg-msa-blue file:text-white
+                    hover:file:bg-blue-900">
+            <div class="mt-1 text-[11px] text-slate-500">
+                Pastikan kolom <b>tgllunas</b> terisi dan format tanggal valid.
+            </div>
+            </div>
+
+            <div class="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3">
+            <label class="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" name="reimport" value="1" {{ old('reimport') ? 'checked' : '' }}>
+                <span class="font-semibold">Re-import</span>
+                <span class="text-slate-500 text-[12px]">(import ulang file yang sama / koreksi data)</span>
+            </label>
+
+            <div class="mt-2">
+                <textarea
+                name="reimport_reason"
+                rows="2"
+                placeholder="Alasan koreksi (wajib jika re-import)"
+                class="w-full rounded-lg border-slate-300 px-3 py-2 text-sm focus:border-msa-blue focus:ring-msa-blue"
+                >{{ old('reimport_reason') }}</textarea>
+                <div class="mt-1 text-[11px] text-slate-500">
+                Isi alasan koreksi untuk kebutuhan audit & SOP.
+                </div>
+            </div>
+            </div>
+
+            <button
+            type="submit"
+            class="w-full inline-flex justify-center items-center px-4 py-2.5
+                    text-sm font-semibold rounded-lg
+                    bg-msa-blue text-white
+                    hover:bg-blue-900 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-msa-blue">
+            Import Pelunasan
             </button>
         </form>
         </div>

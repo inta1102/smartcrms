@@ -21,7 +21,7 @@ use App\Models\LegacySyncRun;
 use Illuminate\Support\Facades\DB;
 use App\Imports\LoanInstallmentsImport; 
 use Illuminate\Support\Facades\Artisan;
-
+use App\Imports\LoanAccountClosuresImport;
 
 
 class LoanImportController extends Controller
@@ -588,9 +588,19 @@ class LoanImportController extends Controller
                 'imported_by'   => auth()->id(),
             ]);
 
-            return redirect()
+           return redirect()
                 ->route('loans.import.form')
-                ->with('status', "Import installment selesai. Posisi: {$posDate}. Total: {$total} | Inserted: {$inserted} | Updated: {$updated} | Skipped: {$skipped}");
+                ->with([
+                    // ✅ tetap pertahankan global banner
+                    'status' => "Import installment selesai. Posisi: {$posDate}. Total: {$total} | Inserted: {$inserted} | Updated: {$updated} | Skipped: {$skipped}",
+
+                    // ✅ ini yg dibaca box Step 1B
+                    'installments_status'  => 'success',
+                    'installments_message' => "Posisi: {$posDate}\nTotal: {$total}\nInserted: {$inserted}\nUpdated: {$updated}\nSkipped: {$skipped}",
+
+                    // optional (kalau kamu mau tampilkan)
+                    'installments_errors'  => method_exists($importer, 'errors') ? $importer->errors() : [],
+                ]);
 
         } catch (ExcelValidationException $e) {
 
@@ -612,8 +622,15 @@ class LoanImportController extends Controller
             ]);
 
             return back()
-                ->with('error', 'Gagal import installment: header/kolom tidak sesuai template.')
-                ->withInput();
+                ->withInput()
+                ->with([
+                    'error' => 'Gagal import installment: header/kolom tidak sesuai template.',
+
+                    // ✅ box Step 1B
+                    'installments_status'  => 'failed',
+                    'installments_message' => 'Header/kolom installment tidak sesuai template.',
+                    'installments_errors'  => [], // kalau mau, bisa isi failure ringkas
+                ]);
 
         } catch (\Throwable $e) {
 
@@ -637,8 +654,15 @@ class LoanImportController extends Controller
             ]);
 
             return back()
-                ->with('error', 'Gagal import installment. Detail ada di log.')
-                ->withInput();
+                ->withInput()
+                ->with([
+                    'error' => 'Gagal import installment. Detail ada di log.',
+
+                    // ✅ box Step 1B
+                    'installments_status'  => 'failed',
+                    'installments_message' => $e->getMessage(), // atau versi aman: 'Terjadi error saat proses import.'
+                    'installments_errors'  => [],
+                ]);
         }
     }
 
@@ -661,4 +685,48 @@ class LoanImportController extends Controller
         return $m !== '' ? $m : 'Terjadi kesalahan saat import. Silakan cek log.';
     }
 
+    
+    public function importClosures(Request $request)
+    {
+        $request->validate([
+            'file_pelunasan' => ['required','file','mimes:xls,xlsx'],
+        ]);
+
+        try {
+
+            $file = $request->file('file_pelunasan');
+
+            $import = new LoanAccountClosuresImport(
+                $file->getClientOriginalName()
+            );
+
+            Excel::import($import, $file);
+
+            return redirect()
+                ->route('loans.import.form') // lebih aman daripada back()
+                ->with([
+                    'pelunasan_status'   => 'success',
+                    'pelunasan_message'  =>
+                        "Inserted={$import->inserted}, Updated={$import->updated}, Skipped={$import->skipped}",
+                    'pelunasan_errors'   => $import->errors ?? [],
+                    'pelunasan_batch_id' => $import->batchId ?? null,
+                ]);
+
+        } catch (\Throwable $e) {
+
+            \Log::error('[IMPORT PELUNASAN ERROR]', [
+                'msg' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+            ]);
+
+            return redirect()
+                ->route('loans.import.form')
+                ->with([
+                    'pelunasan_status'  => 'failed',
+                    'pelunasan_message' => 'Import gagal. Detail ada di log.',
+                ]);
+        }
+    }
+    
 }

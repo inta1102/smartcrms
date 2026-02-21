@@ -522,7 +522,7 @@
                 'icon'   => '⬆️',
                 'href'   => route('loans.import.form'),
                 'active' => $is('loans.import.*'),
-                'show' => (($isTl || $isKasi) && !$isPimpinan) || $isOrgAdmin,
+                'show' => (($isTl || $isKasi) && !$isPimpinan) || $isOrgAdmin || $isKabagOrPe,
             ],
         ] : [],
 

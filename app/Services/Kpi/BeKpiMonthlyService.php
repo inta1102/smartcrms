@@ -211,22 +211,55 @@ class BeKpiMonthlyService
 
         $aoCodes = $users->pluck('ao_code')->map(fn($x)=>(string)$x)->values()->all();
 
-        // ===== Recovery OS (prev kolek 3/4/5 -> (lunas / hilang) OR menjadi kolek 1/2) =====
+        // ===== Recovery OS (OS Selesai) =====
+        // RULE BARU:
+        // - prev kolek 3/4/5
+        // - recovery kalau:
+        //   A) cur ada dan cur.kolek jadi 1/2
+        //   B) cur NULL (account hilang dari snapshot) -> hanya dihitung kalau CLOSE_TYPE = LUNAS
+        //      (WO/AYDA tidak dihitung recovery)
         $recoveryByAo = DB::table('loan_account_snapshots_monthly as prev')
-            ->leftJoin('loan_account_snapshots_monthly as cur', function($j) use ($currentSnap) {
-                $j->on('cur.account_no','=','prev.account_no')
-                  ->where('cur.snapshot_month', $currentSnap);
+            ->leftJoin('loan_account_snapshots_monthly as cur', function ($j) use ($currentSnap) {
+                $j->on('cur.account_no', '=', 'prev.account_no')
+                ->where('cur.snapshot_month', $currentSnap);
+            })
+            ->leftJoin('loan_account_closures as lc', function ($j) use ($monthStart, $monthEndEx) {
+                $j->on('lc.account_no', '=', 'prev.account_no')
+                // pastikan closurenya terjadi di bulan KPI (range date)
+                ->whereDate('lc.closed_date', '>=', $monthStart)
+                ->whereDate('lc.closed_date', '<',  $monthEndEx);
+                // alternatif kalau kamu yakin pakai closed_month:
+                // ->where('lc.closed_month', Carbon::parse($monthStart)->format('Y-m'));
             })
             ->where('prev.snapshot_month', $prevSnap)
             ->whereIn('prev.ao_code', $aoCodes)
             ->whereIn('prev.kolek', [3,4,5])
-            ->where(function($q) {
-                $q->whereNull('cur.account_no')
-                  ->orWhereIn('cur.kolek', [1,2]);
+            ->where(function ($q) {
+                $q
+                // A) masih ada di snapshot current, tapi membaik jadi 1/2
+                ->whereIn('cur.kolek', [1,2])
+
+                // B) hilang dari snapshot current -> valid recovery hanya jika LUNAS
+                ->orWhere(function ($qq) {
+                    $qq->whereNull('cur.account_no')
+                    ->where('lc.close_type', 'LUNAS');
+                });
             })
             ->groupBy('prev.ao_code')
             ->selectRaw('prev.ao_code as ao_code, SUM(prev.outstanding) as recovery_os')
-            ->pluck('recovery_os','ao_code');
+            ->pluck('recovery_os', 'ao_code');
+            // ===== Recovery OS (prev kolek 3/4/5 -> (lunas / hilang) OR menjadi kolek 1/2) ===== 
+        // $recoveryByAo = DB::table('loan_account_snapshots_monthly as prev') 
+        //     ->leftJoin('loan_account_snapshots_monthly as cur', 
+        //     function($j) use ($currentSnap) { $j->on('cur.account_no','=','prev.account_no') 
+        //     ->where('cur.snapshot_month', $currentSnap); }) 
+        //     ->where('prev.snapshot_month', $prevSnap) 
+        //     ->whereIn('prev.ao_code', $aoCodes) 
+        //     ->whereIn('prev.kolek', [3,4,5]) 
+        //     ->where(function($q) { $q->whereNull('cur.account_no') ->orWhereIn('cur.kolek', [1,2]); }) 
+        //     ->groupBy('prev.ao_code') 
+        //     ->selectRaw('prev.ao_code as ao_code, SUM(prev.outstanding) as recovery_os') 
+        //     ->pluck('recovery_os','ao_code');
 
         // ===== NPL prev/now (info net drop) =====
         $nplPrevByAo = DB::table('loan_account_snapshots_monthly')

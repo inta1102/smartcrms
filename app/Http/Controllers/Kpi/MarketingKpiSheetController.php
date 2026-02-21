@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Kpi;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Services\Kpi\KpiScoreHelper;
 
 class MarketingKpiSheetController
 {
@@ -275,51 +276,61 @@ class MarketingKpiSheetController
                 // ===== Targets (fallback default) =====
                 $tg = $targetMap->get($r->ao_code);
 
-                $targetTopup = (float)($tg->target_topup ?? 750_000_000);
-                $targetNoa   = (int)  ($tg->target_noa ?? 2);
-                $targetRr    = (float)($tg->target_rr_pct ?? 100.0);
-                $targetDpk   = (float)($tg->target_dpk_pct ?? 1.00); // default 1% (target pemburukan <1%)
+                $targetTopup = (float)($tg->target_topup ?? 0);
+                $targetNoa   = (int)  ($tg->target_noa ?? 0);
+                $targetRr    = (float)($tg->target_rr_pct ?? 0);
+                $targetDpk   = (float)($tg->target_dpk_pct ?? 0); // default 1% (target pemburukan <1%)
 
-                // ===== Achievement =====
-                $achRr = $targetRr > 0 ? round(($rrPct / $targetRr) * 100, 2) : 0;
+                // ===== Achievement (pakai helper biar konsisten & anti target=0 free score) =====
+                $achRr    = KpiScoreHelper::achievementPct($rrPct, $targetRr);           // rrPct vs targetRr
+                $scoreRr  = KpiScoreHelper::scoreBand1to6($achRr);
 
-                $topupReal = (float)($r->topup_realisasi ?? 0);
-                $achTopup  = $targetTopup > 0 ? round(($topupReal / $targetTopup) * 100, 2) : 0;
+                $topupReal  = (float)($r->topup_realisasi ?? 0);
+                $achTopup   = KpiScoreHelper::achievementPct($topupReal, $targetTopup);
+                $scoreTopup = KpiScoreHelper::scoreBand1to6($achTopup);
 
-                $noaReal = (int)($r->noa_realisasi ?? 0);
-                $achNoa  = $targetNoa > 0 ? round(($noaReal / $targetNoa) * 100, 2) : 0;
+                $noaReal  = (int)($r->noa_realisasi ?? 0);
+                $achNoa   = KpiScoreHelper::achievementPct((float)$noaReal, (float)$targetNoa);
+                $scoreNoa = KpiScoreHelper::scoreBand1to6($achNoa);
 
                 // ===== DPK (reverse) =====
-                $dpkActual = (float)($r->dpk_pct ?? 0); // actual %
+                // actual dpkActual (%), targetDpk (% batas)
+                $dpkActual = (float)($r->dpk_pct ?? 0);
                 $achDpk = 0.0;
+
                 if ($targetDpk > 0) {
+                    // kalau actual 0 => perfect (100)
                     $achDpk = ($dpkActual <= 0) ? 100.0 : round(($targetDpk / $dpkActual) * 100.0, 2);
                     $achDpk = min($achDpk, 200.0); // optional cap
                 }
+                $scoreDpk = KpiScoreHelper::scoreBand1to6($achDpk);
 
-                // ===== PI =====
-                $piRepay = round(((float)($r->repayment_score ?? 0)) * $weights['repayment'], 2);
-                $piTopup = round(((float)($r->topup_score ?? 0))     * $weights['topup'], 2);
-                $piNoa   = round(((float)($r->noa_score ?? 0))       * $weights['noa'], 2);
-                $piDpk   = round(((float)($r->dpk_score ?? 0))       * $weights['dpk'], 2);
+                // ===== PI (PAKAI score hasil helper, bukan DB) =====
+                $piRepay = round($scoreRr    * $weights['repayment'], 2);
+                $piTopup = round($scoreTopup * $weights['topup'], 2);
+                $piNoa   = round($scoreNoa   * $weights['noa'], 2);
+                $piDpk   = round($scoreDpk   * $weights['dpk'], 2);
 
                 $piTotal = round($piRepay + $piTopup + $piNoa + $piDpk, 2);
 
                 return (object) array_merge((array)$r, [
-                    // display RR
-                    'repayment_pct_display' => $rrPct,
-
                     // targets
                     'target_rr_pct'  => $targetRr,
                     'target_topup'   => $targetTopup,
                     'target_noa'     => $targetNoa,
                     'target_dpk_pct' => $targetDpk,
 
-                    // achievement (dipakai di kolom "Pencapaian")
+                    // achievement
                     'ach_rr'    => $achRr,
                     'ach_topup' => $achTopup,
                     'ach_noa'   => $achNoa,
                     'ach_dpk'   => $achDpk,
+
+                    // ✅ OVERRIDE score final (jangan pakai score dari DB)
+                    'repayment_score' => $scoreRr,
+                    'topup_score'     => $scoreTopup,
+                    'noa_score'       => $scoreNoa,
+                    'dpk_score'       => $scoreDpk,
 
                     // PI
                     'pi_repayment' => $piRepay,
@@ -328,6 +339,7 @@ class MarketingKpiSheetController
                     'pi_dpk'       => $piDpk,
                     'pi_total'     => $piTotal,
                 ]);
+                
             });
 
             // ======================================================

@@ -188,6 +188,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/loans/import/installments', [LoanImportController::class, 'importInstallments'])
         ->name('loans.installments.import');
 
+    Route::post('/loans/import/pelunasan', [LoanImportController::class, 'importClosures'])->name('import.pelunasan');
     // -------------------------------
     // EWS
     // -------------------------------

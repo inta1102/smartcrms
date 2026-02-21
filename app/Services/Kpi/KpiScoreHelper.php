@@ -207,4 +207,37 @@ class KpiScoreHelper
         return 6;
     }
 
+    /**
+     * Achievement percent for positive KPI (bigger is better).
+     * If target <= 0 => achievement = 0 (prevent free score).
+     */
+    public static function achievementPct(float $actual, float $target): float
+    {
+        if ($target <= 0) return 0.0;
+        if ($actual <= 0) return 0.0;
+        return ($actual / $target) * 100.0;
+    }
+
+    /**
+     * Score band 1..6 based on achievement percent.
+     * <25 => 1; 25-49 => 2; 50-74 => 3; 75-99 => 4; =100 => 5; >100 => 6
+     */
+    public static function scoreBand1to6(float $achPct): int
+    {
+        if ($achPct < 25) return 1;
+        if ($achPct < 50) return 2;
+        if ($achPct < 75) return 3;
+        if ($achPct < 100) return 4;
+        if (abs($achPct - 100) < 1e-9) return 5;
+        return 6;
+    }
+
+    /**
+     * Utility: safe round for UI.
+     */
+    public static function roundPct(float $pct, int $decimals = 2): float
+    {
+        return round($pct, $decimals);
+    }
+
 }

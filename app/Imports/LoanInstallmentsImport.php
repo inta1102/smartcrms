@@ -16,15 +16,14 @@ use PhpOffice\PhpSpreadsheet\Shared\Date as ExcelDate;
 class LoanInstallmentsImport implements ToCollection, WithHeadingRow, WithChunkReading
 {
     public int $total = 0;
-
-    // ✅ kompatibel dengan UI / batch summary yang biasa pakai inserted/updated
     public int $inserted = 0;
     public int $updated  = 0;
-
     public int $skipped  = 0;
-
-    // legacy (kalau ada yang masih pakai nama ini)
     public int $upserted = 0;
+
+    // ✅ tambahan: track error detail
+    protected array $errors = [];
+    protected int $maxErrorCapture = 200;
 
     protected string $positionDate;
     protected ?int $importBatchId;
@@ -37,21 +36,23 @@ class LoanInstallmentsImport implements ToCollection, WithHeadingRow, WithChunkR
         $this->sourceFile    = $sourceFile ?: 'installments_import';
     }
 
-    /**
-     * ✅ Standarisasi summary: selalu ada inserted/updated
-     * Biar UI aman dan tidak "Undefined array key inserted"
-     */
+    // =========================================================
+    // ✅ SUMMARY STANDARD (UI SAFE)
+    // =========================================================
     public function summary(): array
     {
         return [
-            'total'    => (int) $this->total,
-            'inserted' => (int) $this->inserted,
-            'updated'  => (int) $this->updated,
-            'skipped'  => (int) $this->skipped,
-
-            // legacy alias
-            'upserted' => (int) $this->upserted,
+            'total'    => (int)$this->total,
+            'inserted' => (int)$this->inserted,
+            'updated'  => (int)$this->updated,
+            'skipped'  => (int)$this->skipped,
+            'upserted' => (int)$this->upserted,
         ];
+    }
+
+    public function errors(): array
+    {
+        return $this->errors;
     }
 
     public function collection(Collection $rows)
@@ -61,76 +62,61 @@ class LoanInstallmentsImport implements ToCollection, WithHeadingRow, WithChunkR
         $this->total += $rows->count();
         $now = now();
 
-        // debug keys sekali per chunk (aman)
-        static $logged = false;
-        if (!$logged && $rows->isNotEmpty()) {
-            $first = $rows->first();
-            $r0 = is_array($first) ? $first : $first->toArray();
-            Log::info('[IMPORT INST] first row keys', ['keys' => array_keys($r0)]);
-            $logged = true;
-        }
-
         $payload = [];
+        $rowNumberOffset = 0;
 
-        foreach ($rows as $row) {
+        foreach ($rows as $index => $row) {
+
+            $rowNumber = $index + 2; // +2 karena heading row
+
             $r = is_array($row) ? $row : $row->toArray();
 
             $accountNo = $this->normalizeAccountNo($r['nofas'] ?? null);
             if (!$accountNo) {
-                $this->skipped++;
+                $this->skipWithReason($rowNumber, 'Account no (nofas) kosong / invalid');
                 continue;
             }
 
-            // ✅ angsKe wajib (unique logika kamu)
             $angsKe = $this->parseIntOrNull($r['angske'] ?? null);
-            if ($angsKe === null || $angsKe <= 0) {
-                $this->skipped++;
+            if (!$angsKe || $angsKe <= 0) {
+                $this->skipWithReason($rowNumber, 'Angsuran ke (angske) tidak valid');
                 continue;
             }
 
-            // =========================
-            // ✅ Tanggal (WAJIB NOT NULL)
-            // due_date  : tglval (fallback tglbayar)
-            // paid_date : tglbayar (fallback tglval)
-            // =========================
+            // =====================
+            // DATE HANDLING
+            // =====================
             $dueDate  = $this->parseDateOrNull($r['tglval'] ?? null)
                 ?? $this->parseDateOrNull($r['tglbayar'] ?? null);
 
             $paidDate = $this->parseDateOrNull($r['tglbayar'] ?? null)
                 ?? $this->parseDateOrNull($r['tglval'] ?? null);
 
-            // fallback terakhir biar gak null
             if (!$dueDate && $paidDate) $dueDate = $paidDate;
             if (!$paidDate && $dueDate) $paidDate = $dueDate;
 
             if (!$dueDate || !$paidDate) {
-                $this->skipped++;
+                $this->skipWithReason($rowNumber, 'Tanggal tidak valid (tglval/tglbayar)');
                 continue;
             }
 
-            // period: pakai bulan due_date
             $period = Carbon::parse($dueDate)->startOfMonth()->toDateString();
 
-            // =========================
-            // ✅ Nominal
-            // =========================
+            // =====================
+            // NOMINAL
+            // =====================
             $principal = $this->parseMoneyInt($r['nlpokok'] ?? 0);
             $interest  = $this->parseMoneyInt($r['nlbunga'] ?? 0);
-
-            // denda/penalty/provisi (sesuai file kamu)
             $denda     = $this->parseMoneyInt($r['nldenda'] ?? 0);
             $penalty   = $this->parseMoneyInt($r['penalty'] ?? 0);
             $provisi   = $this->parseMoneyInt($r['provisi'] ?? 0);
 
-            // ✅ inilah yang akan dipakai KPI FE (sum penalty_paid)
             $penaltyPaid = $denda + $penalty;
             $feePaid     = $provisi;
-
             $paidAmount  = $principal + $interest + $penaltyPaid + $feePaid;
 
-            // skip transaksi nol
             if ($paidAmount <= 0) {
-                $this->skipped++;
+                $this->skipWithReason($rowNumber, 'Total paid_amount = 0');
                 continue;
             }
 
@@ -138,67 +124,51 @@ class LoanInstallmentsImport implements ToCollection, WithHeadingRow, WithChunkR
             $status = isset($r['status']) ? trim((string)$r['status']) : null;
             $notes  = isset($r['ket']) ? trim((string)$r['ket']) : null;
 
-            // =========================
-            // ✅ Flags RR (ontime & days_late)
-            // =========================
             $due  = Carbon::parse($dueDate)->startOfDay();
             $paid = Carbon::parse($paidDate)->startOfDay();
 
             $daysLate = $paid->greaterThan($due) ? (int)$due->diffInDays($paid) : 0;
             $isOntime = $paid->lessThanOrEqualTo($due);
 
-            // =========================
-            // ✅ Fingerprint (idempotent)
-            // Tambah angske + dueDate supaya aman dari bentrok
-            // =========================
+            // =====================
+            // FINGERPRINT (idempotent)
+            // =====================
             $fpSource = implode('|', [
                 $accountNo,
-                (string)$angsKe,
+                $angsKe,
                 $dueDate,
                 $paidDate,
-                (string)$principal,
-                (string)$interest,
-                (string)$penaltyPaid,
-                (string)$feePaid,
-                (string)($status ?? ''),
+                $principal,
+                $interest,
+                $penaltyPaid,
+                $feePaid,
+                $status ?? '',
             ]);
+
             $fp = hash('sha256', $fpSource);
 
             $payload[] = [
                 'trx_fingerprint' => $fp,
-
                 'account_no' => $accountNo,
                 'ao_code'    => $aoCode ?: null,
-                'user_id'    => null, // mapping setelah upsert
-
+                'user_id'    => null,
                 'period'     => $period,
-
-                // ✅ WAJIB (NOT NULL)
                 'due_date'   => $dueDate,
-
-                // due_amount dari file ini tidak ada (set 0)
                 'due_amount' => 0,
-
-                'paid_date'   => $paidDate,
-                'paid_amount' => $paidAmount,
-
-                // detail transaksi
+                'paid_date'  => $paidDate,
+                'paid_amount'=> $paidAmount,
                 'angske'         => $angsKe,
                 'principal_paid' => $principal,
                 'interest_paid'  => $interest,
                 'penalty_paid'   => $penaltyPaid,
                 'fee_paid'       => $feePaid,
-
                 'status' => $status,
                 'notes'  => $notes,
-
                 'is_paid'        => 1,
                 'is_paid_ontime' => $isOntime ? 1 : 0,
                 'days_late'      => $daysLate,
-
                 'source_file'     => $this->sourceFile,
                 'import_batch_id' => $this->importBatchId,
-
                 'created_at' => $now,
                 'updated_at' => $now,
             ];
@@ -206,31 +176,26 @@ class LoanInstallmentsImport implements ToCollection, WithHeadingRow, WithChunkR
 
         if (empty($payload)) return;
 
-        // =========================================================
-        // ✅ Hitung inserted vs updated (akurat) berdasarkan fingerprint
-        // =========================================================
+        // =====================
+        // HITUNG INSERT / UPDATE
+        // =====================
         $fps = collect($payload)->pluck('trx_fingerprint')->unique()->values();
 
-        $existingCount = 0;
-        if ($fps->isNotEmpty()) {
-            $existingCount = (int) LoanInstallment::query()
-                ->whereIn('trx_fingerprint', $fps->all())
-                ->count();
-        }
+        $existingCount = LoanInstallment::query()
+            ->whereIn('trx_fingerprint', $fps->all())
+            ->count();
 
-        $chunkTotal = (int) $fps->count();
-        $chunkUpdated = min($existingCount, $chunkTotal);
+        $chunkTotal = $fps->count();
+        $chunkUpdated  = min($existingCount, $chunkTotal);
         $chunkInserted = max(0, $chunkTotal - $chunkUpdated);
 
         $this->updated  += $chunkUpdated;
         $this->inserted += $chunkInserted;
-
-        // legacy: upserted = inserted + updated
         $this->upserted += $chunkTotal;
 
-        // =========================================================
-        // ✅ Upsert by fingerprint
-        // =========================================================
+        // =====================
+        // UPSERT
+        // =====================
         LoanInstallment::upsert(
             $payload,
             ['trx_fingerprint'],
@@ -240,12 +205,11 @@ class LoanInstallmentsImport implements ToCollection, WithHeadingRow, WithChunkR
                 'angske','principal_paid','interest_paid','penalty_paid','fee_paid',
                 'status','notes',
                 'is_paid','is_paid_ontime','days_late',
-                'source_file','import_batch_id',
-                'updated_at',
+                'source_file','import_batch_id','updated_at',
             ]
         );
 
-        // Auto-fix ao_code dari loan_accounts
+        // Auto fix ao_code
         DB::statement("
             UPDATE loan_installments li
             JOIN loan_accounts la ON la.account_no = li.account_no
@@ -253,65 +217,35 @@ class LoanInstallmentsImport implements ToCollection, WithHeadingRow, WithChunkR
             WHERE li.ao_code IS NULL
         ");
 
-        // Auto-map user_id (employee_code)
-        DB::statement("
-            UPDATE loan_installments li
-            JOIN users u ON u.employee_code = li.ao_code
-            SET li.user_id = u.id
-            WHERE li.user_id IS NULL
-            AND li.ao_code IS NOT NULL
-        ");
-
-        // ✅ mapping user_id by ao_code (dibatasi hanya untuk data hasil import ini)
         $this->mapUserIdByAoCode($payload, $now);
     }
 
+    // =========================================================
+    // USER MAPPING
+    // =========================================================
     private function mapUserIdByAoCode(array $payload, $now): void
     {
         $aoCodes = collect($payload)
             ->pluck('ao_code')
-            ->filter(fn($v) => $v !== null && trim((string)$v) !== '')
-            ->map(fn($v) => trim((string)$v))
+            ->filter()
             ->unique()
             ->values();
 
         if ($aoCodes->isEmpty()) return;
 
-        // scope update: hanya data import ini
         $scope = LoanInstallment::query()->whereNull('user_id');
 
         if ($this->importBatchId !== null) {
             $scope->where('import_batch_id', $this->importBatchId);
-        } else {
-            $period = Carbon::parse($this->positionDate)->startOfMonth()->toDateString();
-            $scope->where('source_file', (string)$this->sourceFile)
-                  ->whereDate('period', $period);
         }
 
-        // 1) match employee_code
-        $userIdByEmp = User::query()
-            ->whereIn('employee_code', $aoCodes->all())
-            ->pluck('id', 'employee_code');
+        $users = User::whereIn('employee_code', $aoCodes)->pluck('id', 'employee_code');
 
-        foreach ($userIdByEmp as $code => $uid) {
+        foreach ($users as $code => $uid) {
             (clone $scope)
-                ->where('ao_code', (string)$code)
+                ->where('ao_code', $code)
                 ->update([
-                    'user_id'    => (int)$uid,
-                    'updated_at' => $now,
-                ]);
-        }
-
-        // 2) fallback match users.ao_code
-        $userIdByAo = User::query()
-            ->whereIn('ao_code', $aoCodes->all())
-            ->pluck('id', 'ao_code');
-
-        foreach ($userIdByAo as $code => $uid) {
-            (clone $scope)
-                ->where('ao_code', (string)$code)
-                ->update([
-                    'user_id'    => (int)$uid,
+                    'user_id'    => $uid,
                     'updated_at' => $now,
                 ]);
         }
@@ -322,30 +256,40 @@ class LoanInstallmentsImport implements ToCollection, WithHeadingRow, WithChunkR
         return 1000;
     }
 
-    // ===== Helpers =====
+    // =========================================================
+    // HELPERS
+    // =========================================================
+    private function skipWithReason(int $row, string $reason): void
+    {
+        $this->skipped++;
+
+        if (count($this->errors) < $this->maxErrorCapture) {
+            $this->errors[] = [
+                'row' => $row,
+                'reason' => $reason,
+            ];
+        }
+    }
 
     private function parseMoneyInt($v): int
     {
-        if ($v === null || $v === '') return 0;
+        if (!$v) return 0;
         $digits = preg_replace('/[^\d\-]/', '', (string)$v);
-        if ($digits === '' || $digits === '-') return 0;
-        return (int)$digits;
+        return $digits ? (int)$digits : 0;
     }
 
     private function parseIntOrNull($v): ?int
     {
-        if ($v === null || $v === '') return null;
+        if (!$v) return null;
         $digits = preg_replace('/[^\d]/', '', (string)$v);
-        if ($digits === '') return null;
-        return (int)$digits;
+        return $digits ? (int)$digits : null;
     }
 
     private function parseDateOrNull($raw): ?string
     {
-        if ($raw === null || $raw === '') return null;
+        if (!$raw) return null;
 
-        // excel numeric serial
-        if (is_int($raw) || is_float($raw) || (is_numeric($raw) && (string)(int)$raw === (string)$raw)) {
+        if (is_numeric($raw)) {
             try {
                 return ExcelDate::excelToDateTimeObject((float)$raw)->format('Y-m-d');
             } catch (\Throwable) {
@@ -362,18 +306,18 @@ class LoanInstallmentsImport implements ToCollection, WithHeadingRow, WithChunkR
 
     private function normalizeCode($value, int $pad = 6): ?string
     {
-        if ($value === null) return null;
+        if (!$value) return null;
         $v = trim((string)$value);
-        if ($v === '') return null;
         if (ctype_digit($v)) return str_pad($v, $pad, '0', STR_PAD_LEFT);
         return $v;
     }
 
     private function normalizeAccountNo($value, int $length = 13): ?string
     {
-        if ($value === null) return null;
+        if (!$value) return null;
         $digits = preg_replace('/\D+/', '', (string)$value);
-        if ($digits === '') return null;
-        return str_pad($digits, $length, '0', STR_PAD_LEFT);
+        return $digits ? str_pad($digits, $length, '0', STR_PAD_LEFT) : null;
     }
+
+    
 }

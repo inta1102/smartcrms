@@ -16,6 +16,7 @@ class KpiBeTarget extends Model
         'target_noa_selesai',
         'target_bunga_masuk',
         'target_denda_masuk',
+        'target_recovery','target_lunas_rate','target_risk_exit_rate',
     ];
 
     protected $casts = [
