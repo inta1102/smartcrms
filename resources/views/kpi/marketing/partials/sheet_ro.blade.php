@@ -363,8 +363,8 @@
 
                 {{-- Pencapaian RR (Actual/Target) --}}
                 <td class="px-3 py-2 text-right">  
-                    <span class="px-3 py-1 rounded-full text-xs font-semibold {{ $kpiBadgeNormal($it->ach_topup ?? 0) }}">
-                        {{ number_format((float)($it->ach_topup ?? 0),2) }}%
+                    <span class="px-3 py-1 rounded-full text-xs font-semibold {{ $kpiBadgeNormal($it->ach_rr ?? 0) }}">
+                        {{ number_format((float)($it->ach_rr ?? 0),2) }}%
                     </span>
                 </td>
 
@@ -456,7 +456,7 @@
               <td class="px-3 py-2 text-right">{{ number_format((int)($it->target_noa ?? 0)) }}</td>
               <td class="px-3 py-2 text-right">{{ number_format((int)($it->noa_realisasi ?? 0)) }}</td>
               <td class="px-3 py-2 text-right">
-                <span class="px-3 py-1 rounded-full text-xs font-semibold {{ $kpiBadgeNormal($it->ach_rr ?? 0) }}">
+                <span class="px-3 py-1 rounded-full text-xs font-semibold {{ $kpiBadgeNormal($it->ach_noa ?? 0) }}">
                     {{ number_format((float)($it->ach_noa ?? 0),2) }}%
                 </span>
               </td>

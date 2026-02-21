@@ -314,6 +314,8 @@ class MarketingKpiSheetController
                 $piTotal = round($piRepay + $piTopup + $piNoa + $piDpk, 2);
 
                 return (object) array_merge((array)$r, [
+                    'repayment_pct_display' => $rrPct,
+                    
                     // targets
                     'target_rr_pct'  => $targetRr,
                     'target_topup'   => $targetTopup,
