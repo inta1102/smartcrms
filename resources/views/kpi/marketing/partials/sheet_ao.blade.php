@@ -19,6 +19,11 @@
 
   // RR risk threshold
   $rrRiskThreshold = 80.0;
+
+  // ✅ Mode akumulasi label (YTD)
+  $startYtdLabel = !empty($startYtd) ? \Carbon\Carbon::parse($startYtd)->translatedFormat('d M Y') : null;
+  $endYtdLabel   = !empty($endYtd) ? \Carbon\Carbon::parse($endYtd)->translatedFormat('d M Y') : null;
+  $accLabel      = ($startYtdLabel && $endYtdLabel) ? "Akumulasi {$startYtdLabel} – {$endYtdLabel}" : 'Akumulasi Jan – Periode';
 @endphp
 
 {{-- ========= Enhancement #2: anchor + highlight effect ========= --}}
@@ -65,8 +70,30 @@
 </script>
 
 {{-- =========================
-     TLUM AGREGAT (paling atas)
-     Enhancement #3: MoM trend tampil rapi di header
+     ✅ BANNER MODE (YTD / AKUMULASI)
+     ========================= --}}
+<div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden mb-6">
+  <div class="px-5 py-4 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+    <div>
+      <div class="text-sm font-extrabold text-slate-900">Mode Perhitungan: <span class="text-indigo-700">AKUMULASI (YTD)</span></div>
+      <div class="text-xs text-slate-500">
+        Target & Actual dihitung akumulasi dari awal tahun sampai periode aktif (RR dihitung weighted).
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200">
+        {{ $accLabel }}
+      </span>
+      <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] bg-slate-50 text-slate-700 ring-1 ring-slate-200">
+        Skor 1–6
+      </span>
+    </div>
+  </div>
+</div>
+
+
+{{-- =========================
+     TLUM – REKAP SCOPE (AKUMULASI/YTD)
      ========================= --}}
 @if(!empty($tlum))
   @php
@@ -75,45 +102,68 @@
     $trendDelta = !empty($trend) ? (float)($trend->delta ?? 0) : null;
     $trendCls   = ($trendDelta !== null && $trendDelta >= 0) ? 'text-emerald-600' : 'text-rose-600';
     $trendIcon  = ($trendDelta !== null && $trendDelta >= 0) ? '▲' : '▼';
+
+    // bobot TLUM (ambil dari wUmkm biar konsisten)
+    $wNoa = (float)($wUmkm['noa'] ?? 0.30);
+    $wOs  = (float)($wUmkm['os'] ?? 0.20);
+    $wRr  = (float)($wUmkm['rr'] ?? 0.25);
+    $wCom = (float)($wUmkm['community'] ?? 0.20);
+
+    $fmtW = fn($w) => number_format($w * 100, 0) . '%';
   @endphp
 
   <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden mb-6">
-    <div class="px-5 py-4 border-b border-slate-200 flex flex-col md:flex-row md:items-start md:justify-between gap-3">
-      <div>
-        <div class="text-lg font-extrabold text-slate-900">TL UMKM – Rekap Scope</div>
-        <div class="text-xs text-slate-500">Agregat dari seluruh AO UMKM di bawah TLUM (weighted RR).</div>
-
-        {{-- MoM trend (di header, rapi) --}}
-        @if(!empty($trend))
-          <div class="mt-2 text-xs text-slate-500">
-            MoM vs {{ \Carbon\Carbon::parse($trend->prev_period)->translatedFormat('M Y') }}:
-            <span class="font-bold {{ $trendCls }}">
-              {{ $trendIcon }} {{ number_format((float)$trend->delta, 2) }}
-            </span>
-            <span class="text-slate-400">
-              (prev {{ number_format((float)$trend->prev_pi,2) }} → now {{ number_format((float)$trend->cur_pi,2) }})
-            </span>
+    {{-- HEADER --}}
+    <div class="px-5 py-4 border-b border-slate-200">
+      <div class="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+        <div class="space-y-1">
+          <div class="text-2xl font-extrabold tracking-tight text-slate-900">TL UMKM – Rekap Scope</div>
+          <div class="text-sm text-slate-500">
+            Agregat dari seluruh AO UMKM di bawah TLUM (RR dihitung weighted).
           </div>
-        @endif
-      </div>
 
-      <div class="flex items-start gap-3">
-        <div class="text-right">
-          <div class="text-xs text-slate-500">Total PI</div>
-          <div class="text-2xl font-extrabold text-slate-900">
-            {{ number_format((float)($tlum->pi_total ?? 0),2) }}
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200">
+              {{ $accLabel }}
+            </span>
+            <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] bg-slate-50 text-slate-700 ring-1 ring-slate-200">
+              Mode: Akumulasi (YTD)
+            </span>
+
+            {{-- MoM Trend --}}
+            @if(!empty($trend))
+              <span class="inline-flex items-center gap-1 text-[11px] text-slate-600">
+                <span class="text-slate-400">MoM vs {{ \Carbon\Carbon::parse($trend->prev_period)->translatedFormat('M Y') }}:</span>
+                <span class="font-bold {{ $trendCls }}">{{ $trendIcon }} {{ number_format((float)$trend->delta, 2) }}</span>
+                <span class="text-slate-400">
+                  (prev {{ number_format((float)$trend->prev_pi,2) }} → now {{ number_format((float)$trend->cur_pi,2) }})
+                </span>
+              </span>
+            @endif
           </div>
         </div>
 
-        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] {{ $b['cls'] }}">
-          RR {{ $b['label'] }} • {{ number_format((float)($tlum->rr_actual ?? 0),2) }}%
-        </span>
+        <div class="flex items-start justify-between lg:justify-end gap-3">
+          <div class="text-right">
+            <div class="text-xs text-slate-500">Total PI</div>
+            <div class="text-4xl font-black text-slate-900 leading-none">
+              {{ number_format((float)($tlum->pi_total ?? 0),2) }}
+            </div>
+          </div>
+
+          <div class="pt-1">
+            <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold {{ $b['cls'] }}">
+              RR {{ $b['label'] }} • {{ number_format((float)($tlum->rr_actual ?? 0),2) }}%
+            </span>
+          </div>
+        </div>
       </div>
     </div>
 
+    {{-- TABLE --}}
     <div class="p-4 overflow-x-auto">
       <table class="min-w-full text-sm">
-        <thead class="bg-emerald-600 text-white">
+        <thead class="bg-emerald-700 text-white">
           <tr>
             <th class="text-left px-3 py-2">KPI</th>
             <th class="text-right px-3 py-2">Target</th>
@@ -127,50 +177,62 @@
 
         <tbody class="divide-y divide-slate-200">
           <tr>
-            <td class="px-3 py-2 font-semibold">Pertumbuhan NOA (Scope)</td>
+            <td class="px-3 py-2 font-semibold">
+              Pertumbuhan NOA (Scope)
+              <div class="text-[11px] text-slate-500 mt-0.5">Akumulasi jumlah NOA (Jan–Periode)</div>
+            </td>
             <td class="px-3 py-2 text-right">{{ (int)($tlum->noa_target ?? 0) }}</td>
             <td class="px-3 py-2 text-right">{{ (int)($tlum->noa_actual ?? 0) }}</td>
             <td class="px-3 py-2 text-right">{{ $fmtPct($tlum->noa_pct ?? 0) }}</td>
-            <td class="px-3 py-2 text-center font-bold">{{ (int)($tlum->score_noa ?? 0) }}</td>
-            <td class="px-3 py-2 text-right">30%</td>
-            <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($tlum->pi_noa ?? 0),2) }}</td>
+            <td class="px-3 py-2 text-center font-extrabold">{{ (int)($tlum->score_noa ?? 0) }}</td>
+            <td class="px-3 py-2 text-right">{{ $fmtW($wNoa) }}</td>
+            <td class="px-3 py-2 text-right font-extrabold">{{ number_format((float)($tlum->pi_noa ?? 0),2) }}</td>
           </tr>
 
           <tr>
-            <td class="px-3 py-2 font-semibold">Realisasi Bulanan (Scope)</td>
+            <td class="px-3 py-2 font-semibold">
+              Realisasi (Akumulasi) (Scope)
+              <div class="text-[11px] text-slate-500 mt-0.5">Total disbursement akumulasi (Jan–Periode)</div>
+            </td>
             <td class="px-3 py-2 text-right">{{ $fmtRp($tlum->os_target ?? 0) }}</td>
             <td class="px-3 py-2 text-right">{{ $fmtRp($tlum->os_actual ?? 0) }}</td>
             <td class="px-3 py-2 text-right">{{ $fmtPct($tlum->os_pct ?? 0) }}</td>
-            <td class="px-3 py-2 text-center font-bold">{{ (int)($tlum->score_os ?? 0) }}</td>
-            <td class="px-3 py-2 text-right">20%</td>
-            <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($tlum->pi_os ?? 0),2) }}</td>
+            <td class="px-3 py-2 text-center font-extrabold">{{ (int)($tlum->score_os ?? 0) }}</td>
+            <td class="px-3 py-2 text-right">{{ $fmtW($wOs) }}</td>
+            <td class="px-3 py-2 text-right font-extrabold">{{ number_format((float)($tlum->pi_os ?? 0),2) }}</td>
           </tr>
 
           <tr>
-            <td class="px-3 py-2 font-semibold">Kualitas Kredit (RR) – Weighted</td>
+            <td class="px-3 py-2 font-semibold">
+              Kualitas Kredit (RR) – Weighted
+              <div class="text-[11px] text-slate-500 mt-0.5">RR scope = OS current / OS total (weighted)</div>
+            </td>
             <td class="px-3 py-2 text-right">{{ number_format((float)($tlum->rr_target ?? 100),2) }}%</td>
             <td class="px-3 py-2 text-right">{{ number_format((float)($tlum->rr_actual ?? 0),2) }}%</td>
             <td class="px-3 py-2 text-right">{{ $fmtPct($tlum->rr_pct ?? $tlum->rr_actual ?? 0) }}</td>
-            <td class="px-3 py-2 text-center font-bold">{{ (int)($tlum->score_rr ?? 0) }}</td>
-            <td class="px-3 py-2 text-right">25%</td>
-            <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($tlum->pi_rr ?? 0),2) }}</td>
+            <td class="px-3 py-2 text-center font-extrabold">{{ (int)($tlum->score_rr ?? 0) }}</td>
+            <td class="px-3 py-2 text-right">{{ $fmtW($wRr) }}</td>
+            <td class="px-3 py-2 text-right font-extrabold">{{ number_format((float)($tlum->pi_rr ?? 0),2) }}</td>
           </tr>
 
           <tr>
-            <td class="px-3 py-2 font-semibold">Grab to Community (Scope)</td>
+            <td class="px-3 py-2 font-semibold">
+              Grab to Community (Scope)
+              <div class="text-[11px] text-slate-500 mt-0.5">Total aktivitas community akumulasi (Jan–Periode)</div>
+            </td>
             <td class="px-3 py-2 text-right">{{ (int)($tlum->com_target ?? 0) }}</td>
             <td class="px-3 py-2 text-right">{{ (int)($tlum->com_actual ?? 0) }}</td>
             <td class="px-3 py-2 text-right">{{ $fmtPct($tlum->com_pct ?? 0) }}</td>
-            <td class="px-3 py-2 text-center font-bold">{{ (int)($tlum->score_com ?? 0) }}</td>
-            <td class="px-3 py-2 text-right">20%</td>
-            <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($tlum->pi_com ?? 0),2) }}</td>
+            <td class="px-3 py-2 text-center font-extrabold">{{ (int)($tlum->score_com ?? 0) }}</td>
+            <td class="px-3 py-2 text-right">{{ $fmtW($wCom) }}</td>
+            <td class="px-3 py-2 text-right font-extrabold">{{ number_format((float)($tlum->pi_com ?? 0),2) }}</td>
           </tr>
         </tbody>
 
         <tfoot>
           <tr class="bg-yellow-200">
-            <td colspan="6" class="px-3 py-2 font-extrabold text-right">TOTAL</td>
-            <td class="px-3 py-2 font-extrabold text-right">
+            <td colspan="6" class="px-3 py-3 font-black text-right text-slate-900">TOTAL</td>
+            <td class="px-3 py-3 font-black text-right text-slate-900">
               {{ number_format((float)($tlum->pi_total ?? 0),2) }}
             </td>
           </tr>
@@ -242,7 +304,12 @@
   <div class="px-5 py-4 border-b border-slate-200 flex flex-col md:flex-row md:items-center md:justify-between gap-3">
     <div>
       <div class="text-lg font-extrabold text-slate-900">TLUM – Ranking AO UMKM</div>
-      <div class="text-xs text-slate-500">Hanya menampilkan scheme <b>AO_UMKM</b> (skor 1–6).</div>
+      <div class="text-xs text-slate-500">
+        Hanya menampilkan scheme <b>AO_UMKM</b> (skor 1–6).
+        <span class="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-[11px] bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200">
+          {{ $accLabel }}
+        </span>
+      </div>
     </div>
 
     {{-- filter risk only --}}
@@ -323,7 +390,8 @@
 
 {{-- =========================
      AO DETAIL (card per AO)
-     Enhancement #2: id anchor #ao-{user_id}
+     - Mobile: stacked KPI rows (tanpa scroll horizontal)
+     - Desktop: table normal (7 kolom)
      ========================= --}}
 <div class="space-y-6">
   @forelse($items as $it)
@@ -331,34 +399,185 @@
       $cardId = 'ao-'.(int)($it->user_id ?? 0);
       $rrAo = (float)($it->rr_pct ?? 0);
       $brAo = $rrBadge($rrAo);
+
+      $wNoa = (float)($wUmkm['noa'] ?? 0.30);
+      $wOs  = (float)($wUmkm['os'] ?? 0.20);
+      $wRr  = (float)($wUmkm['rr'] ?? 0.25);
+      $wCom = (float)($wUmkm['community'] ?? 0.20);
+      $wDay = (float)($wUmkm['daily'] ?? 0.05);
+
+      $fmtW = fn($w) => number_format($w * 100, 0) . '%';
+
+      // helper kecil utk mobile rows
+      $kv = function($label, $value) {
+        return '<div class="text-[11px] text-slate-500">'.$label.'</div><div class="text-sm font-semibold text-slate-900">'.$value.'</div>';
+      };
     @endphp
 
     <div id="{{ $cardId }}" class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden scroll-mt-24">
-      <div class="px-5 py-4 border-b border-slate-200 flex items-start justify-between gap-3">
-        <div>
-          <div class="text-lg font-extrabold text-slate-900 uppercase">{{ $it->name }}</div>
-          <div class="text-xs text-slate-500 flex flex-wrap items-center gap-2">
-            <span>{{ $it->level }} • AO Code: <b>{{ $it->ao_code ?: '-' }}</b></span>
-            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-700">
-              AO UMKM (1–6)
-            </span>
-            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] {{ $brAo['cls'] }}">
-              RR {{ $brAo['label'] }} • {{ number_format($rrAo,2) }}%
-            </span>
+
+      {{-- HEADER (lebih compact & responsive) --}}
+      <div class="px-4 sm:px-5 py-3 sm:py-4 border-b border-slate-200">
+        <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+
+          <div class="min-w-0">
+            <div class="flex items-start gap-3">
+              <div class="min-w-0">
+                <div class="text-base sm:text-lg font-black text-slate-900 uppercase truncate">
+                  {{ $it->name }}
+                </div>
+                <div class="text-xs text-slate-500 mt-0.5">
+                  {{ $it->level }} • AO Code: <b>{{ $it->ao_code ?: '-' }}</b>
+                </div>
+              </div>
+
+              {{-- Total PI (mobile inline) --}}
+              <div class="sm:hidden ml-auto text-right">
+                <div class="text-[11px] text-slate-500">Total PI</div>
+                <div class="text-xl font-black text-slate-900 leading-none">
+                  {{ number_format((float)($it->pi_total ?? 0), 2) }}
+                </div>
+              </div>
+            </div>
+
+            {{-- badges --}}
+            <div class="mt-2 flex flex-wrap items-center gap-2">
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] bg-emerald-100 text-emerald-700">
+                AO UMKM (1–6)
+              </span>
+
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] bg-indigo-50 text-indigo-700 ring-1 ring-indigo-200">
+                {{ $accLabel }}
+              </span>
+
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] {{ $brAo['cls'] }}">
+                RR {{ $brAo['label'] }} • {{ number_format($rrAo,2) }}%
+              </span>
+            </div>
+          </div>
+
+          {{-- Total PI (desktop kanan) --}}
+          <div class="hidden sm:block text-right">
+            <div class="text-xs text-slate-500">Total PI</div>
+            <div class="text-2xl font-black text-slate-900 leading-none">
+              {{ number_format((float)($it->pi_total ?? 0), 2) }}
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {{-- =========================
+           MOBILE VIEW (stacked KPI rows)
+           ========================= --}}
+      <div class="p-4 space-y-3 md:hidden">
+
+        {{-- Row builder (tiap KPI jadi card kecil) --}}
+        <div class="rounded-xl border border-slate-200 overflow-hidden">
+          <div class="bg-orange-50 px-3 py-2 flex items-center justify-between">
+            <div class="font-bold text-slate-900">Pertumbuhan NOA</div>
+            <div class="text-xs text-slate-600">Bobot {{ $fmtW($wNoa) }}</div>
+          </div>
+          <div class="p-3 grid grid-cols-2 gap-3">
+            {!! $kv('Target', (int)($it->target_noa_disbursement ?? 0)) !!}
+            {!! $kv('Actual', (int)($it->noa_disbursement ?? 0)) !!}
+            {!! $kv('Pencapaian', $fmtPct($it->noa_disbursement_pct ?? 0)) !!}
+            {!! $kv('Skor', '<span class="font-black">'.(int)($it->score_noa ?? 0).'</span>') !!}
+            {!! $kv('PI', '<span class="font-black">'.number_format((float)($it->pi_noa ?? 0),2).'</span>') !!}
+            <div>
+              <div class="text-[11px] text-slate-500">Catatan</div>
+              <div class="text-sm text-slate-700">Akumulasi NOA (Jan–Periode)</div>
+            </div>
           </div>
         </div>
 
-        <div class="text-right">
-          <div class="text-xs text-slate-500">Total PI</div>
-          <div class="text-xl font-extrabold text-slate-900">
-            {{ number_format((float)($it->pi_total ?? 0), 2) }}
+        <div class="rounded-xl border border-slate-200 overflow-hidden">
+          <div class="bg-orange-50 px-3 py-2 flex items-center justify-between">
+            <div class="font-bold text-slate-900">Realisasi (Akumulasi)</div>
+            <div class="text-xs text-slate-600">Bobot {{ $fmtW($wOs) }}</div>
+          </div>
+          <div class="p-3 grid grid-cols-2 gap-3">
+            {!! $kv('Target', $fmtRp($it->target_os_disbursement ?? 0)) !!}
+            {!! $kv('Actual', $fmtRp($it->os_disbursement ?? 0)) !!}
+            {!! $kv('Pencapaian', $fmtPct($it->os_disbursement_pct ?? 0)) !!}
+            {!! $kv('Skor', '<span class="font-black">'.(int)($it->score_os ?? 0).'</span>') !!}
+            {!! $kv('PI', '<span class="font-black">'.number_format((float)($it->pi_os ?? 0),2).'</span>') !!}
+            <div>
+              <div class="text-[11px] text-slate-500">Catatan</div>
+              <div class="text-sm text-slate-700">Disbursement akumulasi (Jan–Periode)</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-slate-200 overflow-hidden">
+          <div class="bg-orange-50 px-3 py-2 flex items-center justify-between">
+            <div class="font-bold text-slate-900">Kualitas Kredit (RR)</div>
+            <div class="text-xs text-slate-600">Bobot {{ $fmtW($wRr) }}</div>
+          </div>
+          <div class="p-3 grid grid-cols-2 gap-3">
+            {!! $kv('Target', number_format((float)($it->target_rr ?? 100),2).'%') !!}
+            {!! $kv('Actual', number_format((float)($it->rr_pct ?? 0),2).'%') !!}
+            {!! $kv('Pencapaian', $fmtPct($it->rr_pct ?? 0)) !!}
+            {!! $kv('Skor', '<span class="font-black">'.(int)($it->score_rr ?? 0).'</span>') !!}
+            {!! $kv('PI', '<span class="font-black">'.number_format((float)($it->pi_rr ?? 0),2).'</span>') !!}
+            <div>
+              <div class="text-[11px] text-slate-500">Status</div>
+              <div class="text-sm font-semibold">{{ $brAo['label'] }}</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-slate-200 overflow-hidden">
+          <div class="bg-orange-50 px-3 py-2 flex items-center justify-between">
+            <div class="font-bold text-slate-900">Grab to Community</div>
+            <div class="text-xs text-slate-600">Bobot {{ $fmtW($wCom) }}</div>
+          </div>
+          <div class="p-3 grid grid-cols-2 gap-3">
+            {!! $kv('Target', (int)($it->target_community ?? 0)) !!}
+            {!! $kv('Actual', (int)($it->community_actual ?? 0)) !!}
+            {!! $kv('Pencapaian', $fmtPct($it->community_pct ?? 0)) !!}
+            {!! $kv('Skor', '<span class="font-black">'.(int)($it->score_community ?? 0).'</span>') !!}
+            {!! $kv('PI', '<span class="font-black">'.number_format((float)($it->pi_community ?? 0),2).'</span>') !!}
+            <div>
+              <div class="text-[11px] text-slate-500">Catatan</div>
+              <div class="text-sm text-slate-700">Aktivitas komunitas</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-slate-200 overflow-hidden">
+          <div class="bg-orange-50 px-3 py-2 flex items-center justify-between">
+            <div class="font-bold text-slate-900">Daily Report (Kunjungan)</div>
+            <div class="text-xs text-slate-600">Bobot {{ $fmtW($wDay) }}</div>
+          </div>
+          <div class="p-3 grid grid-cols-2 gap-3">
+            {!! $kv('Target', (int)($it->target_daily_report ?? 0)) !!}
+            {!! $kv('Actual', (int)($it->daily_report_actual ?? 0)) !!}
+            {!! $kv('Pencapaian', $fmtPct($it->daily_report_pct ?? 0)) !!}
+            {!! $kv('Skor', '<span class="font-black">'.(int)($it->score_daily_report ?? 0).'</span>') !!}
+            {!! $kv('PI', '<span class="font-black">'.number_format((float)($it->pi_daily ?? 0),2).'</span>') !!}
+            <div>
+              <div class="text-[11px] text-slate-500">Catatan</div>
+              <div class="text-sm text-slate-700">Kunjungan terlapor</div>
+            </div>
+          </div>
+        </div>
+
+        {{-- TOTAL --}}
+        <div class="rounded-xl bg-yellow-200 px-4 py-3 flex items-center justify-between">
+          <div class="font-black text-slate-900">TOTAL</div>
+          <div class="text-2xl font-black text-slate-900">
+            {{ number_format((float)($it->pi_total ?? 0),2) }}
           </div>
         </div>
       </div>
 
-      <div class="p-4 overflow-x-auto">
+      {{-- =========================
+           DESKTOP VIEW (table)
+           ========================= --}}
+      <div class="hidden md:block p-4 overflow-x-auto">
         <table class="min-w-full text-sm">
-          <thead class="bg-orange-500 text-white">
+          <thead class="bg-orange-600 text-white">
             <tr>
               <th class="text-left px-3 py-2">KPI</th>
               <th class="text-right px-3 py-2">Target</th>
@@ -376,19 +595,19 @@
               <td class="px-3 py-2 text-right">{{ (int)($it->target_noa_disbursement ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($it->noa_disbursement ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ $fmtPct($it->noa_disbursement_pct ?? 0) }}</td>
-              <td class="px-3 py-2 text-center font-bold">{{ (int)($it->score_noa ?? 0) }}</td>
-              <td class="px-3 py-2 text-right">30%</td>
-              <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($it->pi_noa ?? 0),2) }}</td>
+              <td class="px-3 py-2 text-center font-black">{{ (int)($it->score_noa ?? 0) }}</td>
+              <td class="px-3 py-2 text-right">{{ $fmtW($wNoa) }}</td>
+              <td class="px-3 py-2 text-right font-black">{{ number_format((float)($it->pi_noa ?? 0),2) }}</td>
             </tr>
 
             <tr>
-              <td class="px-3 py-2 font-semibold">Realisasi Bulanan</td>
+              <td class="px-3 py-2 font-semibold">Realisasi (Akumulasi)</td>
               <td class="px-3 py-2 text-right">{{ $fmtRp($it->target_os_disbursement ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ $fmtRp($it->os_disbursement ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ $fmtPct($it->os_disbursement_pct ?? 0) }}</td>
-              <td class="px-3 py-2 text-center font-bold">{{ (int)($it->score_os ?? 0) }}</td>
-              <td class="px-3 py-2 text-right">20%</td>
-              <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($it->pi_os ?? 0),2) }}</td>
+              <td class="px-3 py-2 text-center font-black">{{ (int)($it->score_os ?? 0) }}</td>
+              <td class="px-3 py-2 text-right">{{ $fmtW($wOs) }}</td>
+              <td class="px-3 py-2 text-right font-black">{{ number_format((float)($it->pi_os ?? 0),2) }}</td>
             </tr>
 
             <tr>
@@ -396,19 +615,19 @@
               <td class="px-3 py-2 text-right">{{ number_format((float)($it->target_rr ?? 100),2) }}%</td>
               <td class="px-3 py-2 text-right">{{ number_format((float)($it->rr_pct ?? 0),2) }}%</td>
               <td class="px-3 py-2 text-right">{{ $fmtPct($it->rr_pct ?? 0) }}</td>
-              <td class="px-3 py-2 text-center font-bold">{{ (int)($it->score_rr ?? 0) }}</td>
-              <td class="px-3 py-2 text-right">25%</td>
-              <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($it->pi_rr ?? 0),2) }}</td>
+              <td class="px-3 py-2 text-center font-black">{{ (int)($it->score_rr ?? 0) }}</td>
+              <td class="px-3 py-2 text-right">{{ $fmtW($wRr) }}</td>
+              <td class="px-3 py-2 text-right font-black">{{ number_format((float)($it->pi_rr ?? 0),2) }}</td>
             </tr>
 
             <tr>
-              <td class="px-3 py-2 font-semibold">Grab to Community (monthly)</td>
+              <td class="px-3 py-2 font-semibold">Grab to Community</td>
               <td class="px-3 py-2 text-right">{{ (int)($it->target_community ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($it->community_actual ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ $fmtPct($it->community_pct ?? 0) }}</td>
-              <td class="px-3 py-2 text-center font-bold">{{ (int)($it->score_community ?? 0) }}</td>
-              <td class="px-3 py-2 text-right">20%</td>
-              <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($it->pi_community ?? 0),2) }}</td>
+              <td class="px-3 py-2 text-center font-black">{{ (int)($it->score_community ?? 0) }}</td>
+              <td class="px-3 py-2 text-right">{{ $fmtW($wCom) }}</td>
+              <td class="px-3 py-2 text-right font-black">{{ number_format((float)($it->pi_community ?? 0),2) }}</td>
             </tr>
 
             <tr>
@@ -416,22 +635,23 @@
               <td class="px-3 py-2 text-right">{{ (int)($it->target_daily_report ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ (int)($it->daily_report_actual ?? 0) }}</td>
               <td class="px-3 py-2 text-right">{{ $fmtPct($it->daily_report_pct ?? 0) }}</td>
-              <td class="px-3 py-2 text-center font-bold">{{ (int)($it->score_daily_report ?? 0) }}</td>
-              <td class="px-3 py-2 text-right">5%</td>
-              <td class="px-3 py-2 text-right font-bold">{{ number_format((float)($it->pi_daily ?? 0),2) }}</td>
+              <td class="px-3 py-2 text-center font-black">{{ (int)($it->score_daily_report ?? 0) }}</td>
+              <td class="px-3 py-2 text-right">{{ $fmtW($wDay) }}</td>
+              <td class="px-3 py-2 text-right font-black">{{ number_format((float)($it->pi_daily ?? 0),2) }}</td>
             </tr>
           </tbody>
 
           <tfoot>
             <tr class="bg-yellow-200">
-              <td colspan="6" class="px-3 py-2 font-extrabold text-right">TOTAL</td>
-              <td class="px-3 py-2 font-extrabold text-right">
+              <td colspan="6" class="px-3 py-3 font-black text-right text-slate-900">TOTAL</td>
+              <td class="px-3 py-3 font-black text-right text-slate-900">
                 {{ number_format((float)($it->pi_total ?? 0),2) }}
               </td>
             </tr>
           </tfoot>
         </table>
       </div>
+
     </div>
   @empty
     <div class="rounded-2xl border border-slate-200 bg-white p-6 text-slate-600">

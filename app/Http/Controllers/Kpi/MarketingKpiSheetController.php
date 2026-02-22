@@ -179,10 +179,25 @@ class MarketingKpiSheetController
         $role = strtoupper((string) $request->query('role', 'AO'));
         if (!in_array($role, ['AO', 'SO', 'RO', 'FE', 'BE'], true)) $role = 'AO';
 
+        $startYtd = null;
+        $endYtd   = null;
+
+        // kalau kamu pakai akumulasi otomatis untuk TLUM/SO/RO, set di sini
+        if (!empty($periodYm)) {
+            // contoh: YTD dari 01 Jan tahun period sampai akhir bulan period
+            $end = \Carbon\Carbon::parse($periodYm . '-01')->endOfMonth();
+            $start = $end->copy()->startOfYear();
+
+            $startYtd = $start->toDateString();
+            $endYtd   = $end->toDateString();
+        }
+
         // ==========================================================
         // RO (auto mode: bulan ini realtime, bulan lalu ke bawah EOM)
+        // + AKUMULASI (YTD s/d bulan terpilih)
         // ==========================================================
         if ($role === 'RO') {
+
             $mode = $this->resolveRoMode($period); // realtime | eom
 
             $weights = [
@@ -193,119 +208,183 @@ class MarketingKpiSheetController
             ];
 
             // target per ao_code (optional, kalau belum ada pakai default)
-            $targetMap = DB::table('kpi_ro_targets')
-                ->whereDate('period', $periodDate)
-                ->get()
-                ->keyBy('ao_code');
+            // $targetMap = DB::table('kpi_ro_targets')
+            //     ->whereDate('period', $periodDate)
+            //     ->get()
+            //     ->keyBy('ao_code');
 
             $leader = auth()->user();
             $leaderRole = $this->leaderRoleValue($leader);
 
             $scopeAoCodes = $this->scopeAoCodesForLeader($leader, $periodDate);
 
-            // kalau leader TLRO/KSL/KBL, default hanya scope (kalau ada)
             $isLeader = in_array($leaderRole, ['TLRO','KSLU','KSLR','KSBE','KSFE','KBL','PE','DIR','KOM','DIREKSI'], true);
 
-            $rowsQ = DB::table('users as u')
+            // =========================
+            // AKUMULASI RANGE (YTD)
+            // =========================
+            $endMonth = \Carbon\Carbon::parse($periodDate)->startOfMonth();      // contoh: 2026-02-01
+            $startMonth = $endMonth->copy()->startOfYear();                     // 2026-01-01
+
+            // bulan terpilih pakai realtime hanya kalau itu bulan berjalan
+            $isEndMonthCurrent = $endMonth->equalTo(now()->startOfMonth());
+            $endMonthMode = $isEndMonthCurrent ? 'realtime' : 'eom';
+
+            // =========================
+            // BASE USERS (RO)
+            // =========================
+            $usersQ = DB::table('users as u')
                 ->whereRaw("UPPER(TRIM(u.level)) = 'RO'")
                 ->whereNotNull('u.ao_code')
                 ->whereRaw("TRIM(u.ao_code) <> ''");
 
             if ($isLeader && !empty($scopeAoCodes)) {
-                $rowsQ->whereIn('u.ao_code', array_values($scopeAoCodes));
+                $usersQ->whereIn('u.ao_code', array_values($scopeAoCodes));
             }
 
-            $rows = $rowsQ
-                ->leftJoin('kpi_ro_monthly as k', function ($j) use ($periodDate, $mode) {
-                    $j->on('k.ao_code', '=', 'u.ao_code')
-                      ->where('k.period_month', '=', $periodDate)
-                      ->where('k.calc_mode', '=', $mode);
+            // =========================
+            // SUBQUERY KPI RANGE (aggregate per AO)
+            // - month < endMonth => eom
+            // - month = endMonth => endMonthMode (realtime jika bulan ini, else eom)
+            // =========================
+            $kpiAgg = DB::table('kpi_ro_monthly as k')
+                ->whereBetween('k.period_month', [$startMonth->toDateString(), $endMonth->toDateString()])
+                ->where(function ($w) use ($endMonth, $endMonthMode) {
+                    $w->where(function ($q) use ($endMonth) {
+                        $q->where('k.period_month', '<', $endMonth->toDateString())
+                        ->where('k.calc_mode', '=', 'eom');
+                    })->orWhere(function ($q) use ($endMonth, $endMonthMode) {
+                        $q->where('k.period_month', '=', $endMonth->toDateString())
+                        ->where('k.calc_mode', '=', $endMonthMode);
+                    });
+                })
+                ->groupBy('k.ao_code')
+                ->selectRaw("
+                    k.ao_code,
+
+                    -- akumulasi (YTD)
+                    SUM(COALESCE(k.topup_realisasi,0)) as topup_realisasi,
+                    SUM(COALESCE(k.noa_realisasi,0)) as noa_realisasi,
+
+                    -- DPK komponen
+                    SUM(COALESCE(k.dpk_migrasi_count,0)) as dpk_migrasi_count,
+                    SUM(COALESCE(k.dpk_migrasi_os,0)) as dpk_migrasi_os,
+                    SUM(COALESCE(k.dpk_total_os_akhir,0)) as dpk_total_os_akhir,
+
+                    -- RR komponen (lebih valid untuk akumulasi)
+                    SUM(COALESCE(k.repayment_total_os,0))  as repayment_total_os,
+                    SUM(COALESCE(k.repayment_os_lancar,0)) as repayment_os_lancar,
+
+                    -- meta topup (akumulasi)
+                    SUM(COALESCE(k.topup_cif_count,0)) as topup_cif_count,
+                    SUM(COALESCE(k.topup_cif_new_count,0)) as topup_cif_new_count,
+                    MAX(COALESCE(k.topup_max_cif_amount,0)) as topup_max_cif_amount,
+
+                    -- baseline: kalau ada 1 bulan gagal baseline, flag jadi 0
+                    MIN(COALESCE(k.baseline_ok,0)) as baseline_ok
+                ");
+
+            // =========================
+            // JOIN USERS + KPI AGG
+            // =========================
+            // ===== AKUMULASI TARGET (Jan s/d period) =====
+            $endMonthStart = \Carbon\Carbon::parse($periodDate)->startOfMonth();  // 2026-02-01
+            $endMonthEnd   = $endMonthStart->copy()->endOfMonth();               // 2026-02-28
+            $startYtdDate  = $endMonthStart->copy()->startOfYear()->toDateString(); // 2026-01-01
+
+            // untuk query target: Jan s/d 1st day of end month (inclusive) ✅ (karena period target disimpan di tanggal 1)
+            $targetStart = $startYtdDate;
+            $targetEnd   = $endMonthStart->toDateString();
+
+            // target per ao_code (AKUMULASI)
+            $targetMap = DB::table('kpi_ro_targets')
+                ->whereBetween('period', [$targetStart, $targetEnd])
+                ->selectRaw("
+                    ao_code,
+                    SUM(COALESCE(target_topup,0)) as target_topup_acc,
+                    SUM(COALESCE(target_noa,0))   as target_noa_acc,
+                    MAX(COALESCE(target_rr_pct,0)) as target_rr_pct,       -- biasanya 100
+                    MAX(COALESCE(target_dpk_pct,0)) as target_dpk_pct      -- biasanya 1
+                ")
+                ->groupBy('ao_code')
+                ->get()
+                ->keyBy('ao_code');
+                
+            $rows = $usersQ
+                ->leftJoinSub($kpiAgg, 'ka', function ($j) {
+                    $j->on('ka.ao_code', '=', 'u.ao_code');
                 })
                 ->selectRaw("
                     u.id as user_id, u.name, u.ao_code, u.level,
 
-                    COALESCE(k.total_score_weighted, 0) as score_total,
+                    COALESCE(ka.topup_realisasi,0) as topup_realisasi,
+                    COALESCE(ka.noa_realisasi,0) as noa_realisasi,
 
-                    COALESCE(k.repayment_rate, 0) as repayment_rate,
-                    COALESCE(k.repayment_pct, 0)  as repayment_pct,
-                    COALESCE(k.repayment_score, 0) as repayment_score,
+                    COALESCE(ka.dpk_migrasi_count,0) as dpk_migrasi_count,
+                    COALESCE(ka.dpk_migrasi_os,0) as dpk_migrasi_os,
+                    COALESCE(ka.dpk_total_os_akhir,0) as dpk_total_os_akhir,
 
-                    COALESCE(k.topup_realisasi, 0) as topup_realisasi,
-                    COALESCE(k.topup_target, 0)    as topup_target,
-                    COALESCE(k.topup_pct, 0)       as topup_pct,
-                    COALESCE(k.topup_score, 0)     as topup_score,
+                    COALESCE(ka.repayment_total_os,0) as repayment_total_os,
+                    COALESCE(ka.repayment_os_lancar,0) as repayment_os_lancar,
 
-                    COALESCE(k.noa_realisasi, 0) as noa_realisasi,
-                    COALESCE(k.noa_target, 0)    as noa_target,
-                    COALESCE(k.noa_pct, 0)       as noa_pct,
-                    COALESCE(k.noa_score, 0)     as noa_score,
+                    COALESCE(ka.topup_cif_count,0) as topup_cif_count,
+                    COALESCE(ka.topup_cif_new_count,0) as topup_cif_new_count,
+                    COALESCE(ka.topup_max_cif_amount,0) as topup_max_cif_amount,
 
-                    COALESCE(k.dpk_pct, 0)   as dpk_pct,
-                    COALESCE(k.dpk_score, 0) as dpk_score,
-
-                    COALESCE(k.dpk_migrasi_count, 0) as dpk_migrasi_count,
-                    COALESCE(k.dpk_migrasi_os, 0)    as dpk_migrasi_os,
-                    COALESCE(k.dpk_total_os_akhir, 0) as dpk_total_os_akhir,
-
-                    COALESCE(k.baseline_ok, 0) as baseline_ok,
-                    k.baseline_note as baseline_note,
-
-                    -- ✅ TAMBAHAN (agar TL recap & detail topup/RR bisa informatif)
-                    COALESCE(k.topup_cif_count, 0) as topup_cif_count,
-                    COALESCE(k.topup_cif_new_count, 0) as topup_cif_new_count,
-                    COALESCE(k.topup_max_cif_amount, 0) as topup_max_cif_amount,
-                    COALESCE(k.topup_concentration_pct, 0) as topup_concentration_pct,
-                    k.topup_top3_json as topup_top3_json,
-
-                    COALESCE(k.repayment_total_os, 0) as repayment_total_os,
-                    COALESCE(k.repayment_os_lancar, 0) as repayment_os_lancar
+                    COALESCE(ka.baseline_ok,0) as baseline_ok
                 ")
                 ->orderBy('u.name')
                 ->get();
 
+            // =========================
+            // MAP -> HITUNG ACH, SCORE, PI
+            // =========================
             $items = $rows->map(function ($r) use ($weights, $targetMap) {
-
-                // ===== RR actual percent (0..100) =====
-                $rrPct = (float)($r->repayment_pct ?? 0);
-
-                // fallback kalau ternyata pct kosong tapi rate ada (rate 0..1)
-                if ($rrPct <= 0 && ($r->repayment_rate ?? null) !== null && (float)$r->repayment_rate > 0) {
-                    $rrPct = ((float)$r->repayment_rate) * 100.0;
-                }
 
                 // ===== Targets (fallback default) =====
                 $tg = $targetMap->get($r->ao_code);
 
-                $targetTopup = (float)($tg->target_topup ?? 0);
-                $targetNoa   = (int)  ($tg->target_noa ?? 0);
-                $targetRr    = (float)($tg->target_rr_pct ?? 0);
-                $targetDpk   = (float)($tg->target_dpk_pct ?? 0); // default 1% (target pemburukan <1%)
+                // ✅ TARGET AKUMULASI
+                $targetTopup = (float)($tg->target_topup_acc ?? 0);
+                $targetNoa   = (int)  ($tg->target_noa_acc ?? 0);
 
-                // ===== Achievement (pakai helper biar konsisten & anti target=0 free score) =====
-                $achRr    = KpiScoreHelper::achievementPct($rrPct, $targetRr);           // rrPct vs targetRr
-                $scoreRr  = KpiScoreHelper::scoreBand1to6($achRr);
+                // target RR & DPK (biasanya konstan; ambil MAX dari range)
+                $targetRr    = (float)($tg->target_rr_pct ?? 100);
+
+                // ⚠️ jangan biarkan 0 (karena reverse metric jadi “ga bisa dihitung”)
+                $targetDpk   = (float)($tg->target_dpk_pct ?? 1);
+                if ($targetDpk <= 0) $targetDpk = 1.0;
+
+                // ===== RR YTD (recompute) =====
+                $totalOs = (float)($r->repayment_total_os ?? 0);
+                $osLancar = (float)($r->repayment_os_lancar ?? 0);
+                $rrPct = $totalOs > 0 ? round(($osLancar / $totalOs) * 100.0, 2) : 0.0;
+
+                // ===== Achievement =====
+                $achRr    = \App\Services\Kpi\KpiScoreHelper::achievementPct($rrPct, $targetRr);
+                $scoreRr  = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6($achRr);
 
                 $topupReal  = (float)($r->topup_realisasi ?? 0);
-                $achTopup   = KpiScoreHelper::achievementPct($topupReal, $targetTopup);
-                $scoreTopup = KpiScoreHelper::scoreBand1to6($achTopup);
+                $achTopup   = \App\Services\Kpi\KpiScoreHelper::achievementPct($topupReal, $targetTopup);
+                $scoreTopup = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6($achTopup);
 
                 $noaReal  = (int)($r->noa_realisasi ?? 0);
-                $achNoa   = KpiScoreHelper::achievementPct((float)$noaReal, (float)$targetNoa);
-                $scoreNoa = KpiScoreHelper::scoreBand1to6($achNoa);
+                $achNoa   = \App\Services\Kpi\KpiScoreHelper::achievementPct((float)$noaReal, (float)$targetNoa);
+                $scoreNoa = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6($achNoa);
 
-                // ===== DPK (reverse) =====
-                // actual dpkActual (%), targetDpk (% batas)
-                $dpkActual = (float)($r->dpk_pct ?? 0);
+                // ===== DPK reverse =====
+                $sumMigrasiOs = (float)($r->dpk_migrasi_os ?? 0);
+                $sumOsAkhir   = (float)($r->dpk_total_os_akhir ?? 0);
+                $dpkActual = $sumOsAkhir > 0 ? round(($sumMigrasiOs / $sumOsAkhir) * 100.0, 2) : 0.0;
+
                 $achDpk = 0.0;
-
                 if ($targetDpk > 0) {
-                    // kalau actual 0 => perfect (100)
                     $achDpk = ($dpkActual <= 0) ? 100.0 : round(($targetDpk / $dpkActual) * 100.0, 2);
-                    $achDpk = min($achDpk, 200.0); // optional cap
+                    $achDpk = min($achDpk, 200.0);
                 }
-                $scoreDpk = KpiScoreHelper::scoreBand1to6($achDpk);
+                $scoreDpk = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6($achDpk);
 
-                // ===== PI (PAKAI score hasil helper, bukan DB) =====
+                // ===== PI =====
                 $piRepay = round($scoreRr    * $weights['repayment'], 2);
                 $piTopup = round($scoreTopup * $weights['topup'], 2);
                 $piNoa   = round($scoreNoa   * $weights['noa'], 2);
@@ -314,8 +393,10 @@ class MarketingKpiSheetController
                 $piTotal = round($piRepay + $piTopup + $piNoa + $piDpk, 2);
 
                 return (object) array_merge((array)$r, [
+                    // display
                     'repayment_pct_display' => $rrPct,
-                    
+                    'dpk_pct_display'       => $dpkActual,
+
                     // targets
                     'target_rr_pct'  => $targetRr,
                     'target_topup'   => $targetTopup,
@@ -328,7 +409,7 @@ class MarketingKpiSheetController
                     'ach_noa'   => $achNoa,
                     'ach_dpk'   => $achDpk,
 
-                    // ✅ OVERRIDE score final (jangan pakai score dari DB)
+                    // override score
                     'repayment_score' => $scoreRr,
                     'topup_score'     => $scoreTopup,
                     'noa_score'       => $scoreNoa,
@@ -341,152 +422,10 @@ class MarketingKpiSheetController
                     'pi_dpk'       => $piDpk,
                     'pi_total'     => $piTotal,
                 ]);
-                
             });
 
-            // ======================================================
-            // TL/KBL/KSL Recap (rekap scope berdasarkan org_assignments)
-            // ======================================================
-            $leader     = auth()->user();
-            $leaderRole = $this->leaderRoleValue($leader);
-
-            // ambil ao_code RO scope leader via org_assignments
-            $scopeAoCodes = $this->scopeAoCodesForLeader($leader, $periodDate);
-
-            $tlRecap = null;
-
-            if (!empty($scopeAoCodes)) {
-                $scoped = $items->filter(fn($it) => in_array((string)$it->ao_code, $scopeAoCodes, true));
-
-                $sumTopupActual = (float) $scoped->sum('topup_realisasi');
-                $sumTopupTarget = (float) $scoped->sum('target_topup');
-
-                $sumNoaActual   = (int) $scoped->sum('noa_realisasi');
-                $sumNoaTarget   = (int) $scoped->sum('target_noa');
-
-                $sumMigrasiOs   = (float) $scoped->sum('dpk_migrasi_os');
-                $sumOsAkhir     = (float) $scoped->sum('dpk_total_os_akhir');
-
-                $sumTopupCifCount = (int) $scoped->sum('topup_cif_count');
-                $sumTopupCifNew   = (int) $scoped->sum('topup_cif_new_count');
-                $maxTopupMaxCif   = (float) $scoped->max('topup_max_cif_amount');
-
-                // konsentrasi TL
-                $globalTop1 = (float) $scoped->max('topup_max_cif_amount');
-                $tlConcentration = $sumTopupActual > 0 ? round(($globalTop1 / $sumTopupActual) * 100.0, 2) : 0.0;
-
-                // top3 TL
-                $all = [];
-                foreach ($scoped as $it) {
-                    $arr = [];
-                    if (!empty($it->topup_top3_json)) {
-                        $arr = json_decode($it->topup_top3_json, true) ?: [];
-                    }
-                    foreach ($arr as $x) $all[] = $x;
-                }
-                usort($all, fn($a,$b) => (float)($b['delta'] ?? 0) <=> (float)($a['delta'] ?? 0));
-                $tlTop3 = array_slice($all, 0, 3);
-
-                // RR avg / weighted
-                $rrAvg = $scoped->count() > 0 ? round((float)$scoped->avg('repayment_pct_display'), 2) : 0.0;
-                $sumOs = (float) $scoped->sum('dpk_total_os_akhir');
-
-                $rrWeighted = 0.0;
-                if ($sumOs > 0) {
-                    $rrWeighted = round(
-                        $scoped->sum(function ($it) {
-                            $rr = (float)($it->repayment_pct_display ?? 0);
-                            $os = (float)($it->dpk_total_os_akhir ?? 0);
-                            return $rr * $os;
-                        }) / $sumOs
-                    , 2);
-                }
-
-                $rrUsed = $rrWeighted > 0 ? $rrWeighted : $rrAvg;
-                $targetRr = 100.0;
-
-                $achRr = $targetRr > 0 ? round(($rrUsed / $targetRr) * 100.0, 2) : 0.0;
-
-                $achTopup = $sumTopupTarget > 0 ? round(($sumTopupActual / $sumTopupTarget) * 100.0, 2) : 0.0;
-                $achNoa   = $sumNoaTarget   > 0 ? round(($sumNoaActual   / $sumNoaTarget)   * 100.0, 2) : 0.0;
-
-                $dpkPctTotal = $sumOsAkhir > 0 ? round(($sumMigrasiOs / $sumOsAkhir) * 100.0, 2) : 0.0;
-
-                // target DPK TL weighted by os_akhir
-                $targetDpkTl = 1.0;
-                if ($sumOsAkhir > 0) {
-                    $targetDpkTl = round(
-                        $scoped->sum(function ($it) {
-                            $t = (float)($it->target_dpk_pct ?? 1.0);
-                            $w = (float)($it->dpk_total_os_akhir ?? 0);
-                            return $t * $w;
-                        }) / $sumOsAkhir
-                    , 2);
-                }
-
-                $scoreRepay = $this->scoreFromAch($achRr);
-                $scoreTopup = $this->scoreFromAch($achTopup);
-                $scoreNoa   = $this->scoreFromAch($achNoa);
-                $scoreDpk   = $this->scoreReverseFromActualVsTarget($dpkPctTotal, $targetDpkTl);
-
-                $piRepay = round($scoreRepay * $weights['repayment'], 2);
-                $piTopup = round($scoreTopup * $weights['topup'], 2);
-                $piNoa   = round($scoreNoa   * $weights['noa'], 2);
-                $piDpk   = round($scoreDpk   * $weights['dpk'], 2);
-
-                $tlRecap = (object)[
-                    'name'        => $leader?->name ?? '-',
-                    'leader_role' => $leaderRole,
-                    'scope_count' => count($scopeAoCodes),
-
-                    // targets
-                    'target_topup_total' => $sumTopupTarget,
-                    'target_noa_total'   => $sumNoaTarget,
-                    'target_rr_pct'      => $targetRr,
-                    'target_dpk_pct'     => $targetDpkTl,
-
-                    // actual
-                    'topup_actual_total' => $sumTopupActual,
-                    'noa_actual_total'   => $sumNoaActual,
-                    'rr_actual_avg'      => $rrUsed,
-                    'dpk_actual_pct'     => $dpkPctTotal,
-
-                    // achievement
-                    'ach_topup' => $achTopup,
-                    'ach_noa'   => $achNoa,
-                    'ach_rr'    => $achRr,
-                    'ach_dpk'   => $this->achReverse($dpkPctTotal, $targetDpkTl),
-
-                    // score
-                    'score_repayment' => $scoreRepay,
-                    'score_topup'     => $scoreTopup,
-                    'score_noa'       => $scoreNoa,
-                    'score_dpk'       => $scoreDpk,
-
-                    // PI
-                    'pi_repayment' => $piRepay,
-                    'pi_topup'     => $piTopup,
-                    'pi_noa'       => $piNoa,
-                    'pi_dpk'       => $piDpk,
-                    'pi_total'     => round($piRepay + $piTopup + $piNoa + $piDpk, 2),
-
-                    // topup meta
-                    'topup_cif_count' => $sumTopupCifCount,
-                    'topup_cif_new_count' => $sumTopupCifNew,
-                    'topup_max_amount' => $maxTopupMaxCif,
-                    'topup_concentration_pct' => $tlConcentration,
-                    'topup_top3' => array_map(function($x){
-                        $cif = $x['cif'] ?? '-';
-                        $delta = (int)($x['delta'] ?? 0);
-                        return "{$cif} – Rp " . number_format($delta,0,',','.');
-                    }, $tlTop3),
-
-                    // RR meta
-                    'rr_os_exposure' => (float) $scoped->sum('repayment_total_os'),
-                    'rr_paid_amount' => 0,
-                    'rr_account_count' => 0,
-                ];
-            }
+            // (TL recap kamu boleh tetap, karena sekarang items sudah YTD)
+            // kalau kamu mau, TL recap bisa pakai $items langsung tanpa filter ulang.
 
             return view('kpi.marketing.sheet', [
                 'role'     => $role,
@@ -495,7 +434,11 @@ class MarketingKpiSheetController
                 'mode'     => $mode,
                 'weights'  => $weights,
                 'items'    => $items,
-                'tlRecap'  => $tlRecap,
+                'tlRecap'  => $tlRecap ?? null,
+
+                // supaya label "Akumulasi ..." bisa dipakai juga di RO blade
+                'startYtd' => $startYtdDate,
+                'endYtd'   => $endMonthEnd->toDateString(),
             ]);
         }
 
@@ -508,61 +451,134 @@ class MarketingKpiSheetController
                 'activity' => 0.10,
             ];
 
-            $rows = DB::table('kpi_so_monthlies as m')
-                ->join('users as u', 'u.id', '=', 'm.user_id')
-                ->leftJoin('kpi_so_targets as t', function ($j) use ($periodDate) {
-                    $j->on('t.user_id', '=', 'm.user_id')
-                      ->where('t.period', '=', $periodDate);
+            // =========================
+            // ✅ AKUMULASI Jan..periode
+            // =========================
+            $p = \Carbon\Carbon::parse($periodDate);                 // periodDate = YYYY-MM-01 (startOfMonth)
+            $startYtd = $p->copy()->startOfYear()->toDateString();   // 01 Jan YYYY
+            $endYtd   = $p->copy()->startOfMonth()->toDateString();  // 01 <bulan> YYYY (karena datamu per bulan pakai startOfMonth)
+
+            // --- Subquery: Target akumulasi (sum Jan..periode) per user ---
+            $subTargets = DB::table('kpi_so_targets')
+                ->whereBetween('period', [$startYtd, $endYtd])
+                ->selectRaw("
+                    user_id,
+                    SUM(COALESCE(target_os_disbursement,0))  as target_os_disbursement,
+                    SUM(COALESCE(target_noa_disbursement,0)) as target_noa_disbursement,
+                    MAX(COALESCE(target_rr,100))             as target_rr,
+                    SUM(COALESCE(target_activity,0))         as target_activity
+                ")
+                ->groupBy('user_id');
+
+            // --- Subquery: Actual akumulasi (sum Jan..periode) per user ---
+            // RR: hitung weighted average berbasis os_disbursement_raw (kalau ada), fallback AVG(rr_pct)
+            $subActuals = DB::table('kpi_so_monthlies')
+                ->whereBetween('period', [$startYtd, $endYtd])
+                ->selectRaw("
+                    user_id,
+                    SUM(COALESCE(os_disbursement,0))      as os_disbursement,
+                    SUM(COALESCE(os_disbursement_raw,0))  as os_disbursement_raw,
+                    SUM(COALESCE(os_adjustment,0))        as os_adjustment,
+                    SUM(COALESCE(noa_disbursement,0))     as noa_disbursement,
+                    SUM(COALESCE(activity_actual,0))      as activity_actual,
+
+                    -- RR weighted avg:
+                    CASE
+                    WHEN SUM(CASE WHEN COALESCE(os_disbursement_raw,0) > 0 THEN COALESCE(os_disbursement_raw,0) ELSE 0 END) > 0
+                        THEN
+                        SUM( (COALESCE(rr_pct,0) * CASE WHEN COALESCE(os_disbursement_raw,0) > 0 THEN COALESCE(os_disbursement_raw,0) ELSE 0 END) )
+                        / SUM( CASE WHEN COALESCE(os_disbursement_raw,0) > 0 THEN COALESCE(os_disbursement_raw,0) ELSE 0 END )
+                    ELSE
+                        AVG(COALESCE(rr_pct,0))
+                    END as rr_pct
+                ")
+                ->groupBy('user_id');
+
+            // --- Query utama: join user + hasil akumulasi ---
+            $rows = DB::table('users as u')
+                ->leftJoinSub($subTargets, 't', function ($j) {
+                    $j->on('t.user_id', '=', 'u.id');
                 })
-                ->where('m.period', $periodDate)
+                ->leftJoinSub($subActuals, 'm', function ($j) {
+                    $j->on('m.user_id', '=', 'u.id');
+                })
                 ->where('u.level', 'SO')
                 ->select([
                     'u.id as user_id','u.name','u.ao_code','u.level',
-                    't.id as target_id',
+
+                    // target akumulasi
                     't.target_os_disbursement',
                     't.target_noa_disbursement',
                     't.target_rr',
                     't.target_activity',
 
+                    // actual akumulasi
                     'm.os_disbursement',
                     'm.os_disbursement_raw',
                     'm.os_adjustment',
-
                     'm.noa_disbursement',
                     'm.rr_pct',
                     'm.activity_actual',
-                    'm.score_os','m.score_noa','m.score_rr','m.score_activity',
-                    'm.score_total',
                 ])
                 ->orderBy('u.name')
                 ->get();
 
-            $items = $rows->map(function ($r) use ($weights) {
+            $items = $rows->map(function ($r) use ($weights, $startYtd, $endYtd) {
+                // achievement
                 $achOs  = $this->pct($r->os_disbursement ?? 0, $r->target_os_disbursement ?? 0);
                 $achNoa = $this->pct($r->noa_disbursement ?? 0, $r->target_noa_disbursement ?? 0);
                 $achAct = $this->pct($r->activity_actual ?? 0, $r->target_activity ?? 0);
 
                 $targetRr = (float)($r->target_rr ?? 100);
+                $rrPct    = (float)($r->rr_pct ?? 0);
+                $achRr    = $targetRr > 0 ? round(($rrPct / $targetRr) * 100, 2) : 0;
 
-                $piOs  = round(((float)($r->score_os ?? 0))       * $weights['os'], 2);
-                $piNoa = round(((float)($r->score_noa ?? 0))      * $weights['noa'], 2);
-                $piRr  = round(((float)($r->score_rr ?? 0))       * $weights['rr'], 2);
-                $piAct = round(((float)($r->score_activity ?? 0)) * $weights['activity'], 2);
+                // =========================
+                // ✅ Re-score berdasarkan AKUMULASI
+                // =========================
+                // OS & NOA: band achievement 1..6 (0-24=1, 25-49=2, 50-74=3, 75-99=4, 100=5, >100=6)
+                $scoreOs  = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6((float)$achOs);
+                $scoreNoa = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6((float)$achNoa);
+
+                // RR SO: rubric khusus SO
+                $scoreRr  = \App\Services\Kpi\KpiScoreHelper::scoreFromRepaymentRateSo6((float)$rrPct);
+
+                // Activity SO: Handling Komunitas rubric SO (0=>1, 1=>4, 2=>5, >=3=>6)
+                // Jika activity kamu memang "komunitas", pakai ini. Kalau activity itu KPI lain yg target-based, ganti ke scoreBand1to6($achAct).
+                $scoreAct = \App\Services\Kpi\KpiScoreHelper::scoreFromHandlingKomunitasSo6((int)($r->activity_actual ?? 0));
+
+                // PI
+                $piOs  = round($scoreOs  * $weights['os'], 2);
+                $piNoa = round($scoreNoa * $weights['noa'], 2);
+                $piRr  = round($scoreRr  * $weights['rr'], 2);
+                $piAct = round($scoreAct * $weights['activity'], 2);
 
                 $totalPi = round($piOs + $piNoa + $piRr + $piAct, 2);
 
                 return (object) array_merge((array)$r, [
+                    // achievement for blade
                     'ach_os'       => $achOs,
                     'ach_noa'      => $achNoa,
-                    'ach_rr'       => $targetRr > 0 ? round(((float)($r->rr_pct ?? 0) / $targetRr) * 100, 2) : 0,
+                    'ach_rr'       => $achRr,
                     'ach_activity' => $achAct,
                     'target_rr'    => $targetRr,
 
+                    // scores (akumulasi)
+                    'score_os'       => $scoreOs,
+                    'score_noa'      => $scoreNoa,
+                    'score_rr'       => $scoreRr,
+                    'score_activity' => $scoreAct,
+
+                    // pi
                     'pi_os'       => $piOs,
                     'pi_noa'      => $piNoa,
                     'pi_rr'       => $piRr,
                     'pi_activity' => $piAct,
                     'pi_total'    => $totalPi,
+
+                    // meta (optional)
+                    'startYtd' => $startYtd,
+                    'endYtd'   => $endYtd,
                 ]);
             });
 
@@ -570,16 +586,24 @@ class MarketingKpiSheetController
                 'role'     => $role,
                 'periodYm' => $periodYm,
                 'period'   => $period,
+
+                // ✅ bobot & data
                 'weights'  => $weights,
                 'items'    => $items,
+
+                // ✅ label akumulasi (kalau blade kamu sudah pakai)
+                'startYtd' => $startYtd,
+                'endYtd'   => $endYtd,
             ]);
         }
 
-        // ========= FE =========
+       // ========= FE =========
         if ($role === 'FE') {
             $svc = app(\App\Services\Kpi\FeKpiMonthlyService::class);
             $res = $svc->buildForPeriod($periodYm, auth()->user());
 
+            logger()->info('FE items count', ['cnt' => count($res['items'] ?? [])]);
+            
             return view('kpi.marketing.sheet', [
                 'role'      => $role,
                 'periodYm'  => $periodYm,
@@ -588,6 +612,10 @@ class MarketingKpiSheetController
                 'weights'   => $res['weights'],
                 'items'     => $res['items'],
                 'tlRecap'   => $res['tlFeRecap'] ?? null,
+
+                // ✅ tambahan untuk label akumulasi (dan konsistensi dgn RO)
+                'startYtd'  => $res['startYtd'] ?? null,
+                'endYtd'    => $res['endYtd'] ?? null,
             ]);
         }
 
@@ -607,7 +635,7 @@ class MarketingKpiSheetController
             ]);
         }
 
-        // ========= AO =========
+        // ========= AO ========= 
 
         // weights AO UMKM (baru) - single mode
         $weightsUmkm = [
@@ -618,6 +646,53 @@ class MarketingKpiSheetController
             'daily'     => 0.05,
         ];
 
+        // =========================================================
+        // ✅ NEW: MODE AKUMULASI (YTD / Jan s.d periode)
+        // - Feb = Jan+Feb, Mar = Jan+Feb+Mar, dst
+        // - target & actual KPI SUM (kecuali RR dihitung weighted ratio)
+        // =========================================================
+        $startYtd = \Carbon\Carbon::parse($periodDate)->startOfYear()->toDateString();
+        $endYtd   = \Carbon\Carbon::parse($periodDate)->startOfMonth()->toDateString(); // asumsi periodDate = YYYY-mm-01
+
+        // helper local skor 1..6 berbasis achievement pct (0..∞)
+        // (dipakai untuk NOA/OS/Community/Daily; RR tetap pakai helper RR)
+        $scoreFromPct6 = function (float $pct): int {
+            if ($pct < 25) return 1;
+            if ($pct < 50) return 2;
+            if ($pct < 75) return 3;
+            if ($pct < 100) return 4;
+            if ($pct < 125) return 5;
+            return 6;
+        };
+
+        // Subquery ACTUAL YTD
+        $subActualYtd = \Illuminate\Support\Facades\DB::table('kpi_ao_monthlies')
+            ->where('scheme', 'AO_UMKM')
+            ->whereBetween('period', [$startYtd, $endYtd])
+            ->groupBy('user_id')
+            ->selectRaw("
+                user_id,
+                SUM(os_disbursement)        as os_disbursement,
+                SUM(noa_disbursement)       as noa_disbursement,
+                SUM(community_actual)       as community_actual,
+                SUM(daily_report_actual)    as daily_report_actual,
+                SUM(rr_os_total)            as rr_os_total,
+                SUM(rr_os_current)          as rr_os_current
+            ");
+
+        // Subquery TARGET YTD
+        $subTargetYtd = \Illuminate\Support\Facades\DB::table('kpi_ao_targets')
+            ->whereBetween('period', [$startYtd, $endYtd])
+            ->groupBy('user_id')
+            ->selectRaw("
+                user_id,
+                SUM(target_os_disbursement)     as target_os_disbursement,
+                SUM(target_noa_disbursement)    as target_noa_disbursement,
+                MAX(target_rr)                  as target_rr,
+                SUM(target_community)           as target_community,
+                SUM(target_daily_report)        as target_daily_report
+            ");
+
         // ====== TLUM SCOPE (untuk tabel TLUM + ranking) ======
         $me = $request->user();
         $tlum = null;
@@ -626,21 +701,21 @@ class MarketingKpiSheetController
         try {
             $roleAliases = ['tl', 'tlum', 'tl um', 'tl-um', 'tl_um', 'tl umkm', 'tl-umkm', 'tl_umkm'];
 
-            $subUserIds = DB::table('org_assignments')
+            $subUserIds = \Illuminate\Support\Facades\DB::table('org_assignments')
                 ->where('leader_id', (int)($me?->id ?? 0))
                 ->where('is_active', 1)
-                ->whereIn(DB::raw('LOWER(TRIM(leader_role))'), $roleAliases)
+                ->whereIn(\Illuminate\Support\Facades\DB::raw('LOWER(TRIM(leader_role))'), $roleAliases)
                 ->whereDate('effective_from', '<=', $periodDate)
                 ->where(function ($q) use ($periodDate) {
                     $q->whereNull('effective_to')
-                      ->orWhereDate('effective_to', '>=', $periodDate);
+                    ->orWhereDate('effective_to', '>=', $periodDate);
                 })
                 ->pluck('user_id')
                 ->unique()
                 ->values()
                 ->all();
 
-            $aoUserIds = empty($subUserIds) ? [] : DB::table('users')
+            $aoUserIds = empty($subUserIds) ? [] : \Illuminate\Support\Facades\DB::table('users')
                 ->whereIn('id', $subUserIds)
                 ->where('level', 'AO')
                 ->pluck('id')
@@ -648,14 +723,16 @@ class MarketingKpiSheetController
                 ->values()
                 ->all();
 
-            $baseRankQ = DB::table('kpi_ao_monthlies as m')
+            // =========================================================
+            // ✅ BASE RANK Q: pakai agregasi YTD (Jan..periode)
+            // =========================================================
+            $baseRankQ = \Illuminate\Support\Facades\DB::query()
+                ->fromSub($subActualYtd, 'm')
                 ->join('users as u', 'u.id', '=', 'm.user_id')
-                ->leftJoin('kpi_ao_targets as t', function ($j) use ($periodDate) {
-                    $j->on('t.user_id', '=', 'm.user_id')
-                      ->where('t.period', '=', $periodDate);
+                ->leftJoinSub($subTargetYtd, 't', function ($j) {
+                    $j->on('t.user_id', '=', 'm.user_id');
                 })
-                ->where('m.period', $periodDate)
-                ->where('m.scheme', 'AO_UMKM');
+                ->where('u.level', 'AO');
 
             if (!empty($aoUserIds)) {
                 $baseRankQ->whereIn('u.id', $aoUserIds);
@@ -673,36 +750,70 @@ class MarketingKpiSheetController
 
                     'm.os_disbursement',
                     'm.noa_disbursement',
-                    'm.os_disbursement_pct',
-                    'm.noa_disbursement_pct',
-                    'm.rr_pct',
                     'm.rr_os_total',
                     'm.rr_os_current',
                     'm.community_actual',
-                    'm.community_pct',
                     'm.daily_report_actual',
-                    'm.daily_report_pct',
-
-                    'm.score_os',
-                    'm.score_noa',
-                    'm.score_rr',
-                    'm.score_community',
-                    'm.score_daily_report',
-                    'm.score_total',
                 ])
-                ->orderByDesc('m.score_total')
                 ->orderBy('u.name')
                 ->get();
 
-            $tlumRowsRank = $rankRows->map(function ($r) use ($weightsUmkm) {
-                $piNoa = round(((float)($r->score_noa ?? 0))          * $weightsUmkm['noa'], 2);
-                $piOs  = round(((float)($r->score_os ?? 0))           * $weightsUmkm['os'], 2);
-                $piRr  = round(((float)($r->score_rr ?? 0))           * $weightsUmkm['rr'], 2);
-                $piCom = round(((float)($r->score_community ?? 0))    * $weightsUmkm['community'], 2);
-                $piDay = round(((float)($r->score_daily_report ?? 0)) * $weightsUmkm['daily'], 2);
+            // =========================================================
+            // ✅ HITUNG ULANG pct/score/pi DARI AGREGAT YTD
+            // =========================================================
+            $tlumRowsRank = $rankRows->map(function ($r) use ($weightsUmkm, $scoreFromPct6) {
+
+                $targetNoa = (float)($r->target_noa_disbursement ?? 0);
+                $targetOs  = (float)($r->target_os_disbursement ?? 0);
+                $targetCom = (float)($r->target_community ?? 0);
+                $targetDay = (float)($r->target_daily_report ?? 0);
+
+                $actNoa = (float)($r->noa_disbursement ?? 0);
+                $actOs  = (float)($r->os_disbursement ?? 0);
+                $actCom = (float)($r->community_actual ?? 0);
+                $actDay = (float)($r->daily_report_actual ?? 0);
+
+                $rrTotal   = (float)($r->rr_os_total ?? 0);
+                $rrCurrent = (float)($r->rr_os_current ?? 0);
+                $rrPct     = $rrTotal > 0 ? round(100.0 * $rrCurrent / $rrTotal, 2) : 0.0;
+
+                $noaPct = \App\Services\Kpi\KpiScoreHelper::safePct($actNoa, $targetNoa);
+                $osPct  = \App\Services\Kpi\KpiScoreHelper::safePct($actOs,  $targetOs);
+                $comPct = \App\Services\Kpi\KpiScoreHelper::safePct($actCom, $targetCom);
+                $dayPct = \App\Services\Kpi\KpiScoreHelper::safePct($actDay, $targetDay);
+
+                // score 1..6
+                $scoreNoa = $scoreFromPct6((float)$noaPct);
+                $scoreOs  = $scoreFromPct6((float)$osPct);
+                $scoreCom = $scoreFromPct6((float)$comPct);
+                $scoreDay = $scoreFromPct6((float)$dayPct);
+
+                // RR pakai helper khusus (kalau helper kamu memang 1..6)
+                // kalau ternyata helper RR kamu 1..5, nanti kita adjust konsisten 1..6
+                $scoreRr  = \App\Services\Kpi\KpiScoreHelper::scoreFromRepaymentRateAo6((float)$rrPct);
+
+                $piNoa = round($scoreNoa * $weightsUmkm['noa'], 2);
+                $piOs  = round($scoreOs  * $weightsUmkm['os'], 2);
+                $piRr  = round($scoreRr  * $weightsUmkm['rr'], 2);
+                $piCom = round($scoreCom * $weightsUmkm['community'], 2);
+                $piDay = round($scoreDay * $weightsUmkm['daily'], 2);
                 $piTot = round($piNoa + $piOs + $piRr + $piCom + $piDay, 2);
 
                 return (object) array_merge((array)$r, [
+                    'os_disbursement_pct' => round((float)$osPct, 2),
+                    'noa_disbursement_pct' => round((float)$noaPct, 2),
+                    'rr_pct' => (float)$rrPct,
+                    'community_pct' => round((float)$comPct, 2),
+                    'daily_report_pct' => round((float)$dayPct, 2),
+
+                    'score_os' => (int)$scoreOs,
+                    'score_noa' => (int)$scoreNoa,
+                    'score_rr' => (int)$scoreRr,
+                    'score_community' => (int)$scoreCom,
+                    'score_daily_report' => (int)$scoreDay,
+
+                    'score_total' => round((float)($scoreNoa + $scoreOs + $scoreRr + $scoreCom + $scoreDay), 2),
+
                     'pi_noa' => $piNoa,
                     'pi_os'  => $piOs,
                     'pi_rr'  => $piRr,
@@ -734,10 +845,12 @@ class MarketingKpiSheetController
                 $comPct = \App\Services\Kpi\KpiScoreHelper::safePct((float)$sumActualCom, (float)$sumTargetCom);
                 $dayPct = \App\Services\Kpi\KpiScoreHelper::safePct((float)$sumActualDay, (float)$sumTargetDay);
 
-                $scoreNoaT = \App\Services\Kpi\KpiScoreHelper::scoreFromTlumNoaGrowth6($sumActualNoa);
-                $scoreOsT  = \App\Services\Kpi\KpiScoreHelper::scoreFromAoOsRealisasiPct6($osPct);
+                // NOTE: TLUM scoring tetap pakai helper TLUM kamu (kalau memang sudah fix)
+                $scoreNoaT = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6((float)$noaPct);
+                // atau: scoreFromAchievementPct6((float)$noaPct)
+                $scoreOsT = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6((float)$osPct);
                 $scoreRrT  = \App\Services\Kpi\KpiScoreHelper::scoreFromRepaymentRateAo6($rrWeighted);
-                $scoreComT = \App\Services\Kpi\KpiScoreHelper::scoreFromTlumCommunity6($sumActualCom);
+                $scoreComT = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6((float)$comPct);
 
                 $wT = ['noa'=>0.30,'os'=>0.20,'rr'=>0.25,'com'=>0.20];
 
@@ -779,7 +892,7 @@ class MarketingKpiSheetController
                 ];
 
                 if (!empty($me?->id)) {
-                    DB::table('kpi_tlum_monthlies')->updateOrInsert(
+                    \Illuminate\Support\Facades\DB::table('kpi_tlum_monthlies')->updateOrInsert(
                         ['period' => $periodDate, 'tlum_user_id' => (int)$me->id],
                         [
                             'noa_target' => (int)($tlum->noa_target ?? 0),
@@ -823,18 +936,19 @@ class MarketingKpiSheetController
         }
 
         // ===== AO ITEMS (detail per AO) =====
-        $rows = DB::table('kpi_ao_monthlies as m')
+        // =========================================================
+        // ✅ Ganti query bulanan -> YTD (Jan..periode)
+        // =========================================================
+        $rows = \Illuminate\Support\Facades\DB::query()
+            ->fromSub($subActualYtd, 'm')
             ->join('users as u', 'u.id', '=', 'm.user_id')
-            ->leftJoin('kpi_ao_targets as t', function ($j) use ($periodDate) {
-                $j->on('t.user_id', '=', 'm.user_id')
-                  ->where('t.period', '=', $periodDate);
+            ->leftJoinSub($subTargetYtd, 't', function ($j) {
+                $j->on('t.user_id', '=', 'm.user_id');
             })
-            ->where('m.period', $periodDate)
             ->where('u.level', 'AO')
-            ->where('m.scheme', 'AO_UMKM')
             ->select([
                 'u.id as user_id','u.name','u.ao_code','u.level',
-                'm.scheme',
+                \Illuminate\Support\Facades\DB::raw("'AO_UMKM' as scheme"),
 
                 't.target_os_disbursement',
                 't.target_noa_disbursement',
@@ -844,36 +958,70 @@ class MarketingKpiSheetController
 
                 'm.os_disbursement',
                 'm.noa_disbursement',
-                'm.os_disbursement_pct',
-                'm.noa_disbursement_pct',
-                'm.rr_pct',
+                'm.rr_os_total',
+                'm.rr_os_current',
                 'm.community_actual',
-                'm.community_pct',
                 'm.daily_report_actual',
-                'm.daily_report_pct',
-
-                'm.score_os','m.score_noa','m.score_rr','m.score_community','m.score_daily_report',
-                'm.score_total',
             ])
             ->orderBy('u.name')
             ->get();
 
-        $items = $rows->map(function ($r) use ($weightsUmkm) {
-            $piNoa = round(((float)($r->score_noa ?? 0))          * $weightsUmkm['noa'], 2);
-            $piOs  = round(((float)($r->score_os ?? 0))           * $weightsUmkm['os'], 2);
-            $piRr  = round(((float)($r->score_rr ?? 0))           * $weightsUmkm['rr'], 2);
-            $piCom = round(((float)($r->score_community ?? 0))    * $weightsUmkm['community'], 2);
-            $piDay = round(((float)($r->score_daily_report ?? 0)) * $weightsUmkm['daily'], 2);
+        $items = $rows->map(function ($r) use ($weightsUmkm, $scoreFromPct6) {
+
+            $targetNoa = (float)($r->target_noa_disbursement ?? 0);
+            $targetOs  = (float)($r->target_os_disbursement ?? 0);
+            $targetCom = (float)($r->target_community ?? 0);
+            $targetDay = (float)($r->target_daily_report ?? 0);
+
+            $actNoa = (float)($r->noa_disbursement ?? 0);
+            $actOs  = (float)($r->os_disbursement ?? 0);
+            $actCom = (float)($r->community_actual ?? 0);
+            $actDay = (float)($r->daily_report_actual ?? 0);
+
+            $rrTotal   = (float)($r->rr_os_total ?? 0);
+            $rrCurrent = (float)($r->rr_os_current ?? 0);
+            $rrPct     = $rrTotal > 0 ? round(100.0 * $rrCurrent / $rrTotal, 2) : 0.0;
+
+            $noaPct = \App\Services\Kpi\KpiScoreHelper::safePct($actNoa, $targetNoa);
+            $osPct  = \App\Services\Kpi\KpiScoreHelper::safePct($actOs,  $targetOs);
+            $comPct = \App\Services\Kpi\KpiScoreHelper::safePct($actCom, $targetCom);
+            $dayPct = \App\Services\Kpi\KpiScoreHelper::safePct($actDay, $targetDay);
+
+            $scoreNoa = $scoreFromPct6((float)$noaPct);
+            $scoreOs  = $scoreFromPct6((float)$osPct);
+            $scoreCom = $scoreFromPct6((float)$comPct);
+            $scoreDay = $scoreFromPct6((float)$dayPct);
+            $scoreRr  = \App\Services\Kpi\KpiScoreHelper::scoreFromRepaymentRateAo6((float)$rrPct);
+
+            $piNoa = round($scoreNoa * $weightsUmkm['noa'], 2);
+            $piOs  = round($scoreOs  * $weightsUmkm['os'], 2);
+            $piRr  = round($scoreRr  * $weightsUmkm['rr'], 2);
+            $piCom = round($scoreCom * $weightsUmkm['community'], 2);
+            $piDay = round($scoreDay * $weightsUmkm['daily'], 2);
             $piTot = round($piNoa + $piOs + $piRr + $piCom + $piDay, 2);
 
             return (object) array_merge((array)$r, [
                 'mode' => 'AO_UMKM',
 
-                'ach_noa'       => (float)($r->noa_disbursement_pct ?? 0),
-                'ach_os'        => (float)($r->os_disbursement_pct ?? 0),
-                'ach_rr'        => (float)($r->rr_pct ?? 0),
-                'ach_community' => (float)($r->community_pct ?? 0),
-                'ach_daily'     => (float)($r->daily_report_pct ?? 0),
+                'os_disbursement_pct' => round((float)$osPct, 2),
+                'noa_disbursement_pct' => round((float)$noaPct, 2),
+                'rr_pct' => (float)$rrPct,
+                'community_pct' => round((float)$comPct, 2),
+                'daily_report_pct' => round((float)$dayPct, 2),
+
+                'score_os' => (int)$scoreOs,
+                'score_noa' => (int)$scoreNoa,
+                'score_rr' => (int)$scoreRr,
+                'score_community' => (int)$scoreCom,
+                'score_daily_report' => (int)$scoreDay,
+
+                'score_total' => round((float)($scoreNoa + $scoreOs + $scoreRr + $scoreCom + $scoreDay), 2),
+
+                'ach_noa'       => round((float)$noaPct, 2),
+                'ach_os'        => round((float)$osPct, 2),
+                'ach_rr'        => (float)$rrPct,
+                'ach_community' => round((float)$comPct, 2),
+                'ach_daily'     => round((float)$dayPct, 2),
 
                 'pi_noa'       => $piNoa,
                 'pi_os'        => $piOs,
@@ -929,14 +1077,14 @@ class MarketingKpiSheetController
         // ===== Trend TLUM (MoM) =====
         $trend = null;
         if (!empty($me?->id)) {
-            $prevPeriod = Carbon::parse($periodDate)->subMonth()->startOfMonth()->toDateString();
+            $prevPeriod = \Carbon\Carbon::parse($periodDate)->subMonth()->startOfMonth()->toDateString();
 
-            $cur = DB::table('kpi_tlum_monthlies')
+            $cur = \Illuminate\Support\Facades\DB::table('kpi_tlum_monthlies')
                 ->where('period', $periodDate)
                 ->where('tlum_user_id', (int)$me->id)
                 ->first();
 
-            $prev = DB::table('kpi_tlum_monthlies')
+            $prev = \Illuminate\Support\Facades\DB::table('kpi_tlum_monthlies')
                 ->where('period', $prevPeriod)
                 ->where('tlum_user_id', (int)$me->id)
                 ->first();
@@ -964,6 +1112,10 @@ class MarketingKpiSheetController
             'tlumRows' => $tlumRowsRank,
             'insight'  => $insight,
             'trend'    => $trend,
+
+            // ✅ optional info untuk blade (biar jelas ini mode akumulasi)
+            'startYtd' => $startYtd,
+            'endYtd'   => $endYtd,
         ]);
     }
 

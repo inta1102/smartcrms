@@ -62,385 +62,344 @@ class FeKpiMonthlyService
     }
 
     // =========================================================
-    // MAIN: build FE KPI for period
-    // return: ['items' => collection, 'tlFeRecap' => object|null]
+    // MAIN: build FE KPI for period (YTD Accumulation)
+    // Target YTD  : dari kpi_fe_targets
+    // Actual  YTD : dari kpi_fe_monthlies
     // =========================================================
     public function buildForPeriod(string $periodYm, $leaderUser = null): array
     {
         $period     = Carbon::createFromFormat('Y-m', $periodYm)->startOfMonth();
         $periodDate = $period->toDateString();
-        $mode       = $this->resolveMode($period);
 
-        $prev     = $period->copy()->subMonth()->startOfMonth();
-        $prevDate = $prev->toDateString();
+        $mode = $this->resolveMode($period);
 
-        // ===== Targets map (FE) =====
-        $targetMap = DB::table('kpi_fe_targets')
-            ->whereDate('period', $periodDate)
-            ->get()
-            ->keyBy('fe_user_id');
+        // =========================
+        // YTD window
+        // =========================
+        $endMonth   = Carbon::parse($periodDate)->startOfMonth(); // contoh: 2026-02-01
+        $startMonth = $endMonth->copy()->startOfYear();           // contoh: 2026-01-01
 
-        // ===== FE Users =====
-        $feUsers = DB::table('users')
-            ->select(['id', 'name', 'level', 'ao_code'])
-            ->whereRaw("UPPER(TRIM(level)) = 'FE'")
-            ->whereNotNull('ao_code')
-            ->whereRaw("TRIM(ao_code) <> ''")
-            ->orderBy('name')
+        $isEndMonthCurrent = $endMonth->equalTo(now()->startOfMonth());
+        $endMonthMode      = $isEndMonthCurrent ? 'realtime' : 'eom';
+
+        $startYtd = $startMonth->toDateString();
+        $endYtd   = $endMonth->copy()->endOfMonth()->toDateString();
+
+        // =========================
+        // Leader & Scope
+        // =========================
+        $leader = $leaderUser ?: auth()->user();
+        $scopeUserIds = $this->scopeFeUserIdsForLeader($leader, $period);
+
+        logger()->info('FE scope debug', [
+            'leader_id'   => (int)($leader?->id ?? 0),
+            'leader_role' => $this->leaderRoleValue($leader),
+            'scope_cnt'   => count($scopeUserIds),
+            'scope_ids'   => array_slice($scopeUserIds, 0, 10),
+        ]);
+
+        // =====================================================
+        // ACTUAL AGG (YTD): dari kpi_fe_monthlies
+        // Rule:
+        // - month < endMonth  => calc_mode = eom
+        // - month = endMonth  => calc_mode = endMonthMode
+        // =====================================================
+        $actualAgg = DB::table('kpi_fe_monthlies as k')
+            ->whereBetween('k.period', [$startMonth->toDateString(), $endMonth->toDateString()])
+            ->where(function ($w) use ($endMonth, $endMonthMode) {
+                $w->where(function ($q) use ($endMonth) {
+                    $q->where('k.period', '<', $endMonth->toDateString())
+                    ->where('k.calc_mode', '=', 'eom');
+                })->orWhere(function ($q) use ($endMonth, $endMonthMode) {
+                    $q->where('k.period', '=', $endMonth->toDateString())
+                    ->where('k.calc_mode', '=', $endMonthMode);
+                });
+            })
+            ->groupBy('k.fe_user_id')
+            ->selectRaw("
+                k.fe_user_id,
+
+                SUM(COALESCE(k.os_kol2_awal,0))          as os_kol2_awal_sum,
+                SUM(COALESCE(k.os_kol2_akhir,0))         as os_kol2_akhir_sum,
+
+                SUM(COALESCE(k.os_kol2_turun_total,0))   as os_kol2_turun_total_sum,
+                SUM(COALESCE(k.os_kol2_turun_murni,0))   as os_kol2_turun_murni_sum,
+                SUM(COALESCE(k.os_kol2_turun_migrasi,0)) as os_kol2_turun_migrasi_sum,
+
+                SUM(COALESCE(k.migrasi_npl_os,0))        as migrasi_npl_os_sum,
+                SUM(COALESCE(k.penalty_paid_total,0))    as penalty_paid_total_sum,
+
+                MIN(COALESCE(k.baseline_ok,0))           as baseline_ok
+            ");
+
+        // =====================================================
+        // TARGET AGG (YTD): dari kpi_fe_targets (INI FIX UTAMA)
+        // - target rupiah => SUM
+        // - target migrasi => weighted by os_awal (pakai actualAgg os_awal_sum)
+        //   (kalau os_awal=0 => fallback AVG)
+        // =====================================================
+        $targetAgg = DB::table('kpi_fe_targets as t')
+            ->whereBetween('t.period', [$startMonth->toDateString(), $endMonth->toDateString()])
+            ->groupBy('t.fe_user_id')
+            ->selectRaw("
+                t.fe_user_id,
+                SUM(COALESCE(t.target_os_turun_kol2,0))  as target_os_turun_acc,
+                SUM(COALESCE(t.target_penalty_paid,0))   as target_penalty_acc,
+                AVG(COALESCE(t.target_migrasi_npl_pct,0.3)) as target_migrasi_avg
+            ");
+
+        // =========================
+        // FE Users base query
+        // =========================
+        $feUsersQ = DB::table('users as u')
+            ->whereRaw("UPPER(TRIM(u.level)) = 'FE'")
+            ->whereNotNull('u.ao_code')
+            ->whereRaw("TRIM(u.ao_code) <> ''")
+            ->orderBy('u.name');
+
+        // apply scope only if not empty
+        if (!empty($scopeUserIds)) {
+            $feUsersQ->whereIn('u.id', $scopeUserIds);
+        }
+
+        // =========================
+        // Join users + actualAgg + targetAgg
+        // =========================
+        $rows = $feUsersQ
+            ->leftJoinSub($actualAgg, 'a', function ($j) {
+                $j->on('a.fe_user_id', '=', 'u.id');
+            })
+            ->leftJoinSub($targetAgg, 't', function ($j) {
+                $j->on('t.fe_user_id', '=', 'u.id');
+            })
+            ->selectRaw("
+                u.id as user_id, u.name, u.level, u.ao_code,
+
+                COALESCE(a.os_kol2_awal_sum,0)            as os_kol2_awal,
+                COALESCE(a.os_kol2_akhir_sum,0)           as os_kol2_akhir,
+
+                COALESCE(a.os_kol2_turun_total_sum,0)     as os_kol2_turun_total,
+                COALESCE(a.os_kol2_turun_murni_sum,0)     as os_kol2_turun_murni,
+                COALESCE(a.os_kol2_turun_migrasi_sum,0)   as os_kol2_turun_migrasi,
+
+                COALESCE(a.migrasi_npl_os_sum,0)          as migrasi_npl_os,
+                COALESCE(a.penalty_paid_total_sum,0)      as penalty_paid_total,
+
+                COALESCE(t.target_os_turun_acc,0)         as target_os_turun_kol2,
+                COALESCE(t.target_penalty_acc,0)          as target_penalty_paid,
+                COALESCE(t.target_migrasi_avg,0.3)        as target_migrasi_npl_pct,
+
+                COALESCE(a.baseline_ok,0)                 as baseline_ok
+            ")
             ->get();
 
-        // ===== Kolom di loan_installments =====
-        $paidDateCol = 'paid_date';
-        $penaltyCol  = 'penalty_paid';
+        logger()->info('FE rows count', ['cnt' => $rows->count()]);
 
-        // untuk upsert
-        $now          = now();
-        $calculatedBy = auth()->id();
+        // =========================
+        // Map => compute KPI YTD
+        // =========================
+        $items = $rows->map(function ($r) use ($mode) {
 
-        // ===== Build items =====
-        $items = $feUsers->map(function ($u) use (
-            $period, $periodDate, $prevDate, $mode,
-            $targetMap, $paidDateCol, $penaltyCol,
-            $now, $calculatedBy
-        ) {
-            $feId = (int) $u->id;
-            $ao   = (string) $u->ao_code;
+            $osAwalSum    = (float)($r->os_kol2_awal ?? 0);
+            $osTurunMurni = (float)($r->os_kol2_turun_murni ?? 0);
+            $osTurunTotal = (float)($r->os_kol2_turun_total ?? 0);
+            $osTurunMigr  = (float)($r->os_kol2_turun_migrasi ?? 0);
 
-            // ========== TARGET (fallback) ==========
-            $tg = $targetMap->get($feId);
+            $penaltyTotal = (float)($r->penalty_paid_total ?? 0);
 
-            // ✅ Nett OS turun kembali RUPIAH
-            $targetOsTurunRp = (float)($tg->target_os_turun_kol2 ?? 0);
-
-            // migrasi tetap % (reverse)
-            $targetMigrasi = (float)($tg->target_migrasi_npl_pct ?? 0.3000);
-
-            // denda tetap rupiah
-            $targetPenalty = (float)($tg->target_penalty_paid ?? 0);
-
-            // =========================================================
-            // 1) OS Kol2 awal (prev month snapshot)
-            // =========================================================
-            $osAwal = (float) DB::table('loan_account_snapshots_monthly')
-                ->whereDate('snapshot_month', $prevDate)
-                ->where('ao_code', $ao)
-                ->where('kolek', 2)
-                ->sum('outstanding');
-
-            // =========================================================
-            // 2) OS Kol2 akhir
-            // =========================================================
-            if ($mode === 'eom') {
-                $osAkhir = (float) DB::table('loan_account_snapshots_monthly')
-                    ->whereDate('snapshot_month', $periodDate)
-                    ->where('ao_code', $ao)
-                    ->where('kolek', 2)
-                    ->sum('outstanding');
-            } else {
-                $osAkhir = (float) DB::table('loan_accounts')
-                    ->where('ao_code', $ao)
-                    ->where('kolek', 2)
-                    ->sum('outstanding');
-            }
-
-            // =========================================================
-            // 3) Migrasi NPL: dari kolek2 -> kolek>=3 (basis OS awal)
-            // =========================================================
-            if ($mode === 'eom') {
-                $migrasiOs = (float) DB::table('loan_account_snapshots_monthly as p')
-                    ->join('loan_account_snapshots_monthly as c', function ($j) use ($prevDate, $periodDate) {
-                        $j->on('c.account_no', '=', 'p.account_no')
-                          ->whereDate('c.snapshot_month', '=', $periodDate);
-                    })
-                    ->whereDate('p.snapshot_month', $prevDate)
-                    ->where('p.ao_code', $ao)
-                    ->where('p.kolek', 2)
-                    ->where('c.kolek', '>=', 3)
-                    ->sum('p.outstanding');
-            } else {
-                $migrasiOs = (float) DB::table('loan_account_snapshots_monthly as p')
-                    ->join('loan_accounts as a', 'a.account_no', '=', 'p.account_no')
-                    ->whereDate('p.snapshot_month', $prevDate)
-                    ->where('p.ao_code', $ao)
-                    ->where('p.kolek', 2)
-                    ->where('a.kolek', '>=', 3)
-                    ->sum('p.outstanding');
-            }
-
-            $migrasiPct = ($osAwal > 0)
-                ? round(($migrasiOs / $osAwal) * 100.0, 4)
+            $migrasiOsSum = (float)($r->migrasi_npl_os ?? 0);
+            $migrasiPctYtd = ($osAwalSum > 0)
+                ? round(($migrasiOsSum / $osAwalSum) * 100.0, 4)
                 : 0.0;
 
-            // =========================================================
-            // 4) Split: Turun total vs migrasi vs murni
-            // =========================================================
-            $osTurunTotal   = max(0.0, round($osAwal - $osAkhir, 2));
-            $osTurunMigrasi = max(0.0, min($osTurunTotal, (float)$migrasiOs)); // clamp
-            $osTurunMurni   = max(0.0, round($osTurunTotal - $osTurunMigrasi, 2));
+            $targetOsTurunRp = (float)($r->target_os_turun_kol2 ?? 0);
+            $targetPenalty   = (float)($r->target_penalty_paid ?? 0);
+            $targetMigrasi   = (float)($r->target_migrasi_npl_pct ?? 0.3000);
 
-            // =========================================================
-            // ✅ 4B) Nett % hanya untuk INFO (bukan KPI scoring)
-            // =========================================================
-            $osTurunPctInfo = ($osAwal > 0)
-                ? round(($osTurunMurni / $osAwal) * 100.0, 4)
+            $osTurunPctInfo = ($osAwalSum > 0)
+                ? round(($osTurunMurni / $osAwalSum) * 100.0, 4)
                 : 0.0;
 
-            // =========================================================
-            // 5) Denda masuk selama bulan period
-            // =========================================================
-            $start = $period->copy()->startOfMonth()->toDateString();
-            $end   = $period->copy()->endOfMonth()->toDateString();
-
-            $penaltyTotal = 0.0;
-            try {
-                $penaltyTotal = (float) DB::table('loan_installments')
-                    ->where('ao_code', $ao)
-                    ->whereBetween($paidDateCol, [$start, $end])
-                    ->sum($penaltyCol);
-            } catch (\Throwable $e) {
-                $penaltyTotal = 0.0;
-            }
-
-            // =====================
-            // ACHIEVEMENT
-            // =====================
-            // ✅ Nett OS turun kembali RUPIAH
             $achOsTurun = $this->pct($osTurunMurni, $targetOsTurunRp);
-
             $achPenalty = $this->pct($penaltyTotal, $targetPenalty);
-            $achMigrasi = $this->achReverse($migrasiPct, $targetMigrasi);
+            $achMigrasi = $this->achReverse($migrasiPctYtd, $targetMigrasi);
 
-            // =====================
-            // SCORE
-            // =====================
             $scoreOsTurun = $this->scoreFromAchievement($achOsTurun);
             $scorePenalty = $this->scoreFromAchievement($achPenalty);
-            $scoreMigrasi = $this->scoreMigrasiFromPct($migrasiPct);
+            $scoreMigrasi = $this->scoreMigrasiFromPct($migrasiPctYtd);
 
-            // =====================
-            // PI
-            // =====================
             $piOsTurun = round($scoreOsTurun * ($this->weights['os_turun'] ?? 0), 2);
             $piMigrasi = round($scoreMigrasi * ($this->weights['migrasi'] ?? 0), 2);
             $piPenalty = round($scorePenalty * ($this->weights['penalty'] ?? 0), 2);
 
             $totalPi = round($piOsTurun + $piMigrasi + $piPenalty, 2);
 
-            // =====================
-            // Baseline flag sederhana
-            // =====================
-            $baselineOk   = true;
-            $baselineNote = null;
-            if ($mode === 'eom' && $osAwal <= 0 && $osAkhir <= 0) {
-                $baselineOk   = false;
-                $baselineNote = 'OS Kol2 awal/akhir nol (cek snapshot / mapping ao_code).';
-            }
+            return (object) array_merge((array)$r, [
+                'mode' => $mode,
 
-            // =====================
-            // UPSERT monthly
-            // =====================
-            $row = [
-                'period'     => $periodDate,
-                'calc_mode'  => $mode,
-                'fe_user_id' => $feId,
-                'ao_code'    => $ao,
+                // alias utk blade
+                'target_nett_os_down'        => $targetOsTurunRp,
+                'nett_os_down'               => $osTurunMurni,
+                'nett_os_down_total'         => $osTurunTotal,
+                'nett_os_down_migrasi'       => $osTurunMigr,
+                'nett_os_down_pct_info'      => $osTurunPctInfo,
 
-                'os_kol2_awal'  => $osAwal,
-                'os_kol2_akhir' => $osAkhir,
+                'ach_nett_os_down'           => $achOsTurun,
+                'score_nett_os_down'         => $scoreOsTurun,
+                'pi_nett_os_down'            => $piOsTurun,
 
-                // legacy + split
-                'os_kol2_turun'         => $osTurunTotal, // legacy
-                'os_kol2_turun_total'   => $osTurunTotal,
-                'os_kol2_turun_murni'   => $osTurunMurni,
-                'os_kol2_turun_migrasi' => $osTurunMigrasi,
+                'target_npl_migration_pct'   => $targetMigrasi,
+                'npl_migration_pct'          => $migrasiPctYtd,
+                'ach_npl_migration'          => $achMigrasi,
+                'score_npl_migration'        => $scoreMigrasi,
+                'pi_npl_migration'           => $piMigrasi,
 
-                // ✅ info percent
-                'os_kol2_turun_pct' => $osTurunPctInfo,
+                'target_penalty'             => $targetPenalty,
+                'penalty_actual'             => $penaltyTotal,
+                'ach_penalty'                => $achPenalty,
+                'score_penalty'              => $scorePenalty,
+                'pi_penalty'                 => $piPenalty,
 
-                'migrasi_npl_os'  => $migrasiOs,
-                'migrasi_npl_pct' => $migrasiPct,
-
-                'penalty_paid_total' => $penaltyTotal,
-
-                // targets
-                'target_os_turun_kol2'   => $targetOsTurunRp,
-                'target_migrasi_npl_pct' => $targetMigrasi,
-                'target_penalty_paid'    => $targetPenalty,
-
-                // achievement
-                'ach_os_turun_pct' => $achOsTurun, // (nama kolom legacy, tapi isinya achievement nett OS turun)
-                'ach_migrasi_pct'  => $achMigrasi,
-                'ach_penalty_pct'  => $achPenalty,
-
-                // score
-                'score_os_turun' => $scoreOsTurun,
-                'score_migrasi'  => $scoreMigrasi,
-                'score_penalty'  => $scorePenalty,
-
-                // pi
-                'pi_os_turun' => $piOsTurun,
-                'pi_migrasi'  => $piMigrasi,
-                'pi_penalty'  => $piPenalty,
-                'total_score_weighted' => $totalPi,
-
-                'baseline_ok'   => $baselineOk ? 1 : 0,
-                'baseline_note' => $baselineNote,
-
-                'calculated_by' => $calculatedBy,
-                'calculated_at' => $now,
-                'updated_at'    => $now,
-                'created_at'    => $now,
-            ];
-
-            DB::table('kpi_fe_monthlies')->upsert(
-                [$row],
-                ['period', 'calc_mode', 'fe_user_id'],
-                [
-                    'ao_code',
-                    'os_kol2_awal', 'os_kol2_akhir',
-
-                    'os_kol2_turun',
-                    'os_kol2_turun_total',
-                    'os_kol2_turun_murni',
-                    'os_kol2_turun_migrasi',
-                    'os_kol2_turun_pct',
-
-                    'migrasi_npl_os', 'migrasi_npl_pct',
-                    'penalty_paid_total',
-
-                    'target_os_turun_kol2', 'target_migrasi_npl_pct', 'target_penalty_paid',
-                    'ach_os_turun_pct', 'ach_migrasi_pct', 'ach_penalty_pct',
-                    'score_os_turun', 'score_migrasi', 'score_penalty',
-                    'pi_os_turun', 'pi_migrasi', 'pi_penalty',
-                    'total_score_weighted',
-                    'baseline_ok', 'baseline_note',
-                    'calculated_by', 'calculated_at',
-                    'updated_at',
-                ]
-            );
-
-            return (object) [
-                'user_id' => $feId,
-                'name'    => (string) $u->name,
-                'ao_code' => $ao,
-                'level'   => (string) $u->level,
-                'mode'    => $mode,
-
-                // raw
-                'os_kol2_awal'  => $osAwal,
-                'os_kol2_akhir' => $osAkhir,
-
-                'os_kol2_turun_total'   => $osTurunTotal,
-                'os_kol2_turun_murni'   => $osTurunMurni,
-                'os_kol2_turun_migrasi' => $osTurunMigrasi,
-
-                // ✅ info
-                'os_kol2_turun_pct' => $osTurunPctInfo,
-
-                'migrasi_npl_os'  => $migrasiOs,
-                'migrasi_npl_pct' => $migrasiPct,
-
-                'penalty_paid_total' => $penaltyTotal,
-
-                // targets
-                'target_os_turun_kol2'   => $targetOsTurunRp,
-                'target_migrasi_npl_pct' => $targetMigrasi,
-                'target_penalty_paid'    => $targetPenalty,
-
-                // achievement
-                'ach_os_turun_pct' => $achOsTurun,
-                'ach_migrasi_pct'  => $achMigrasi,
-                'ach_penalty_pct'  => $achPenalty,
-
-                // score
-                'score_os_turun' => $scoreOsTurun,
-                'score_migrasi'  => $scoreMigrasi,
-                'score_penalty'  => $scorePenalty,
-
-                // pi
-                'pi_os_turun' => $piOsTurun,
-                'pi_migrasi'  => $piMigrasi,
-                'pi_penalty'  => $piPenalty,
-                'pi_total'    => $totalPi,
-
-                // =========================================================
-                // ✅ ALIAS UNTUK sheet_fe.blade.php (tetap)
-                // =========================================================
-                'target_nett_os_down'     => $targetOsTurunRp,
-                'nett_os_down'            => $osTurunMurni,
-                'nett_os_down_total'      => $osTurunTotal,
-                'nett_os_down_migrasi'    => $osTurunMigrasi,
-                'nett_os_down_pct_info'   => $osTurunPctInfo,   // ✅ tambahan untuk display
-
-                'ach_nett_os_down'        => $achOsTurun,
-                'score_nett_os_down'      => $scoreOsTurun,
-                'pi_nett_os_down'         => $piOsTurun,
-
-                'target_npl_migration_pct'=> $targetMigrasi,
-                'npl_migration_pct'       => $migrasiPct,
-                'ach_npl_migration'       => $achMigrasi,
-                'score_npl_migration'     => $scoreMigrasi,
-                'pi_npl_migration'        => $piMigrasi,
-
-                'target_penalty'          => $targetPenalty,
-                'penalty_actual'          => $penaltyTotal,
-                'ach_penalty'             => $achPenalty,
-                'score_penalty'           => $scorePenalty,
-                'pi_penalty'              => $piPenalty,
-            ];
+                'pi_total'                   => $totalPi,
+            ]);
         });
 
-        // ===== TLFE recap =====
-        $asOfDate = $period->copy()->endOfMonth()->toDateString();
+        logger()->info('FE items count', ['cnt' => $items->count()]);
+
+        $asOfDate  = $period->copy()->endOfMonth()->toDateString();
         $tlFeRecap = $this->buildTlFeRecap($items, $asOfDate, $leaderUser);
 
         return [
-            'period'   => $period,
-            'mode'     => $mode,
-            'weights'  => $this->weights,
-            'items'    => $items,
-            'tlFeRecap'=> $tlFeRecap,
+            'period'    => $period,
+            'mode'      => $mode,
+            'weights'   => $this->weights,
+            'items'     => $items,
+            'tlFeRecap' => $tlFeRecap,
+            'startYtd'  => $startYtd,
+            'endYtd'    => $endYtd,
         ];
     }
 
     // =========================================================
-    // TLFE RECAP
+    // ROLE NORMALIZER
     // =========================================================
     private function leaderRoleValue($user): string
     {
+        if (!$user) return 'UNKNOWN';
+
         $role = '';
-        if ($user) {
-            if (method_exists($user, 'roleValue')) $role = (string)($user->roleValue() ?? '');
-            if (trim($role) === '') $role = (string)($user->level ?? '');
+
+        // 1) ambil dari roleValue() kalau ada
+        if (method_exists($user, 'roleValue')) {
+            $role = (string)($user->roleValue() ?? '');
         }
+
+        // 2) fallback ke level
+        if (trim($role) === '') {
+            $role = (string)($user->level ?? '');
+        }
+
+        // 3) normalize: uppercase, trim, hapus spasi
         $role = strtoupper(trim($role));
-        return $role !== '' ? $role : 'LEADER';
+        $role = preg_replace('/\s+/', '', $role); // lebih aman dari str_replace(' ','')
+
+        // 4) role alias -> role kanonik
+        //    (sesuaikan kalau kamu punya variasi lain)
+        $map = [
+            // Kabag Lending
+            'KBL'          => 'KBL',
+            'KABAG'        => 'KBL',
+            'KABAGLENDING' => 'KBL',
+            'KABAGLEND'    => 'KBL',
+
+            // Team Leader FE
+            'TLFE'         => 'TLFE',
+            'TL'           => 'TLFE',
+            'TEAMLEADER'   => 'TLFE',
+            'LEADER'       => 'TLFE',
+
+            // Kasi FE / Lending (kalau memang kamu pakai)
+            'KSFE'         => 'KSFE',
+            'KASI'         => 'KSFE', // opsional
+            'KASIFE'       => 'KSFE', // opsional
+            'KASIlending'  => 'KSFE', // kalau ada format aneh, mending rapihin di data
+        ];
+
+        return $map[$role] ?? ($role !== '' ? $role : 'UNKNOWN');
+    }
+    
+    /**
+     * ✅ FIX UTAMA:
+     * Scope FE hanya diterapkan untuk role FE-hierarchy.
+     * Role lain (misal KSLR, TLRO, dll) tidak boleh “memaksa” whereIn id yang bukan FE.
+     */
+    private function scopeFeUserIdsForLeader($leader, Carbon $period): array
+    {
+        $leaderId   = (int)($leader?->id ?? 0);
+        $leaderRole = $this->leaderRoleValue($leader);
+
+        if ($leaderId <= 0) return [];
+
+        // ✅ Global visibility roles => NO FILTER
+        if (in_array($leaderRole, ['KBL','KBO','DIR','KOM','ADMIN','SUPERADMIN'], true)) {
+            return [];
+        }
+
+        // ✅ FE lihat dirinya sendiri
+        if ($leaderRole === 'FE') {
+            return [$leaderId];
+        }
+
+        // ✅ Hierarchy-based (TLFE/KSFE/KSL*/KSBE etc)
+        $start = $period->copy()->startOfMonth()->toDateString();
+        $end   = $period->copy()->endOfMonth()->toDateString();
+
+        $aliases = match ($leaderRole) {
+            'TLFE' => ['tlfe','tl','teamleader','leader'],
+            'KSFE' => ['ksfe','kasi','kasilending'],
+            'KSLU' => ['kslu','kasi','kasilending'],
+            'KSLR' => ['kslr','kasi','kasilending'],
+            'KSBE' => ['ksbe','kasi','kasilending'],
+            default => [strtolower($leaderRole)],
+        };
+
+        return DB::table('org_assignments')
+            ->where('leader_id', $leaderId)
+            ->where('is_active', 1)
+            // normalize leader_role (hapus spasi)
+            ->whereIn(DB::raw("LOWER(REPLACE(TRIM(leader_role),' ',''))"), $aliases)
+            // overlap dates
+            ->whereDate('effective_from', '<=', $end)
+            ->where(function ($q) use ($start) {
+                $q->whereNull('effective_to')
+                ->orWhereDate('effective_to', '>=', $start);
+            })
+            ->pluck('user_id')
+            ->map(fn($x) => (int)$x)
+            ->values()
+            ->all();
     }
 
     private function resolveScopeUserIds($leader, Carbon $period): array
     {
         $leaderId   = (int)($leader?->id ?? 0);
-        $leaderRole = strtoupper(trim((string)$this->leaderRoleValue($leader)));
+        $leaderRole = $this->leaderRoleValue($leader);
         if ($leaderId <= 0) return [];
 
         $start = $period->copy()->startOfMonth()->toDateString();
         $end   = $period->copy()->endOfMonth()->toDateString();
 
         $roleAliases = match ($leaderRole) {
-            'TLFE' => ['tlfe', 'tl', 'teamleader', 'leader'],
-            'KSLU'=> ['kslu', 'kasi', 'kasi lending'],
-            'KSLR'=> ['kslr', 'kasi', 'kasi lending'],
-            'KSFE'=> ['ksfe', 'kasi', 'kasi lending'],
-            'KSBE'  => ['ksbe', 'kasi', 'kasi lending'],
-            'KBL'  => ['kbl', 'kabag', 'kabag lending'],
+            'TLFE' => ['tlfe'],
+            'KSFE' => ['ksfe'],
             default => [strtolower($leaderRole)],
         };
 
+        // ✅ SQL aman untuk MariaDB
         return DB::table('org_assignments')
             ->where('leader_id', $leaderId)
-            ->whereIn(DB::raw('LOWER(TRIM(leader_role))'), $roleAliases)
+            ->whereIn(DB::raw("LOWER(TRIM(leader_role))"), $roleAliases)
             ->where('is_active', 1)
-            // ✅ overlap: effective_from <= end AND (effective_to null OR >= start)
             ->whereDate('effective_from', '<=', $end)
             ->where(function ($q) use ($start) {
                 $q->whereNull('effective_to')
@@ -459,62 +418,56 @@ class FeKpiMonthlyService
 
         $leaderRole = $this->leaderRoleValue($leader);
 
+        // recap hanya relevan untuk TLFE/KSFE/KBL (kalau bukan, return null)
+        if (!in_array($leaderRole, ['TLFE', 'KSFE', 'KBL'], true)) {
+            return null;
+        }
+
         $scopeUserIds = $this->resolveScopeUserIds($leader, Carbon::parse($periodDate));
         if (empty($scopeUserIds)) return null;
 
         $scoped = $items->filter(fn($it) => in_array((int)$it->user_id, $scopeUserIds, true));
         if ($scoped->count() <= 0) return null;
 
-        // =====================
-        // Ranking FE (Scope TLFE)
-        // =====================
-        $ranked = $scoped->sortByDesc(function ($it) {
-            return (float)($it->pi_total ?? 0);
-        })->values();
+        $ranked = $scoped->sortByDesc(fn($it) => (float)($it->pi_total ?? 0))->values();
 
         $rankings = $ranked->map(function ($it, $i) {
             return (object)[
-                'rank'      => $i + 1,
-                'user_id'   => (int)($it->user_id ?? 0),
-                'name'      => (string)($it->name ?? '-'),
-                'ao_code'   => (string)($it->ao_code ?? '-'),
-                'pi_total'  => (float)($it->pi_total ?? 0),
+                'rank'     => $i + 1,
+                'user_id'  => (int)($it->user_id ?? 0),
+                'name'     => (string)($it->name ?? '-'),
+                'ao_code'  => (string)($it->ao_code ?? '-'),
+                'pi_total' => (float)($it->pi_total ?? 0),
 
-                // breakdown biar informatif
-                'pi_os'     => (float)($it->pi_nett_os_down ?? 0),
-                'pi_mg'     => (float)($it->pi_npl_migration ?? 0),
-                'pi_pen'    => (float)($it->pi_penalty ?? 0),
+                'pi_os'  => (float)($it->pi_nett_os_down ?? 0),
+                'pi_mg'  => (float)($it->pi_npl_migration ?? 0),
+                'pi_pen' => (float)($it->pi_penalty ?? 0),
 
-                // optional: achievement ringkas
-                'ach_os'    => (float)($it->ach_nett_os_down ?? 0),
-                'ach_mg'    => (float)($it->ach_npl_migration ?? 0),
-                'ach_pen'   => (float)($it->ach_penalty ?? 0),
-                
+                'ach_os'  => (float)($it->ach_nett_os_down ?? 0),
+                'ach_mg'  => (float)($it->ach_npl_migration ?? 0),
+                'ach_pen' => (float)($it->ach_penalty ?? 0),
             ];
         });
 
-        // ✅ Nett OS turun recap pakai NOMINAL MURNI
-        $sumTargetOsTurun = (float) $scoped->sum('target_os_turun_kol2');
-        $sumOsTurunMurni  = (float) $scoped->sum('os_kol2_turun_murni');
-        $sumOsTurunTotal  = (float) $scoped->sum('os_kol2_turun_total');
-        $sumOsTurunMigr   = (float) $scoped->sum('os_kol2_turun_migrasi');
+        $sumTargetOsTurun = (float)$scoped->sum('target_os_turun_kol2');
+        $sumOsTurunMurni  = (float)$scoped->sum('os_kol2_turun_murni');
+        $sumOsTurunTotal  = (float)$scoped->sum('os_kol2_turun_total');
+        $sumOsTurunMigr   = (float)$scoped->sum('os_kol2_turun_migrasi');
 
-        // ✅ info % (scope) = sum(murni)/sum(os_awal)
-        $sumOsAwal        = (float) $scoped->sum('os_kol2_awal');
+        $sumOsAwal        = (float)$scoped->sum('os_kol2_awal');
         $sumPctInfo = ($sumOsAwal > 0)
             ? round(($sumOsTurunMurni / $sumOsAwal) * 100.0, 4)
             : 0.0;
 
-        $sumPenaltyTarget = (float) $scoped->sum('target_penalty_paid');
-        $sumPenalty       = (float) $scoped->sum('penalty_paid_total');
+        $sumPenaltyTarget = (float)$scoped->sum('target_penalty_paid');
+        $sumPenalty       = (float)$scoped->sum('penalty_paid_total');
 
-        $sumMigrasiOs     = (float) $scoped->sum('migrasi_npl_os');
+        $sumMigrasiOs     = (float)$scoped->sum('migrasi_npl_os');
 
         $migrasiPctTotal = ($sumOsAwal > 0)
             ? round(($sumMigrasiOs / $sumOsAwal) * 100.0, 4)
             : 0.0;
 
-        // target migrasi TLFE: weighted by os_awal
         $targetMigrasiTl = 0.3000;
         if ($sumOsAwal > 0) {
             $targetMigrasiTl = round(
@@ -522,56 +475,52 @@ class FeKpiMonthlyService
                     $t = (float)($it->target_migrasi_npl_pct ?? 0.3000);
                     $w = (float)($it->os_kol2_awal ?? 0);
                     return $t * $w;
-                }) / $sumOsAwal
-            , 4);
+                }) / $sumOsAwal,
+            4);
         }
 
-        // achievement (nett = rupiah)
         $achOsTurun = $this->pct($sumOsTurunMurni, $sumTargetOsTurun);
         $achPenalty = $this->pct($sumPenalty, $sumPenaltyTarget);
         $achMigrasi = $this->achReverse($migrasiPctTotal, $targetMigrasiTl);
 
-        // score
         $scoreOsTurun = $this->scoreFromAchievement($achOsTurun);
         $scorePenalty = $this->scoreFromAchievement($achPenalty);
         $scoreMigrasi = $this->scoreMigrasiFromPct($migrasiPctTotal);
 
-        // PI
         $piOsTurun = round($scoreOsTurun * ($this->weights['os_turun'] ?? 0), 2);
         $piMigrasi = round($scoreMigrasi * ($this->weights['migrasi'] ?? 0), 2);
         $piPenalty = round($scorePenalty * ($this->weights['penalty'] ?? 0), 2);
 
-        return (object) [
+        return (object)[
             'name'        => $leader?->name ?? '-',
             'leader_role' => $leaderRole,
             'scope_count' => $scoped->count(),
 
-            // alias (untuk sheet_fe TL recap)
-            'target_nett_os_down'       => $sumTargetOsTurun,
-            'nett_os_down'              => $sumOsTurunMurni,
-            'nett_os_down_total'        => $sumOsTurunTotal,
-            'nett_os_down_migrasi'      => $sumOsTurunMigr,
-            'nett_os_down_pct_info'     => $sumPctInfo,
+            'target_nett_os_down'   => $sumTargetOsTurun,
+            'nett_os_down'          => $sumOsTurunMurni,
+            'nett_os_down_total'    => $sumOsTurunTotal,
+            'nett_os_down_migrasi'  => $sumOsTurunMigr,
+            'nett_os_down_pct_info' => $sumPctInfo,
 
-            'ach_nett_os_down'          => $achOsTurun,
-            'score_nett_os_down'        => $scoreOsTurun,
-            'pi_nett_os_down'           => $piOsTurun,
+            'ach_nett_os_down'   => $achOsTurun,
+            'score_nett_os_down' => $scoreOsTurun,
+            'pi_nett_os_down'    => $piOsTurun,
 
-            'target_npl_migration_pct'  => $targetMigrasiTl,
-            'npl_migration_pct'         => $migrasiPctTotal,
-            'ach_npl_migration'         => $achMigrasi,
-            'score_npl_migration'       => $scoreMigrasi,
-            'pi_npl_migration'          => $piMigrasi,
+            'target_npl_migration_pct' => $targetMigrasiTl,
+            'npl_migration_pct'        => $migrasiPctTotal,
+            'ach_npl_migration'        => $achMigrasi,
+            'score_npl_migration'      => $scoreMigrasi,
+            'pi_npl_migration'         => $piMigrasi,
 
-            'target_penalty'            => $sumPenaltyTarget,
-            'penalty_actual'            => $sumPenalty,
-            'ach_penalty'               => $achPenalty,
-            'score_penalty'             => $scorePenalty,
-            'pi_penalty'                => $piPenalty,
+            'target_penalty'   => $sumPenaltyTarget,
+            'penalty_actual'   => $sumPenalty,
+            'ach_penalty'      => $achPenalty,
+            'score_penalty'    => $scorePenalty,
+            'pi_penalty'       => $piPenalty,
 
-            'pi_total'                  => round($piOsTurun + $piMigrasi + $piPenalty, 2),
+            'pi_total' => round($piOsTurun + $piMigrasi + $piPenalty, 2),
 
-            'rankings'                  => $rankings,
+            'rankings' => $rankings,
         ];
     }
 }

@@ -16,10 +16,6 @@ class BeKpiMonthlyService
     private float $wBunga = 0.20;
     private float $wDenda = 0.20;
 
-    /**
-     * FE pattern:
-     * buildForPeriod(periodYm, authUser) -> ['period','weights','items','mode'(optional)]
-     */
     public function buildForPeriod(string $periodYm, $authUser): array
     {
         // parse aman
@@ -32,7 +28,21 @@ class BeKpiMonthlyService
 
         $periodDate = $period->toDateString(); // YYYY-MM-01
 
-        // scope: sementara simplest (sesuai keputusanmu: KBL yang bisa recalc/lihat semua)
+        // =====================================================
+        // AKUMULASI RANGE (YTD) - sama seperti FE
+        // =====================================================
+        $endMonth   = Carbon::parse($periodDate)->startOfMonth();
+        $startMonth = $endMonth->copy()->startOfYear();
+
+        $isEndMonthCurrent = $endMonth->equalTo(now()->startOfMonth());
+        $endMonthMode      = $isEndMonthCurrent ? 'realtime' : 'eom';
+
+        $startYtd = $startMonth->toDateString();
+        $endYtd   = $endMonth->copy()->endOfMonth()->toDateString();
+
+        // =====================================================
+        // scope (sementara sesuai keputusanmu)
+        // =====================================================
         $scopeUserIds = $this->resolveScopeUserIds($authUser, $periodDate);
 
         $users = DB::table('users')
@@ -46,112 +56,200 @@ class BeKpiMonthlyService
 
         if ($users->isEmpty()) {
             return [
-                'period'  => $period,
-                'mode'    => 'monthly', // optional
-                'weights' => $this->weights(),
-                'items'   => collect(),
+                'period'   => $period,
+                'mode'     => $endMonthMode, // realtime/eom (end month)
+                'weights'  => $this->weights(),
+                'items'    => collect(),
+                'startYtd' => $startYtd,
+                'endYtd'   => $endYtd,
             ];
         }
 
         $beIds = $users->pluck('id')->map(fn($x)=>(int)$x)->values()->all();
 
-        // monthlies (frozen)
-        $monthlies = KpiBeMonthly::query()
-            ->where('period', $periodDate)
-            ->whereIn('be_user_id', $beIds)
-            ->get()
-            ->keyBy('be_user_id');
+        // =====================================================
+        // TARGET AGG (YTD): sum target per BE
+        // =====================================================
+        $targetAgg = DB::table('kpi_be_targets as t')
+            ->whereBetween('t.period', [$startMonth->toDateString(), $endMonth->toDateString()])
+            ->whereIn('t.be_user_id', $beIds)
+            ->groupBy('t.be_user_id')
+            ->selectRaw("
+                t.be_user_id,
+                SUM(COALESCE(t.target_os_selesai,0))    as t_os,
+                SUM(COALESCE(t.target_noa_selesai,0))   as t_noa,
+                SUM(COALESCE(t.target_bunga_masuk,0))   as t_bunga,
+                SUM(COALESCE(t.target_denda_masuk,0))   as t_denda
+            ");
 
-        // targets
-        $targets = KpiBeTarget::query()
-            ->where('period', $periodDate)
-            ->whereIn('be_user_id', $beIds)
-            ->get()
-            ->keyBy('be_user_id');
+        // =====================================================
+        // ACTUAL AGG (YTD): ambil dari kpi_be_monthlies (frozen)
+        // - bulan < endMonth: eom saja
+        // - endMonth: eom atau realtime sesuai kondisi
+        // =====================================================
+        $actualAgg = DB::table('kpi_be_monthlies as k')
+            ->whereBetween('k.period', [$startMonth->toDateString(), $endMonth->toDateString()])
+            ->whereIn('k.be_user_id', $beIds)
+            ->groupBy('k.be_user_id')
+            ->selectRaw("
+                k.be_user_id,
+                SUM(COALESCE(k.actual_os_selesai,0)) as a_os,
+                SUM(COALESCE(k.actual_noa_selesai,0)) as a_noa,
+                SUM(COALESCE(k.actual_bunga_masuk,0)) as a_bunga,
+                SUM(COALESCE(k.actual_denda_masuk,0)) as a_denda,
+                1 as baseline_ok
+            ");
 
-        // realtime untuk yg belum ada monthly
-        $needCalcUsers = $users->filter(fn($u) => !$monthlies->has((int)$u->id))->values();
+        // =====================================================
+        // JOIN users + targetAgg + actualAgg
+        // =====================================================
+        $rows = DB::table('users as u')
+            ->whereIn('u.id', $beIds)
+            ->leftJoinSub($targetAgg, 'ta', fn($j) => $j->on('ta.be_user_id', '=', 'u.id'))
+            ->leftJoinSub($actualAgg, 'aa', fn($j) => $j->on('aa.be_user_id', '=', 'u.id'))
+            ->selectRaw("
+                u.id as be_user_id,
+                u.name,
+                u.ao_code,
 
-        $calcRows = [];
-        if ($needCalcUsers->isNotEmpty()) {
-            $calcRows = $this->calculateRealtime($periodYm, $needCalcUsers, $targets);
-        }
+                COALESCE(ta.t_os,0)    as t_os,
+                COALESCE(ta.t_noa,0)   as t_noa,
+                COALESCE(ta.t_bunga,0) as t_bunga,
+                COALESCE(ta.t_denda,0) as t_denda,
 
-        // build items collection (format cocok untuk sheet_be partial)
-        $items = $users->map(function ($u) use ($monthlies, $targets, $calcRows) {
-            $id = (int)$u->id;
+                COALESCE(aa.a_os,0)    as a_os,
+                COALESCE(aa.a_noa,0)   as a_noa,
+                COALESCE(aa.a_bunga,0) as a_bunga,
+                COALESCE(aa.a_denda,0) as a_denda,
 
-            // jika ada monthly => pakai itu (frozen)
-            if ($monthlies->has($id)) {
-                $m = $monthlies->get($id);
-                $t = $targets->get($id);
+                COALESCE(aa.baseline_ok,1) as baseline_ok
+            ")
+            ->orderBy('u.name')
+            ->get();
 
-                return [
-                    'be_user_id' => $id,
-                    'name' => $u->name,
-                    'code' => (string)$u->ao_code,
+        // =====================================================
+        // INFO NPL (Stock) untuk YTD:
+        // - prev: snapshot prevSnap dari startMonth
+        // - now : snapshot endMonth
+        // =====================================================
+        $infoByAo = $this->buildNplInfoStockForYtd($users, $startMonth, $endMonth);
 
-                    'source' => 'monthly',
-                    'status' => (string)($m->status ?? 'draft'),
+        // =====================================================
+        // scoring helpers
+        // =====================================================
+        $scorePercent = function (?float $ratio): int {
+            if ($ratio === null) return 1;
+            if ($ratio < 0.25) return 1;
+            if ($ratio < 0.50) return 2;
+            if ($ratio < 0.75) return 3;
+            if ($ratio < 1.00) return 4;
+            if ($ratio <= 1.0000001) return 5;
+            return 6;
+        };
 
-                    'target' => [
-                        'os'    => (float)($t->target_os_selesai ?? 0),
-                        'noa'   => (int)  ($t->target_noa_selesai ?? 0),
-                        'bunga' => (float)($t->target_bunga_masuk ?? 0),
-                        'denda' => (float)($t->target_denda_masuk ?? 0),
-                    ],
-
-                    'actual' => [
-                        'os'    => (float)($m->actual_os_selesai ?? 0),
-                        'noa'   => (int)  ($m->actual_noa_selesai ?? 0),
-                        'bunga' => (float)($m->actual_bunga_masuk ?? 0),
-                        'denda' => (float)($m->actual_denda_masuk ?? 0),
-
-                        'os_npl_prev'  => (float)($m->os_npl_prev ?? 0),
-                        'os_npl_now'   => (float)($m->os_npl_now ?? 0),
-                        'net_npl_drop' => (float)($m->net_npl_drop ?? 0),
-                    ],
-
-                    'score' => [
-                        'os'    => (int)($m->score_os ?? 1),
-                        'noa'   => (int)($m->score_noa ?? 1),
-                        'bunga' => (int)($m->score_bunga ?? 1),
-                        'denda' => (int)($m->score_denda ?? 1),
-                    ],
-
-                    'pi' => [
-                        'os'    => (float)($m->pi_os ?? 0),
-                        'noa'   => (float)($m->pi_noa ?? 0),
-                        'bunga' => (float)($m->pi_bunga ?? 0),
-                        'denda' => (float)($m->pi_denda ?? 0),
-                        'total' => (float)($m->total_pi ?? 0),
-                    ],
-                ];
+        $scoreNoaByTarget = function (int $actual, int $target) use ($scorePercent): int {
+            if ($target <= 0) {
+                return ($actual > 0) ? 6 : 1;
             }
+            $ratio = $actual / max(1, $target);
+            return $scorePercent($ratio);
+        };
 
-            // kalau belum ada monthly => realtime row
-            return $calcRows[$id] ?? [
-                'be_user_id' => $id,
-                'name' => $u->name,
-                'code' => (string)$u->ao_code,
-                'source' => 'realtime',
+        // =====================================================
+        // map final items (format konsisten dengan sheet)
+        // =====================================================
+        $items = $rows->map(function ($r) use ($scorePercent, $scoreNoaByTarget, $endMonthMode, $infoByAo) {
+
+            $ao = (string)($r->ao_code ?? '');
+
+            $tOs    = (float)($r->t_os ?? 0);
+            $tNoa   = (int)  ($r->t_noa ?? 0);
+            $tBunga = (float)($r->t_bunga ?? 0);
+            $tDenda = (float)($r->t_denda ?? 0);
+
+            $aOs    = (float)($r->a_os ?? 0);
+            $aNoa   = (int)  ($r->a_noa ?? 0);
+            $aBunga = (float)($r->a_bunga ?? 0);
+            $aDenda = (float)($r->a_denda ?? 0);
+
+            $rOs    = $tOs    > 0 ? ($aOs / $tOs)       : null;
+            $rBunga = $tBunga > 0 ? ($aBunga / $tBunga) : null;
+            $rDenda = $tDenda > 0 ? ($aDenda / $tDenda) : null;
+
+            $sOs    = $scorePercent($rOs);
+            $sNoa   = $scoreNoaByTarget($aNoa, $tNoa); // ✅ NOA ikut target agar konsisten YTD
+            $sBunga = $scorePercent($rBunga);
+            $sDenda = $scorePercent($rDenda);
+
+            $piOs    = $sOs    * $this->wOs;
+            $piNoa   = $sNoa   * $this->wNoa;
+            $piBunga = $sBunga * $this->wBunga;
+            $piDenda = $sDenda * $this->wDenda;
+
+            $totalPi = $piOs + $piNoa + $piBunga + $piDenda;
+
+            $info = $infoByAo[$ao] ?? ['os_npl_prev'=>0,'os_npl_now'=>0,'net_npl_drop'=>0];
+
+            return [
+                'be_user_id' => (int)$r->be_user_id,
+                'name'       => (string)($r->name ?? '-'),
+                'code'       => $ao,
+
+                'source' => 'ytd',          // ✅ label baru
+                'mode'   => $endMonthMode,  // realtime/eom utk endMonth
                 'status' => null,
-                'target' => ['os'=>0,'noa'=>0,'bunga'=>0,'denda'=>0],
-                'actual' => ['os'=>0,'noa'=>0,'bunga'=>0,'denda'=>0,'os_npl_prev'=>0,'os_npl_now'=>0,'net_npl_drop'=>0],
-                'score'  => ['os'=>1,'noa'=>1,'bunga'=>1,'denda'=>1],
-                'pi'     => ['os'=>round(1*$this->wOs,2),'noa'=>round(1*$this->wNoa,2),'bunga'=>round(1*$this->wBunga,2),'denda'=>round(1*$this->wDenda,2),'total'=>round(1.0,2)],
+
+                'baseline_ok' => (int)($r->baseline_ok ?? 1),
+
+                'target' => [
+                    'os'    => $tOs,
+                    'noa'   => $tNoa,
+                    'bunga' => $tBunga,
+                    'denda' => $tDenda,
+                ],
+                'actual' => [
+                    'os'    => $aOs,
+                    'noa'   => $aNoa,
+                    'bunga' => $aBunga,
+                    'denda' => $aDenda,
+
+                    // info stock YTD
+                    'os_npl_prev'  => (float)$info['os_npl_prev'],
+                    'os_npl_now'   => (float)$info['os_npl_now'],
+                    'net_npl_drop' => (float)$info['net_npl_drop'],
+                ],
+                'ach' => [
+                    'os'    => $tOs > 0 ? round(($aOs / $tOs) * 100, 2) : 0.0,
+                    'noa'   => $tNoa > 0 ? round(($aNoa / max(1,$tNoa)) * 100, 2) : 0.0,
+                    'bunga' => $tBunga > 0 ? round(($aBunga / $tBunga) * 100, 2) : 0.0,
+                    'denda' => $tDenda > 0 ? round(($aDenda / $tDenda) * 100, 2) : 0.0,
+                ],
+                'score' => [
+                    'os'    => $sOs,
+                    'noa'   => $sNoa,
+                    'bunga' => $sBunga,
+                    'denda' => $sDenda,
+                ],
+                'pi' => [
+                    'os'    => round($piOs, 2),
+                    'noa'   => round($piNoa, 2),
+                    'bunga' => round($piBunga, 2),
+                    'denda' => round($piDenda, 2),
+                    'total' => round($totalPi, 2),
+                ],
             ];
         });
 
-        // urutkan berdasar total PI desc
+        // sort desc total PI
         $items = $items->sortByDesc(fn($x) => (float)($x['pi']['total'] ?? 0))->values();
 
         return [
-            'period'  => $period,
-            'mode'    => 'mixed', // optional
-            'weights' => $this->weights(),
-            'items'   => $items,
-            // 'tlBeRecap' => null (nanti kalau mau)
+            'period'   => $period,
+            'mode'     => $endMonthMode,
+            'weights'  => $this->weights(),
+            'items'    => $items,
+            'startYtd' => $startYtd,
+            'endYtd'   => $endYtd,
         ];
     }
 
@@ -165,18 +263,12 @@ class BeKpiMonthlyService
         ];
     }
 
-    /**
-     * Scope sementara (sesuai keputusan: KBL boleh recalc/lihat semua; BE lihat diri sendiri).
-     * Kalau nanti mau pakai org_assignments, tinggal ganti fungsi ini.
-     */
     private function resolveScopeUserIds($authUser, string $periodDate): array
     {
         if (!$authUser) return [];
 
-        // pakai helper hasAnyRole bila ada
         $isKbl = method_exists($authUser, 'hasAnyRole') && $authUser->hasAnyRole(['KBL']);
 
-        // fallback: level enum/string aman
         $rawLvl = $authUser->level ?? '';
         $lvl = strtoupper(trim((string)($rawLvl instanceof \BackedEnum ? $rawLvl->value : $rawLvl)));
 
@@ -189,9 +281,54 @@ class BeKpiMonthlyService
                 ->all();
         }
 
-        // BE hanya dirinya
         return [(int)$authUser->id];
     }
+
+    /**
+     * INFO STOCK untuk YTD:
+     * - os_npl_prev: total NPL (kolek 3/4/5) pada snapshot prev dari startMonth
+     * - os_npl_now : total NPL (kolek 3/4/5) pada snapshot endMonth
+     */
+    private function buildNplInfoStockForYtd(Collection $users, Carbon $startMonth, Carbon $endMonth): array
+    {
+        $startSnap = $startMonth->copy()->subMonthNoOverflow()->toDateString(); // prev of Jan => Dec-01
+        $endSnap   = $endMonth->toDateString();                                // end month snapshot = YYYY-MM-01
+
+        $aoCodes = $users->pluck('ao_code')->map(fn($x)=>(string)$x)->values()->all();
+
+        $prev = DB::table('loan_account_snapshots_monthly')
+            ->where('snapshot_month', $startSnap)
+            ->whereIn('ao_code', $aoCodes)
+            ->whereIn('kolek', [3,4,5])
+            ->groupBy('ao_code')
+            ->selectRaw('ao_code, SUM(outstanding) as os_npl_prev')
+            ->pluck('os_npl_prev','ao_code');
+
+        $now = DB::table('loan_account_snapshots_monthly')
+            ->where('snapshot_month', $endSnap)
+            ->whereIn('ao_code', $aoCodes)
+            ->whereIn('kolek', [3,4,5])
+            ->groupBy('ao_code')
+            ->selectRaw('ao_code, SUM(outstanding) as os_npl_now')
+            ->pluck('os_npl_now','ao_code');
+
+        $out = [];
+        foreach ($aoCodes as $ao) {
+            $p = (float)($prev[$ao] ?? 0);
+            $n = (float)($now[$ao] ?? 0);
+            $out[$ao] = [
+                'os_npl_prev'  => $p,
+                'os_npl_now'   => $n,
+                'net_npl_drop' => $p - $n,
+            ];
+        }
+
+        return $out;
+    }
+
+    // =========================================================
+    // calculateRealtime + calculateOneForSubmit tetap boleh dipakai (untuk recalc month end)
+    // =========================================================
 
     /**
      * Hitung realtime BE untuk sekumpulan user.
@@ -216,8 +353,7 @@ class BeKpiMonthlyService
         // - prev kolek 3/4/5
         // - recovery kalau:
         //   A) cur ada dan cur.kolek jadi 1/2
-        //   B) cur NULL (account hilang dari snapshot) -> hanya dihitung kalau CLOSE_TYPE = LUNAS
-        //      (WO/AYDA tidak dihitung recovery)
+        //   B) cur NULL -> dihitung hanya kalau CLOSE_TYPE = LUNAS (WO/AYDA tidak)
         $recoveryByAo = DB::table('loan_account_snapshots_monthly as prev')
             ->leftJoin('loan_account_snapshots_monthly as cur', function ($j) use ($currentSnap) {
                 $j->on('cur.account_no', '=', 'prev.account_no')
@@ -225,41 +361,22 @@ class BeKpiMonthlyService
             })
             ->leftJoin('loan_account_closures as lc', function ($j) use ($monthStart, $monthEndEx) {
                 $j->on('lc.account_no', '=', 'prev.account_no')
-                // pastikan closurenya terjadi di bulan KPI (range date)
                 ->whereDate('lc.closed_date', '>=', $monthStart)
                 ->whereDate('lc.closed_date', '<',  $monthEndEx);
-                // alternatif kalau kamu yakin pakai closed_month:
-                // ->where('lc.closed_month', Carbon::parse($monthStart)->format('Y-m'));
             })
             ->where('prev.snapshot_month', $prevSnap)
             ->whereIn('prev.ao_code', $aoCodes)
             ->whereIn('prev.kolek', [3,4,5])
             ->where(function ($q) {
-                $q
-                // A) masih ada di snapshot current, tapi membaik jadi 1/2
-                ->whereIn('cur.kolek', [1,2])
-
-                // B) hilang dari snapshot current -> valid recovery hanya jika LUNAS
+                $q->whereIn('cur.kolek', [1,2])
                 ->orWhere(function ($qq) {
                     $qq->whereNull('cur.account_no')
-                    ->where('lc.close_type', 'LUNAS');
+                        ->where('lc.close_type', 'LUNAS');
                 });
             })
             ->groupBy('prev.ao_code')
             ->selectRaw('prev.ao_code as ao_code, SUM(prev.outstanding) as recovery_os')
             ->pluck('recovery_os', 'ao_code');
-            // ===== Recovery OS (prev kolek 3/4/5 -> (lunas / hilang) OR menjadi kolek 1/2) ===== 
-        // $recoveryByAo = DB::table('loan_account_snapshots_monthly as prev') 
-        //     ->leftJoin('loan_account_snapshots_monthly as cur', 
-        //     function($j) use ($currentSnap) { $j->on('cur.account_no','=','prev.account_no') 
-        //     ->where('cur.snapshot_month', $currentSnap); }) 
-        //     ->where('prev.snapshot_month', $prevSnap) 
-        //     ->whereIn('prev.ao_code', $aoCodes) 
-        //     ->whereIn('prev.kolek', [3,4,5]) 
-        //     ->where(function($q) { $q->whereNull('cur.account_no') ->orWhereIn('cur.kolek', [1,2]); }) 
-        //     ->groupBy('prev.ao_code') 
-        //     ->selectRaw('prev.ao_code as ao_code, SUM(prev.outstanding) as recovery_os') 
-        //     ->pluck('recovery_os','ao_code');
 
         // ===== NPL prev/now (info net drop) =====
         $nplPrevByAo = DB::table('loan_account_snapshots_monthly')
@@ -279,17 +396,19 @@ class BeKpiMonthlyService
             ->pluck('os_npl_now','ao_code');
 
         // ===== NOA selesai =====
+        // Catatan: versi ini masih mengikuti rule lama (cur null OR cur kolek 1/2),
+        // kalau mau disamakan dengan Recovery (cur null harus LUNAS), nanti kita rapikan.
         $noaDoneByAo = DB::table('loan_account_snapshots_monthly as prev')
             ->leftJoin('loan_account_snapshots_monthly as cur', function($j) use ($currentSnap) {
                 $j->on('cur.account_no','=','prev.account_no')
-                  ->where('cur.snapshot_month', $currentSnap);
+                ->where('cur.snapshot_month', $currentSnap);
             })
             ->where('prev.snapshot_month', $prevSnap)
             ->whereIn('prev.ao_code', $aoCodes)
             ->whereIn('prev.kolek', [3,4,5])
             ->where(function($q) {
                 $q->whereNull('cur.account_no')
-                  ->orWhereIn('cur.kolek', [1,2]);
+                ->orWhereIn('cur.kolek', [1,2]);
             })
             ->groupBy('prev.ao_code')
             ->selectRaw('prev.ao_code as ao_code, COUNT(DISTINCT prev.account_no) as noa_done')
@@ -299,7 +418,7 @@ class BeKpiMonthlyService
         $interestByAo = DB::table('loan_installments as li')
             ->join('loan_account_snapshots_monthly as s', function($j) use ($currentSnap) {
                 $j->on('s.account_no', '=', 'li.account_no')
-                  ->where('s.snapshot_month', $currentSnap);
+                ->where('s.snapshot_month', $currentSnap);
             })
             ->where('li.paid_date','>=',$monthStart)
             ->where('li.paid_date','<',$monthEndEx)
@@ -311,7 +430,7 @@ class BeKpiMonthlyService
         $penaltyByAo = DB::table('loan_installments as li')
             ->join('loan_account_snapshots_monthly as s', function($j) use ($currentSnap) {
                 $j->on('s.account_no', '=', 'li.account_no')
-                  ->where('s.snapshot_month', $currentSnap);
+                ->where('s.snapshot_month', $currentSnap);
             })
             ->where('li.paid_date','>=',$monthStart)
             ->where('li.paid_date','<',$monthEndEx)
@@ -344,8 +463,17 @@ class BeKpiMonthlyService
         $rows = [];
 
         foreach ($users as $u) {
-            $id = (int)$u->id;
-            $ao = (string)$u->ao_code;
+
+            // ✅ FIX PENTING: tahan alias "id" vs "be_user_id"
+            $id = (int)($u->id ?? $u->be_user_id ?? $u->user_id ?? 0);
+            if ($id <= 0) {
+                // kalau mau debug:
+                // logger()->warning('BE calculateRealtime: invalid user id', ['u' => (array)$u]);
+                continue;
+            }
+
+            $ao = (string)($u->ao_code ?? '');
+            if (trim($ao) === '') continue;
 
             $t = $targetsByUserId->get($id);
 
@@ -381,7 +509,7 @@ class BeKpiMonthlyService
 
             $rows[$id] = [
                 'be_user_id' => $id,
-                'name' => $u->name,
+                'name' => $u->name ?? '-',
                 'code' => $ao,
 
                 'source' => 'realtime',
@@ -415,15 +543,8 @@ class BeKpiMonthlyService
         return $rows;
     }
 
-        /**
-     * COMPAT: dipakai oleh Command lama BuildBeKpiMonthly
-     * Kalau command memanggil calculateOneForSubmit(), aman.
-     */
     public function calculateOneForSubmit(string $periodYm, int $beUserId): array
     {
-        // kalau kamu sudah punya implementasi realtime:
-        // panggil calculateRealtime untuk 1 user lalu return rownya
-
         $users = DB::table('users')
             ->select(['id','name','ao_code','level'])
             ->where('id', $beUserId)
@@ -445,7 +566,11 @@ class BeKpiMonthlyService
 
         $rows = $this->calculateRealtime($periodYm, $users, $targets);
 
+        if (!isset($rows[$beUserId])) {
+            $keys = implode(',', array_keys($rows));
+            throw new \RuntimeException("KPI BE row tidak terbentuk untuk user {$beUserId}. Available keys: {$keys}");
+        }
+
         return $rows[$beUserId] ?? throw new \RuntimeException("KPI BE row tidak terbentuk untuk user {$beUserId}.");
     }
-
 }
