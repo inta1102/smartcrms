@@ -22,12 +22,14 @@ trait EnsureKasiAccess
 
         if ($role instanceof UserRole) {
             $isKasi = in_array($role, [
-                UserRole::KSL,
+                UserRole::KSLR,
                 UserRole::KSO,
                 UserRole::KSA,
                 UserRole::KSF,
                 UserRole::KSD,
-                UserRole::KSR,
+                UserRole::KSBE,
+                UserRole::KSFE,
+                UserRole::KSLU,
             ], true);
         } else {
             $isKasi = in_array($val, ['KSLU','KSLR','KSFE','KSBE','KSO','KSA','KSF','KSD','KSR'], true);

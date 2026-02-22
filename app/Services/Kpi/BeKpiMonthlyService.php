@@ -267,21 +267,76 @@ class BeKpiMonthlyService
     {
         if (!$authUser) return [];
 
-        $isKbl = method_exists($authUser, 'hasAnyRole') && $authUser->hasAnyRole(['KBL']);
-
         $rawLvl = $authUser->level ?? '';
         $lvl = strtoupper(trim((string)($rawLvl instanceof \BackedEnum ? $rawLvl->value : $rawLvl)));
 
+        // KBL global
+        $isKbl = method_exists($authUser, 'hasAnyRole') && $authUser->hasAnyRole(['KBL']);
         if ($isKbl || $lvl === 'KBL') {
             return DB::table('users')
                 ->whereRaw("UPPER(TRIM(level)) = 'BE'")
-                ->pluck('id')
-                ->map(fn($x)=>(int)$x)
-                ->values()
-                ->all();
+                ->pluck('id')->map(fn($x)=>(int)$x)->values()->all();
         }
 
-        return [(int)$authUser->id];
+        // KSBE / KASI: ambil bawahan BE dari org_assignments
+        if (in_array($lvl, ['KSBE','KASI'], true)) {
+            return DB::table('org_assignments as oa')
+                ->join('users as u', 'u.id', '=', 'oa.user_id')
+                ->where('oa.leader_id', (int)$authUser->id)
+                ->where('oa.is_active', 1)
+                ->whereDate('oa.effective_from', '<=', $periodDate)
+                ->where(function($q) use ($periodDate) {
+                    $q->whereNull('oa.effective_to')
+                    ->orWhereDate('oa.effective_to', '>=', $periodDate);
+                })
+                ->whereRaw("UPPER(TRIM(u.level)) = 'BE'")
+                ->pluck('u.id')
+                ->map(fn($x)=>(int)$x)->values()->all();
+        }
+
+        // BE hanya diri sendiri
+        if ($lvl === 'BE') {
+            return [(int)$authUser->id];
+        }
+
+        return [];
+    }
+
+     private function resolveScopeBeUserIdsForKsbe($ksbeUser, string $periodDate): array
+    {
+        if (!$ksbeUser) return [];
+
+        $role = $ksbeUser->level instanceof \BackedEnum
+            ? strtoupper(trim((string)$ksbeUser->level->value))
+            : strtoupper(trim((string)$ksbeUser->level));
+
+        if ($role !== 'KSBE') return [];
+
+        $subIds = DB::table('org_assignments as oa')
+            ->where('oa.leader_id', (int)$ksbeUser->id)
+            ->whereRaw('UPPER(TRIM(oa.leader_role)) = ?', ['KSBE'])
+            ->where('oa.is_active', 1)
+            ->whereDate('oa.effective_from', '<=', $periodDate)
+            ->where(function ($q) use ($periodDate) {
+                $q->whereNull('oa.effective_to')
+                ->orWhereDate('oa.effective_to', '>=', $periodDate);
+            })
+            ->pluck('oa.user_id')
+            ->map(fn($x) => (int)$x)
+            ->unique()
+            ->values()
+            ->all();
+
+        if (empty($subIds)) return [];
+
+        // pastikan hanya BE
+        return DB::table('users')
+            ->whereIn('id', $subIds)
+            ->whereRaw("UPPER(TRIM(level)) = 'BE'")
+            ->pluck('id')
+            ->map(fn($x)=>(int)$x)
+            ->values()
+            ->all();
     }
 
     /**
@@ -395,20 +450,33 @@ class BeKpiMonthlyService
             ->selectRaw('ao_code, SUM(outstanding) as os_npl_now')
             ->pluck('os_npl_now','ao_code');
 
-        // ===== NOA selesai =====
-        // Catatan: versi ini masih mengikuti rule lama (cur null OR cur kolek 1/2),
-        // kalau mau disamakan dengan Recovery (cur null harus LUNAS), nanti kita rapikan.
+        // ===== NOA selesai (MATCH RULE BARU Recovery OS) =====
+        // RULE BARU (harus sama dengan Recovery OS):
+        // - prev kolek 3/4/5
+        // - selesai jika:
+        //   A) cur ada dan cur.kolek jadi 1/2
+        //   B) cur NULL -> dihitung hanya kalau CLOSE_TYPE = LUNAS (WO/AYDA tidak)
         $noaDoneByAo = DB::table('loan_account_snapshots_monthly as prev')
-            ->leftJoin('loan_account_snapshots_monthly as cur', function($j) use ($currentSnap) {
-                $j->on('cur.account_no','=','prev.account_no')
+            ->leftJoin('loan_account_snapshots_monthly as cur', function ($j) use ($currentSnap) {
+                $j->on('cur.account_no', '=', 'prev.account_no')
                 ->where('cur.snapshot_month', $currentSnap);
+            })
+            ->leftJoin('loan_account_closures as lc', function ($j) use ($monthStart, $monthEndEx) {
+                $j->on('lc.account_no', '=', 'prev.account_no')
+                ->whereDate('lc.closed_date', '>=', $monthStart)
+                ->whereDate('lc.closed_date', '<',  $monthEndEx);
+                // optional (kalau mau lebih ketat):
+                // ->whereRaw("TRIM(lc.ao_code) = TRIM(prev.ao_code)");
             })
             ->where('prev.snapshot_month', $prevSnap)
             ->whereIn('prev.ao_code', $aoCodes)
             ->whereIn('prev.kolek', [3,4,5])
-            ->where(function($q) {
-                $q->whereNull('cur.account_no')
-                ->orWhereIn('cur.kolek', [1,2]);
+            ->where(function ($q) {
+                $q->whereIn('cur.kolek', [1,2])
+                ->orWhere(function ($qq) {
+                    $qq->whereNull('cur.account_no')
+                        ->where('lc.close_type', 'LUNAS');
+                });
             })
             ->groupBy('prev.ao_code')
             ->selectRaw('prev.ao_code as ao_code, COUNT(DISTINCT prev.account_no) as noa_done')
@@ -572,5 +640,11 @@ class BeKpiMonthlyService
         }
 
         return $rows[$beUserId] ?? throw new \RuntimeException("KPI BE row tidak terbentuk untuk user {$beUserId}.");
+    }
+
+    // tambahkan di BeKpiMonthlyService
+    public function calculateRealtimePublic(string $periodYm, \Illuminate\Support\Collection $users, \Illuminate\Support\Collection $targetsByUserId): array
+    {
+        return $this->calculateRealtime($periodYm, $users, $targetsByUserId);
     }
 }

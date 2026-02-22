@@ -639,6 +639,29 @@ Route::middleware('auth')->group(function () {
                 ->name('show');
         });
 
+        
+        // =======================================================
+        // TL BE
+        // =======================================================
+        
+        Route::get('/tlbe/sheet', [\App\Http\Controllers\Kpi\TlBeSheetController::class, 'index'])
+            ->name('kpi.tlbe.sheet');
+
+        Route::post('/tlbe/recalc', [\App\Http\Controllers\Kpi\TlBeSheetController::class, 'recalc'])
+            ->name('kpi.tlbe.recalc');
+
+        // Route::get('/kpi/marketing/sheet-ksbe', [\App\Http\Controllers\Kpi\KsbeSheetController::class,'index'])
+        //     ->name('kpi.marketing.sheet.ksbe');
+       
+
+        Route::get('marketing/sheet-ksbe', function () {
+            $period = request('period', now()->format('Y-m'));
+            return redirect()->route('kpi.marketing.sheet', [
+                'role'   => 'KSBE',
+                'period' => $period,
+            ]);
+        })->name('marketing.sheet.ksbe');
+
         // =======================================================
         // SO (INI YANG BIKIN ERROR KEMARIN) — static dulu, wildcard terakhir
         // =======================================================

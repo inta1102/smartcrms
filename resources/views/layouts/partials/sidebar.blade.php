@@ -615,6 +615,60 @@
                     true
                 ),
             ],
+
+            [
+                'label'  => 'Sheet KSBE',
+                'icon'   => '📄',
+                'href'   => \Illuminate\Support\Facades\Route::has('kpi.marketing.sheet.ksbe')
+                    ? route('kpi.marketing.sheet.ksbe')
+                    : null,
+                'active' => request()->routeIs('kpi.marketing.sheet.ksbe'),
+                'show'   => $u && in_array(
+                    strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)),
+                    ['KSBE','KASI','KBL'],
+                    true
+                ),
+            ],
+
+            [
+                'label'  => 'KPI Sheet',
+                'icon'   => '🧾',
+                'href'   => \Illuminate\Support\Facades\Route::has('kpi.marketing.sheet')
+                    ? route('kpi.marketing.sheet', [
+                        'role'   => strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : $u->level)),
+                        'period' => now()->format('Y-m'),
+                    ])
+                    : null,
+                'active' => request()->routeIs('kpi.marketing.sheet'),
+
+                // staff + leader marketing
+                'show'   => $u && in_array(
+                    strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : $u->level)),
+                    ['AO','SO','RO','FE','BE','TLUM','TLFE','TLRO','TLBE','KSLU','KSLR','KSFE','KSBE','KBL','KASI'],
+                    true
+                ),
+            ],
+
+        ],
+
+
+        // =========================
+        // SHEET KPI LEADERSHIP (KSBE)
+        // =========================
+        [
+            'label'  => 'Sheet KPI BE',
+            'icon'   => '📄',
+            'href'   => \Illuminate\Support\Facades\Route::has('kpi.marketing.sheet')
+                ? route('kpi.marketing.sheet', ['role' => 'KSBE'])
+                : null,
+            'active' => request()->routeIs('kpi.marketing.sheet') && request('role') === 'KSBE',
+
+            // tampil khusus KSBE (+ optional KBL kalau kamu mau global view)
+            'show'   => $u && in_array(
+                strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)),
+                ['KSBE','KBL'],
+                true
+            ),
         ],
 
 

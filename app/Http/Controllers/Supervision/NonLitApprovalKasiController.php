@@ -36,12 +36,14 @@ class NonLitApprovalKasiController extends Controller
         // user->role() kamu return enum UserRole
         abort_unless(
             in_array($user->role(), [
-                UserRole::KSL,
+                UserRole::KSLR,
                 UserRole::KSO,
                 UserRole::KSA,
                 UserRole::KSF,
                 UserRole::KSD,
-                UserRole::KSR,
+                UserRole::KSBE,
+                UserRole::KSFE,
+                UserRole::KSLU,
             ], true),
             403
         );

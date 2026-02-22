@@ -17,7 +17,7 @@ class KpiFePolicy
             UserRole::DIREKSI, UserRole::KOM, UserRole::DIR,
             UserRole::PE,
             UserRole::KABAG, UserRole::KBL,
-            UserRole::KSL,
+            UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE,
             UserRole::TLFE,
         ])) return true;
 
@@ -31,7 +31,7 @@ class KpiFePolicy
             UserRole::DIREKSI, UserRole::KOM, UserRole::DIR,
             UserRole::PE,
             UserRole::KABAG, UserRole::KBL,
-            UserRole::KSL,
+            UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE,
             UserRole::TLFE,
         ])) return true;
 

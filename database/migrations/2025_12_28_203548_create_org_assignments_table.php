@@ -24,7 +24,7 @@ return new class extends Migration
 
             // 🔖 Konteks jabatan atasan
             $table->string('leader_role', 50)
-                ->comment('Role atasan saat ini: tll, ksl, ksr, kbl, dll');
+                ->comment('Role atasan saat ini: tll, kslu, kslr, kbl, dll');
 
             // 🏢 Unit kerja (opsional tapi sangat disarankan)
             $table->string('unit_code', 50)

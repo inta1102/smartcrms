@@ -16,7 +16,7 @@ class CaseResolutionTargetPolicy
 
     public function view(User $user, CaseResolutionTarget $target): bool
     {
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
 
         // TL hanya boleh lihat jika dalam scope timnya
         if ($this->allowRoles($user, $this->rolesTl())) {
@@ -33,7 +33,7 @@ class CaseResolutionTargetPolicy
             return false;
         }
 
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
 
         // TL boleh update jika target dalam scope timnya
         if ($this->allowRoles($user, $this->rolesTl())) {
@@ -78,7 +78,7 @@ class CaseResolutionTargetPolicy
     public function propose(User $user, NplCase $case): bool
     {
         // Atasan boleh
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesTl())) return true;
         if ($this->allowRoles($user, $this->rolesKasi())) return true;
 

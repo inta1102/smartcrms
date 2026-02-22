@@ -24,7 +24,7 @@ class SupervisionHomeController extends Controller
         // =========================
         // KASI
         // =========================
-        if (in_array($role, [UserRole::KSL, UserRole::KSO, UserRole::KSA, UserRole::KSF, UserRole::KSD, UserRole::KSR], true)) {
+        if (in_array($role, [UserRole::KSLU, UserRole::KSO, UserRole::KSA, UserRole::KSF, UserRole::KSD, UserRole::KSBE, UserRole::KSFE, UserRole::KSLR], true)) {
             return redirect()->route('supervision.kasi');
         }
 

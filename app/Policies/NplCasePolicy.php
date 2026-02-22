@@ -153,9 +153,9 @@ class NplCasePolicy
             UserRole::DIREKSI,
             UserRole::KOM,
             UserRole::KBL,
-            UserRole::KSR,
+            UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE,
             UserRole::KTI,
-            UserRole::KSL,
+            
         ];
     }
 

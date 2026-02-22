@@ -177,7 +177,7 @@ class MarketingKpiSheetController
         // Role selector (AO|SO|RO|FE|BE)
         // =========================
         $role = strtoupper((string) $request->query('role', 'AO'));
-        if (!in_array($role, ['AO', 'SO', 'RO', 'FE', 'BE'], true)) $role = 'AO';
+        if (!in_array($role, ['AO', 'SO', 'RO', 'FE', 'BE','KSBE'], true)) $role = 'AO';
 
         $startYtd = null;
         $endYtd   = null;
@@ -632,6 +632,42 @@ class MarketingKpiSheetController
                 'weights'  => $res['weights'],
                 'items'    => $res['items'],
                 'tlRecap'  => $res['tlBeRecap'] ?? null,
+            ]);
+        }
+
+        // ========= KSBE =========
+        if ($role === 'KSBE') {
+            $me = auth()->user();
+
+            $out = app(\App\Services\Kpi\KsbeKpiMonthlyService::class)
+                ->buildForPeriod($periodYm, $me);
+
+            // logger()->info('KSBE SHEET DEBUG', [
+            //     'periodYm'   => $periodYm,
+            //     'periodDate' => $periodDate,
+            //     'me_id'      => $me?->id,
+            //     'me_name'    => $me?->name,
+            //     'me_level'   => $me?->level,
+
+            //     // output keys & count
+            //     'out_keys'   => is_array($out) ? array_keys($out) : gettype($out),
+            //     'items_cnt'  => is_countable($out['items'] ?? null) ? count($out['items']) : null,
+
+            //     // meta kalau kamu sediain di service
+            //     'scope_cnt'  => is_countable($out['meta']['scope_user_ids'] ?? null) ? count($out['meta']['scope_user_ids']) : null,
+            //     'scope_sample' => array_slice($out['meta']['scope_user_ids'] ?? [], 0, 10),
+
+            //     'why_empty'  => $out['meta']['why_empty'] ?? null,
+            // ]);
+
+            return view('kpi.marketing.sheet', [
+                'role'     => 'KSBE',
+                'periodYm' => $periodYm, // ✅ tambah
+                'period'   => $out['period']  ?? $period,
+                'weights'  => $out['weights'] ?? [],
+                'items'    => $out['items']   ?? [],
+                'recap'    => $out['recap']   ?? [],
+                'insights' => $out['insights'] ?? [],
             ]);
         }
 

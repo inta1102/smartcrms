@@ -18,7 +18,7 @@ class NonLitigationActionPolicy
     public function view(User $user, NonLitigationAction $nonLit): bool
     {
         // Management & Supervisi
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesTl())) return true;
         if ($this->allowRoles($user, $this->rolesKasi())) return true;
         if ($this->allowRoles($user, $this->rolesKabagPe())) return true;
@@ -64,7 +64,7 @@ class NonLitigationActionPolicy
     public function update(User $user, NonLitigationAction $nonLit): bool
     {
         // Supervisi bebas
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesTl())) return true;
 
         // selain draft tidak bisa diedit (konsisten dengan ensureEditable)
@@ -91,7 +91,7 @@ class NonLitigationActionPolicy
         if ($this->allowRoles($user, $this->rolesTl())) return true;
 
         // ✅ Kasi/Kabag/PE/Management juga boleh
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesKasi())) return true;
         if ($this->allowRoles($user, $this->rolesKabagPe())) return true;
 
@@ -121,7 +121,7 @@ class NonLitigationActionPolicy
     public function viewAny(User $user): bool
     {
         // Supervisi/management
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesTl())) return true;
         if ($this->allowRoles($user, $this->rolesKasi())) return true;
         if ($this->allowRoles($user, $this->rolesKabagPe())) return true;
@@ -140,7 +140,7 @@ class NonLitigationActionPolicy
     public function create(User $user, NplCase $case): bool
     {
         // Supervisi/management bebas
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesTl())) return true;
 
         // Operasional yang boleh mengusulkan
@@ -166,7 +166,7 @@ class NonLitigationActionPolicy
         if ($nonLit->status !== NonLitigationAction::STATUS_DRAFT) return false;
 
         // supervisi boleh
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesTl())) return true;
 
         // pembuat draft boleh submit

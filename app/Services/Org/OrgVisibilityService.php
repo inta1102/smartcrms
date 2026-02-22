@@ -8,6 +8,7 @@ use App\Models\LoanAccount;
 use App\Models\OrgAssignment;
 use App\Models\User;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 
 
 class OrgVisibilityService
@@ -188,4 +189,40 @@ class OrgVisibilityService
             ->all();
     }
 
+    public function subordinateBeUserIdsForLeader(int $leaderId, string $periodDate, ?string $unitCode = 'remedial'): array
+    {
+        return DB::table('org_assignments as oa')
+            ->join('users as u', 'u.id', '=', 'oa.user_id')
+            ->where('oa.leader_id', $leaderId)
+            ->where('oa.is_active', 1)
+            ->whereDate('oa.effective_from', '<=', $periodDate)
+            ->where(function ($q) use ($periodDate) {
+                $q->whereNull('oa.effective_to')
+                ->orWhereDate('oa.effective_to', '>=', $periodDate);
+            })
+            ->when($unitCode, fn($q) => $q->where('oa.unit_code', $unitCode))
+            ->whereRaw("UPPER(TRIM(u.level)) = 'BE'")
+            ->pluck('u.id')
+            ->map(fn($x)=>(int)$x)
+            ->values()
+            ->all();
+    }
+
+    public function subordinateUserIds(int $leaderId, string $periodDate, ?string $unitCode = null): array
+    {
+        $q = DB::table('org_assignments as oa')
+            ->where('oa.leader_id', $leaderId)
+            ->where('oa.is_active', 1)
+            ->whereDate('oa.effective_from', '<=', $periodDate)
+            ->where(function ($qq) use ($periodDate) {
+                $qq->whereNull('oa.effective_to')
+                   ->orWhereDate('oa.effective_to', '>=', $periodDate);
+            });
+
+        if ($unitCode) {
+            $q->whereRaw('LOWER(TRIM(oa.unit_code)) = ?', [strtolower(trim($unitCode))]);
+        }
+
+        return $q->pluck('oa.user_id')->map(fn($x)=>(int)$x)->values()->all();
+    }
 }

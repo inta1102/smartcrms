@@ -1,4 +1,4 @@
-@extends('layouts.app')
+@extends('layouts.app') 
 
 @section('title', 'KPI Sheet')
 
@@ -7,9 +7,9 @@
   // Period (Y-m) untuk filter
   $periodYm = $periodYm ?? request('period', now()->format('Y-m'));
 
-  // Role selector (AO|SO|RO|FE|BE)
+  // Role selector (AO|SO|RO|FE|BE|KSBE)
   $roleSel  = $role ?? strtoupper((string)request('role', 'AO'));
-  if (!in_array($roleSel, ['AO','SO','RO','FE','BE'], true)) $roleSel = 'AO';
+  if (!in_array($roleSel, ['AO','SO','RO','FE','BE','KSBE'], true)) $roleSel = 'AO';
 
   // Param period Y-m-01 (buat beberapa route yang butuh tanggal)
   $periodYmd = $periodYm . '-01';
@@ -17,6 +17,9 @@
   // akses input komunitas only KBL & SO
   $canInputSoCommunity = ($roleSel === 'SO') && auth()->user()?->hasAnyRole(['KBL']);
   $canManageTargets = auth()->user()?->hasAnyRole(['KBL']);
+
+  // ✅ Normalisasi items agar aman (Collection / array / null)
+  $itemsCol = $items instanceof \Illuminate\Support\Collection ? $items : collect($items ?? []);
 @endphp
 
 
@@ -42,7 +45,7 @@
         @php
           // Role options untuk dropdown
           // kalau mau batasi: tetap pastikan role aktif selalu masuk
-          $roleOptions = ['AO','SO','RO','FE','BE'];
+          $roleOptions = ['AO','SO','RO','FE','BE','KSBE'];
           if (!in_array($roleSel, $roleOptions, true)) $roleOptions[] = $roleSel;
         @endphp
 
@@ -74,30 +77,35 @@
             ✍️ Buat Target SO
           </a>
         @endif
+
         @if($roleSel === 'RO' && $canManageTargets)
           <a href="{{ route('kpi.ro.targets.index', ['period' => $periodYm]) }}"
             class="rounded-xl bg-emerald-600 px-4 py-2 text-white text-sm font-semibold hover:bg-emerald-700">
             🎯 Input Target RO
           </a>
         @endif
+
         @if($roleSel === 'FE' && $canManageTargets)
           <a href="{{ route('kpi.fe.targets.index', ['period' => $periodYm]) }}"
             class="rounded-xl bg-emerald-600 px-4 py-2 text-white text-sm font-semibold hover:bg-emerald-700">
             🎯 Input Target FE
           </a>
         @endif
+
         @if($roleSel === 'BE' && $canManageTargets)
           <a href="{{ route('kpi.be.targets.index', ['period' => $periodYm]) }}"
             class="rounded-xl bg-emerald-600 px-4 py-2 text-white text-sm font-semibold hover:bg-emerald-700">
             🎯 Input Target BE
           </a>
         @endif
+
         @if($roleSel === 'AO' && $canManageTargets)
           <a href="{{ route('kpi.ao.targets.index', ['period' => $periodYm]) }}"
             class="rounded-xl bg-emerald-600 px-4 py-2 text-white text-sm font-semibold hover:bg-emerald-700">
             🎯 Input Target AO
           </a>
         @endif
+
         {{-- Input Komunitas & Adjustment (KBL only, SO only) --}}
         @if($canInputSoCommunity)
           <a href="{{ route('kpi.so.community_input.index', ['period' => $periodYmd]) }}"
@@ -141,7 +149,7 @@
             </form>
         
           @elseif($roleSel === 'FE')
-            {{-- ✅ Recalc FE (mode auto: bulan ini realtime, bulan lalu kebawah eom) --}}
+            {{-- ✅ Recalc FE --}}
             <form method="POST" action="{{ route('kpi.recalc.fe') }}"
                   onsubmit="return confirm('Recalc KPI FE untuk periode ini?')">
               @csrf
@@ -151,8 +159,8 @@
               </button>
             </form>
           
-          @elseif($roleSel === 'BE')
-            {{-- ✅ Recalc FE (mode auto: bulan ini realtime, bulan lalu kebawah eom) --}}
+          @elseif(in_array($roleSel, ['BE','KSBE'], true))
+            {{-- ✅ Recalc BE (untuk KSBE juga boleh trigger perhitungan data bawahan) --}}
             <form method="POST" action="{{ route('kpi.recalc.be') }}"
                   onsubmit="return confirm('Recalc KPI BE untuk periode ini?')">
               @csrf
@@ -162,6 +170,7 @@
               </button>
             </form>
           @endif
+
         @endcan
 
       </div>
@@ -169,7 +178,7 @@
   </div>
 
   {{-- BODY --}}
-  @if($items->isEmpty())
+  @if($itemsCol->isEmpty())
     <div class="rounded-2xl border border-slate-200 bg-white p-6 text-slate-600">
       Belum ada data KPI {{ $roleSel }} untuk periode ini. Jalankan <b>Recalc</b> untuk menghitung KPI.
     </div>
@@ -183,7 +192,8 @@
       @include('kpi.marketing.partials.sheet_ro')
     @elseif($roleSel === 'FE')
       @include('kpi.marketing.partials.sheet_fe')
-    @elseif($roleSel === 'BE')
+    @elseif(in_array($roleSel, ['BE','KSBE'], true))
+      {{-- ✅ KSBE sementara pakai tampilan BE --}}
       @include('kpi.marketing.partials.sheet_be')
     @endif
   @endif

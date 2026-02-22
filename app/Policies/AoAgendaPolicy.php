@@ -18,7 +18,7 @@ class AoAgendaPolicy
 
     public function view(User $user, AoAgenda $agenda): bool
     {
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesTl())) return true;
 
         // AO/Staff: hanya agenda untuk case yang dia pegang
@@ -36,7 +36,7 @@ class AoAgendaPolicy
      */
     public function update(User $user, AoAgenda $agenda): bool
     {
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesTl())) return true;
 
         return $this->isSelf($user, $agenda->user_id ?? $agenda->ao_user_id ?? null);
@@ -54,7 +54,7 @@ class AoAgendaPolicy
     public function progress(User $user, AoAgenda $agenda): bool
     {
         // Supervisi bebas
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesTl())) return true;
 
         // Staff operasional yang boleh menjalankan agenda visit
@@ -85,7 +85,7 @@ class AoAgendaPolicy
     public function delete(User $user, AoAgenda $agenda): bool
     {
         // aman: hanya TL/KASI
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesTl())) return true;
 
         return false;

@@ -36,7 +36,7 @@ class LegalActionPolicy
     public function view(User $user, LegalAction $action): bool
     {
         // management / approver lihat semua
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesTl())) return true;
 
         // ✅ BE: boleh lihat legal actions untuk legal cases
@@ -86,11 +86,11 @@ class LegalActionPolicy
 
         // kalau sudah closed/locked, hanya management
         if ($status === 'closed') {
-            return $this->atLeast($user, UserRole::KSL);
+            return $this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE);
         }
 
         // management/approver
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesTl())) return true;
 
         // ✅ BE: boleh update operasional untuk legal case / case miliknya
@@ -138,8 +138,8 @@ class LegalActionPolicy
             UserRole::DIREKSI,
             UserRole::KOM,
             UserRole::KTI,
-            UserRole::KSL,
-            UserRole::KSR,
+            UserRole::KSLR,
+            UserRole::KSLU,
         ]);
     }
 
@@ -149,7 +149,7 @@ class LegalActionPolicy
             return false;
         }
 
-        if ($this->atLeast($user, UserRole::KSL)) return true;
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) return true;
         if ($this->allowRoles($user, $this->rolesTl())) return true;
 
         // BE boleh operasional HT
@@ -167,7 +167,7 @@ class LegalActionPolicy
 
         // management/approver lihat semua (kalau kamu memang ingin begitu)
         // (opsional) kalau cukup KSL ke atas:
-        if ($this->atLeast($user, UserRole::KSL)) {
+        if ($this->atLeast($user, UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE)) {
             return true;
         }
 

@@ -27,6 +27,7 @@ enum UserRole: string
     case KSFE     = 'KSFE';
     case KSBE     = 'KSBE';
     case KSR     = 'KSR';
+    case KSL     = 'KSL';
 
     // Team Leader
     case TL      = 'TL';     // TL general
@@ -91,7 +92,7 @@ enum UserRole: string
 
             self::KABAG, self::KBL, self::KBO, self::KTI, self::KBF, self::PE => 80,
 
-            self::KSFE, self::KSBE, self::KSLR, self::KSLU, self::KSO, self::KSA, self::KSF, self::KSD, self::KSR => 60,
+            self::KSFE, self::KSBE, self::KSLR, self::KSLU, self::KSO, self::KSA, self::KSF, self::KSD, self::KSL, self::KSR => 60,
 
             // ✅ TL group (pakai helper)
             self::tlAll() => 40,
@@ -105,7 +106,7 @@ enum UserRole: string
         return [
             self::DIREKSI, self::KOM, self::DIR,
             self::KABAG, self::KBL, self::KBO, self::KTI, self::KBF, self::PE,
-            self::KSFE, self::KSBE, self::KSLR, self::KSLU, self::KSO, self::KSA, self::KSF, self::KSD, self::KSR,
+            self::KSFE, self::KSBE, self::KSLR, self::KSLU, self::KSO, self::KSA, self::KSF, self::KSD, self::KSR, self::KSL,
             ...self::tlAll(),
         ];
     }

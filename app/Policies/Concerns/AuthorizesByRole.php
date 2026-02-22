@@ -44,7 +44,7 @@ trait AuthorizesByRole
 
     protected function rolesKasi(): array
     {
-        return [UserRole::KSL, UserRole::KSO, UserRole::KSA, UserRole::KSF, UserRole::KSD, UserRole::KSR];
+        return [UserRole::KSLR, UserRole::KSLU, UserRole::KSFE, UserRole::KSBE, UserRole::KSO, UserRole::KSA, UserRole::KSF, UserRole::KSD];
     }
 
     protected function rolesTl(): array

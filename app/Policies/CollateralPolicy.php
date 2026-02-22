@@ -74,9 +74,15 @@ class CollateralPolicy
             UserRole::DIREKSI,
             UserRole::KOM,
             UserRole::KBL,
-            UserRole::KSR,
             UserRole::KTI,
-            UserRole::KSL,
+                UserRole::KSLR,
+                UserRole::KSO,
+                UserRole::KSA,
+                UserRole::KSF,
+                UserRole::KSD,
+                UserRole::KSBE,
+                UserRole::KSFE,
+                UserRole::KSLU,
         ];
     }
 }
