@@ -20,9 +20,9 @@ class KsbeKpiMonthlyService
     {
         $leader = $authUser;
         logger()->info('KSBE buildForPeriod START', [
-            'periodYm' => $periodYm,
-            'me_id' => $leader?->id,
-            'me_level' => $leader?->level,
+            'periodYm'   => $periodYm,
+            'me_id'      => $leader?->id,
+            'me_level'   => $leader?->level,
         ]);
 
         // parse
@@ -55,11 +55,23 @@ class KsbeKpiMonthlyService
             ->orderBy('name')
             ->get();
 
-            logger()->info('KSBE SCOPE', [
-                'leader_id'    => (int)($authUser?->id ?? 0),
-                'scope_cnt'    => is_array($subIds) ? count($subIds) : 0,
-                'scope_sample' => array_slice($subIds ?? [], 0, 10),
-            ]);
+        logger()->info('KSBE SCOPE', [
+            'leader_id'    => (int)($authUser?->id ?? 0),
+            'scope_cnt'    => is_array($subIds) ? count($subIds) : 0,
+            'scope_sample' => array_slice($subIds ?? [], 0, 10),
+            'be_users_cnt' => $users->count(),
+        ]);
+
+        // ✅ DEFAULT: selalu define stability_meta biar gak "undefined variable"
+        $ksbeStabilityMeta = [
+            'coverage_pct' => 0,
+            'spread_stddev'=> 0,
+            'bottom_avg'   => 0,
+            'coverage_cnt' => 0,
+            'total_cnt'    => 0,
+            'notes'        => 'no users',
+        ];
+        $ksbeStability = 0.0;
 
         if ($users->isEmpty()) {
             return [
@@ -69,12 +81,10 @@ class KsbeKpiMonthlyService
                 'weights'=> $this->beServiceWeights(),
                 'recap'  => $this->emptyRecap(),
                 'items'  => collect(),
+                'stability'      => $ksbeStability,
+                'stability_meta' => $ksbeStabilityMeta,
             ];
         }
-
-        // pakai BE service kamu untuk build item bawahan (monthly/realtime mix)
-        // trick: BE service expect role-based scoping; kita bypass dengan call internal calculateRealtime untuk list users
-        // => cara paling aman: duplikasi ringan logic BE: ambil monthlies + targets + realtime untuk yang belum ada
 
         $beIds = $users->pluck('id')->map(fn($x)=>(int)$x)->values()->all();
 
@@ -99,7 +109,6 @@ class KsbeKpiMonthlyService
         $needCalcUsers = $users->filter(fn($u) => !$monthlies->has((int)$u->id))->values();
         $calcRows = [];
         if ($needCalcUsers->isNotEmpty()) {
-            // PENTING: calculateRealtime di BeKpiMonthlyService harus hidup (punyamu yang panjang itu)
             $calcRows = $this->callBeRealtime($periodYm, $needCalcUsers, $targets);
         }
 
@@ -160,8 +169,30 @@ class KsbeKpiMonthlyService
         // rekap agregat KSBE (dihitung dari SUM target/actual)
         $recap = $this->buildRecapFromItems($items);
 
+        // ✅ PI_scope (Opsi C): pakai PI total dari recap agregat
+        $piScope = (float) data_get($recap, 'pi.total', 0);
+
+        logger()->info('KSBE DEBUG PI_SCOPE (FROM RECAP)', [
+            'pi_scope' => $piScope,
+            'pi_total' => (float) data_get($recap, 'pi.total', 0),
+            'recap_target_os' => (float) data_get($recap,'target.os',0),
+            'recap_actual_os' => (float) data_get($recap,'actual.os',0),
+        ]);
+
         // ranking bawahan
         $items = $items->sortByDesc(fn($x)=>(float)($x['pi']['total'] ?? 0))->values();
+
+        /**
+         * ==========================================================
+         * ✅ STABILITY (coverage • spread • bottom)
+         * ==========================================================
+         */
+        [$ksbeStability, $ksbeStabilityMeta] = $this->calcKsbeStability($items);
+
+        logger()->info('KSBE DEBUG STABILITY', [
+            'stability' => $ksbeStability,
+            'meta'      => $ksbeStabilityMeta,
+        ]);
 
         return [
             'period' => $period,
@@ -170,9 +201,196 @@ class KsbeKpiMonthlyService
             'weights'=> $this->beServiceWeights(),
             'recap'  => $recap,
             'items'  => $items,
+            'stability'      => $ksbeStability,
+            'stability_meta' => $ksbeStabilityMeta,
+            'pi_scope' => $piScope,
         ];
     }
 
+    /**
+     * Return:
+     * - stabilityScore: float (1..5)
+     * - meta: array
+     */
+    private function calcKsbeStability(Collection $items): array
+    {
+        $n = $items->count();
+        if ($n <= 0) {
+            return [0.0, [
+                'coverage_pct'=>0,'spread_stddev'=>0,'bottom_avg'=>0,
+                'coverage_cnt'=>0,'total_cnt'=>0,'notes'=>'empty items',
+            ]];
+        }
+
+        // ===== Coverage: % BE yang PI total > 0 (punya data nyata)
+        $pis = $items->map(fn($x)=>(float) data_get($x,'pi.total',0))->values();
+        $covered = $pis->filter(fn($v)=>$v > 0)->count();
+        $coveragePct = $n > 0 ? ($covered / $n) : 0;
+
+        // score coverage (1..5)
+        $coverageScore = match (true) {
+            $coveragePct >= 0.90 => 5,
+            $coveragePct >= 0.75 => 4,
+            $coveragePct >= 0.50 => 3,
+            $coveragePct >= 0.25 => 2,
+            default             => 1,
+        };
+
+        // ===== Spread: stddev PI (lebih kecil lebih stabil)
+        $mean = $pis->avg();
+        $variance = $pis->map(fn($v)=>pow($v - $mean, 2))->avg();
+        $stddev = sqrt((float)$variance);
+
+        $spreadScore = match (true) {
+            $stddev <= 0.25 => 5,
+            $stddev <= 0.50 => 4,
+            $stddev <= 0.75 => 3,
+            $stddev <= 1.00 => 2,
+            default         => 1,
+        };
+
+        // ===== Bottom: rata-rata bottom 2 PI (lebih besar lebih bagus)
+        $bottomK = min(2, $n);
+        $bottomAvg = $pis->sort()->take($bottomK)->avg();
+
+        $bottomScore = match (true) {
+            $bottomAvg >= 4.00 => 5,
+            $bottomAvg >= 3.00 => 4,
+            $bottomAvg >= 2.00 => 3,
+            $bottomAvg >= 1.00 => 2,
+            default            => 1,
+        };
+
+        // ===== Combine (bobot bisa kamu adjust)
+        $score = round(($coverageScore * 0.40) + ($spreadScore * 0.30) + ($bottomScore * 0.30), 2);
+
+        return [$score, [
+            'coverage_pct'   => round($coveragePct * 100, 2),
+            'coverage_cnt'   => $covered,
+            'total_cnt'      => $n,
+            'spread_stddev'  => round($stddev, 4),
+            'bottom_avg'     => round((float)$bottomAvg, 2),
+            'coverage_score' => $coverageScore,
+            'spread_score'   => $spreadScore,
+            'bottom_score'   => $bottomScore,
+            'notes'          => "coverage={$coverageScore}, spread={$spreadScore}, bottom={$bottomScore}",
+        ]];
+    }
+
+    /**
+     * Return: [prorationFactor(0..1), asOfDateString]
+     * - kalau period == bulan ini: pakai now()->day / daysInMonth
+     * - kalau period != bulan ini: 1.0 (full month)
+     */
+    private function ksbeProrationFactor(Carbon $period, Carbon $asOf): array
+    {
+        $p = $period->copy()->startOfMonth();
+        $a = $asOf->copy();
+
+        // kalau period bukan bulan berjalan => full month
+        if (!$p->isSameMonth($a)) {
+            return [1.0, $p->copy()->endOfMonth()->toDateString()];
+        }
+
+        $daysInMonth = max(1, (int)$a->daysInMonth);
+        $elapsed = min(max(1, (int)$a->day), $daysInMonth);
+
+        $factor = $elapsed / $daysInMonth;
+        $factor = max(0.0, min(1.0, $factor));
+
+        return [$factor, $a->toDateString()];
+    }
+
+    /**
+     * Bangun recap versi effective (target diprorata), score/PI dihitung ulang
+     * tapi actual tetap sama (realtime actual as-of).
+     */
+    private function buildEffectiveRecapFromRecap(array $recap, float $proration): array
+    {
+        $w = $this->beServiceWeights();
+
+        $tOs = (float) data_get($recap,'target.os',0);
+        $tNoa = (int) data_get($recap,'target.noa',0);
+        $tB = (float) data_get($recap,'target.bunga',0);
+        $tD = (float) data_get($recap,'target.denda',0);
+
+        $aOs = (float) data_get($recap,'actual.os',0);
+        $aNoa = (int) data_get($recap,'actual.noa',0);
+        $aB = (float) data_get($recap,'actual.bunga',0);
+        $aD = (float) data_get($recap,'actual.denda',0);
+
+        // effective target
+        $tOsEff = $tOs * $proration;
+        $tBEff  = $tB  * $proration;
+        $tDEff  = $tD  * $proration;
+
+        // NOA: target integer → proration juga, tapi jangan jadi 0 kalau target aslinya > 0
+        $tNoaEff = 0;
+        if ($tNoa > 0) {
+            $tNoaEff = (int) round($tNoa * $proration);
+            if ($tNoaEff < 1) $tNoaEff = 1;
+        }
+
+        // score band sama seperti recap
+        $scorePercent = function (?float $ratio): int {
+            if ($ratio === null) return 1;
+            if ($ratio < 0.25) return 1;
+            if ($ratio < 0.50) return 2;
+            if ($ratio < 0.75) return 3;
+            if ($ratio < 1.00) return 4;
+            if ($ratio <= 1.0000001) return 5;
+            return 6;
+        };
+
+        $sOs  = $scorePercent($tOsEff > 0 ? $aOs / $tOsEff : null);
+        $sNoa = $scorePercent($tNoaEff > 0 ? $aNoa / $tNoaEff : null);
+        $sB   = $scorePercent($tBEff  > 0 ? $aB  / $tBEff  : null);
+        $sD   = $scorePercent($tDEff  > 0 ? $aD  / $tDEff  : null);
+
+        $piOs = round($sOs  * $w['os'],    2);
+        $piNoa= round($sNoa * $w['noa'],   2);
+        $piB  = round($sB   * $w['bunga'], 2);
+        $piD  = round($sD   * $w['denda'], 2);
+        $total= round($piOs + $piNoa + $piB + $piD, 2);
+
+        $achOs  = $tOsEff > 0 ? round(($aOs / $tOsEff) * 100, 2) : 0;
+        $achNoa = $tNoaEff> 0 ? round(($aNoa/ $tNoaEff)* 100, 2) : 0;
+        $achB   = $tBEff  > 0 ? round(($aB  / $tBEff)  * 100, 2) : 0;
+        $achD   = $tDEff  > 0 ? round(($aD  / $tDEff)  * 100, 2) : 0;
+
+        // copy info stock dari recap existing
+        $osPrev = (float) data_get($recap,'actual.os_npl_prev',0);
+        $osNow  = (float) data_get($recap,'actual.os_npl_now',0);
+        $netDrop= (float) data_get($recap,'actual.net_npl_drop',($osPrev - $osNow));
+
+        return [
+            'target' => [
+                'os'    => $tOsEff,
+                'noa'   => $tNoaEff,
+                'bunga' => $tBEff,
+                'denda' => $tDEff,
+            ],
+            'actual' => [
+                'os'    => $aOs,
+                'noa'   => $aNoa,
+                'bunga' => $aB,
+                'denda' => $aD,
+                'os_npl_prev'  => $osPrev,
+                'os_npl_now'   => $osNow,
+                'net_npl_drop' => $netDrop,
+            ],
+            'ach' => [
+                'os' => $achOs, 'noa' => $achNoa, 'bunga' => $achB, 'denda' => $achD,
+            ],
+            'score' => [
+                'os' => $sOs, 'noa' => $sNoa, 'bunga' => $sB, 'denda' => $sD,
+            ],
+            'pi' => [
+                'os' => $piOs, 'noa' => $piNoa, 'bunga' => $piB, 'denda' => $piD, 'total' => $total,
+            ],
+        ];
+    }
+    
     private function beServiceWeights(): array
     {
         // match bobot BE service kamu

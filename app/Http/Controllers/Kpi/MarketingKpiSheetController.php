@@ -6,6 +6,8 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use App\Services\Kpi\KpiScoreHelper;
+use App\Services\Kpi\KsbeKpiMonthlyService;
+use App\Services\Kpi\KsbeLeadershipIndexService;
 
 class MarketingKpiSheetController
 {
@@ -163,6 +165,8 @@ class MarketingKpiSheetController
         // Period (Y-m) safe parse
         // =========================
         $periodYm = (string) $request->query('period', now()->format('Y-m'));
+        $me = auth()->user();
+        abort_unless($me, 403);
 
         try {
             $period = Carbon::createFromFormat('Y-m', $periodYm)->startOfMonth();
@@ -637,37 +641,37 @@ class MarketingKpiSheetController
 
         // ========= KSBE =========
         if ($role === 'KSBE') {
-            $me = auth()->user();
 
-            $out = app(\App\Services\Kpi\KsbeKpiMonthlyService::class)
-                ->buildForPeriod($periodYm, $me);
+            $authUser = auth()->user();
+            abort_unless($authUser, 403);
 
-            // logger()->info('KSBE SHEET DEBUG', [
-            //     'periodYm'   => $periodYm,
-            //     'periodDate' => $periodDate,
-            //     'me_id'      => $me?->id,
-            //     'me_name'    => $me?->name,
-            //     'me_level'   => $me?->level,
+            $ksbe = app(KsbeKpiMonthlyService::class)->buildForPeriod($periodYm, $me);
 
-            //     // output keys & count
-            //     'out_keys'   => is_array($out) ? array_keys($out) : gettype($out),
-            //     'items_cnt'  => is_countable($out['items'] ?? null) ? count($out['items']) : null,
+            $ksbe = app(KsbeLeadershipIndexService::class)->buildAndStore($periodYm, $me, $ksbe);
+            $ksbeAi = app(\App\Services\Kpi\KsbeLeadershipAiEngine::class)->build($ksbe);
 
-            //     // meta kalau kamu sediain di service
-            //     'scope_cnt'  => is_countable($out['meta']['scope_user_ids'] ?? null) ? count($out['meta']['scope_user_ids']) : null,
-            //     'scope_sample' => array_slice($out['meta']['scope_user_ids'] ?? [], 0, 10),
-
-            //     'why_empty'  => $out['meta']['why_empty'] ?? null,
-            // ]);
+            logger()->info('KSBE DEBUG PI_SCOPE', [
+                'pi_scope' => data_get($ksbe,'pi_scope'),
+                'li.pi_scope' => data_get($ksbe,'li.pi_scope'),
+                'recap_target_os' => data_get($ksbe,'recap.target.os'),
+                'recap_target_noa' => data_get($ksbe,'recap.target.noa'),
+                'recap_target_bunga' => data_get($ksbe,'recap.target.bunga'),
+                'recap_target_denda' => data_get($ksbe,'recap.target.denda'),
+                'recap_actual_os' => data_get($ksbe,'recap.actual.os'),
+            ]);
 
             return view('kpi.marketing.sheet', [
-                'role'     => 'KSBE',
-                'periodYm' => $periodYm, // ✅ tambah
-                'period'   => $out['period']  ?? $period,
-                'weights'  => $out['weights'] ?? [],
-                'items'    => $out['items']   ?? [],
-                'recap'    => $out['recap']   ?? [],
-                'insights' => $out['insights'] ?? [],
+                'role' => 'KSBE',
+                'periodYm' => $periodYm,
+                'period' => $ksbe['period'],
+                'mode' => $ksbe['mode'],
+                'leader'     => $ksbe['leader'] ?? ['id'=>$authUser->id,'name'=>$authUser->name,'level'=>'KSBE'],
+                'weights'    => $ksbe['weights'] ?? [],
+                'recap'      => $ksbe['recap'] ?? [],
+                'items'      => $ksbe['items'] ?? collect(),
+                'leadership' => $ksbe['leadership'] ?? [],
+                'ksbe'   => $ksbe,
+                'ksbeAi' => $ksbeAi,
             ]);
         }
 

@@ -192,9 +192,10 @@
       @include('kpi.marketing.partials.sheet_ro')
     @elseif($roleSel === 'FE')
       @include('kpi.marketing.partials.sheet_fe')
-    @elseif(in_array($roleSel, ['BE','KSBE'], true))
-      {{-- ✅ KSBE sementara pakai tampilan BE --}}
+    @elseif($roleSel === 'BE')
       @include('kpi.marketing.partials.sheet_be')
+    @elseif($roleSel === 'KSBE')
+      @include('kpi.marketing.partials.sheet_ksbe')
     @endif
   @endif
 
