@@ -615,7 +615,7 @@ class MarketingKpiSheetController
                 'mode'      => $res['mode'] ?? null,
                 'weights'   => $res['weights'],
                 'items'     => $res['items'],
-                'tlRecap'   => $res['tlFeRecap'] ?? null,
+                'tlRecap' => $res['tlfeRecap'] ?? ($res['tlFeRecap'] ?? null),
 
                 // ✅ tambahan untuk label akumulasi (dan konsistensi dgn RO)
                 'startYtd'  => $res['startYtd'] ?? null,

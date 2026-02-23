@@ -83,7 +83,21 @@ class FeKpiMonthlyService
         $endMonthMode      = $isEndMonthCurrent ? 'realtime' : 'eom';
 
         $startYtd = $startMonth->toDateString();
-        $endYtd   = $endMonth->copy()->endOfMonth()->toDateString();
+
+        // ✅ AS OF DATE: realtime = last position_date loan_accounts (bukan endOfMonth)
+        $asOfDate = $endMonth->copy()->endOfMonth()->toDateString(); // default eom
+        if ($endMonthMode === 'realtime') {
+            $latest = $this->latestLoanPositionDate(); // ex: 2026-02-20
+            if ($latest) {
+                // guard: jangan sampai keluar dari bulan yg dipilih
+                $latestC = Carbon::parse($latest)->toDateString();
+                $monthEnd = $endMonth->copy()->endOfMonth()->toDateString();
+                $asOfDate = min($latestC, $monthEnd);
+            }
+        }
+
+        // ✅ endYtd ikut asOfDate
+        $endYtd = $asOfDate;
 
         // =========================
         // Leader & Scope
@@ -266,7 +280,7 @@ class FeKpiMonthlyService
 
         logger()->info('FE items count', ['cnt' => $items->count()]);
 
-        $asOfDate  = $period->copy()->endOfMonth()->toDateString();
+        // $asOfDate  = $period->copy()->endOfMonth()->toDateString();
         $tlFeRecap = $this->buildTlFeRecap($items, $asOfDate, $leaderUser);
 
         return [
@@ -277,9 +291,16 @@ class FeKpiMonthlyService
             'tlFeRecap' => $tlFeRecap,
             'startYtd'  => $startYtd,
             'endYtd'    => $endYtd,
+            'asOfDate'  => $asOfDate,
         ];
     }
 
+    private function latestLoanPositionDate(): ?string
+    {
+        // sesuaikan field kalau beda (position_date / as_of_date)
+        $d = DB::table('loan_accounts')->max('position_date');
+        return $d ? Carbon::parse($d)->toDateString() : null;
+    }
     // =========================================================
     // ROLE NORMALIZER
     // =========================================================
@@ -381,35 +402,34 @@ class FeKpiMonthlyService
     }
 
     private function resolveScopeUserIds($leader, Carbon $period): array
-    {
-        $leaderId   = (int)($leader?->id ?? 0);
-        $leaderRole = $this->leaderRoleValue($leader);
-        if ($leaderId <= 0) return [];
+{
+    $leaderId   = (int)($leader?->id ?? 0);
+    $leaderRole = $this->leaderRoleValue($leader);
+    if ($leaderId <= 0) return [];
 
-        $start = $period->copy()->startOfMonth()->toDateString();
-        $end   = $period->copy()->endOfMonth()->toDateString();
+    $start = $period->copy()->startOfMonth()->toDateString();
+    $end   = $period->copy()->endOfMonth()->toDateString();
 
-        $roleAliases = match ($leaderRole) {
-            'TLFE' => ['tlfe'],
-            'KSFE' => ['ksfe'],
-            default => [strtolower($leaderRole)],
-        };
+    $aliases = match ($leaderRole) {
+        'TLFE' => ['tlfe','tl','teamleader','leader'],
+        'KSFE' => ['ksfe','kasi','kasilending'],
+        default => [strtolower($leaderRole)],
+    };
 
-        // ✅ SQL aman untuk MariaDB
-        return DB::table('org_assignments')
-            ->where('leader_id', $leaderId)
-            ->whereIn(DB::raw("LOWER(TRIM(leader_role))"), $roleAliases)
-            ->where('is_active', 1)
-            ->whereDate('effective_from', '<=', $end)
-            ->where(function ($q) use ($start) {
-                $q->whereNull('effective_to')
-                ->orWhereDate('effective_to', '>=', $start);
-            })
-            ->pluck('user_id')
-            ->map(fn($x) => (int)$x)
-            ->values()
-            ->all();
-    }
+    return DB::table('org_assignments')
+        ->where('leader_id', $leaderId)
+        ->where('is_active', 1)
+        ->whereIn(DB::raw("LOWER(REPLACE(TRIM(leader_role),' ',''))"), $aliases)
+        ->whereDate('effective_from', '<=', $end)
+        ->where(function ($q) use ($start) {
+            $q->whereNull('effective_to')
+              ->orWhereDate('effective_to', '>=', $start);
+        })
+        ->pluck('user_id')
+        ->map(fn($x) => (int)$x)
+        ->values()
+        ->all();
+}
 
     private function buildTlFeRecap($items, string $periodDate, $leaderUser = null): ?object
     {
@@ -423,7 +443,7 @@ class FeKpiMonthlyService
             return null;
         }
 
-        $scopeUserIds = $this->resolveScopeUserIds($leader, Carbon::parse($periodDate));
+        $scopeUserIds = $this->scopeFeUserIdsForLeader($leader, Carbon::parse($periodDate));
         if (empty($scopeUserIds)) return null;
 
         $scoped = $items->filter(fn($it) => in_array((int)$it->user_id, $scopeUserIds, true));

@@ -110,6 +110,9 @@ use App\Http\Controllers\NplCaseAssessmentController;
 use App\Http\Controllers\Kpi\CommunityController;
 use App\Http\Controllers\Kpi\CommunityHandlingController;
 
+use App\Http\Controllers\Kpi\KsfeLeadershipSheetController;
+use App\Http\Controllers\Kpi\TlfeLeadershipSheetController;
+
 
 /**
  * =======================================================
@@ -661,6 +664,26 @@ Route::middleware('auth')->group(function () {
                 'period' => $period,
             ]);
         })->name('marketing.sheet.ksbe');
+
+
+        // =======================================================
+        // TLFE dan KSFE (INI YANG BIKIN ERROR KEMARIN) — static dulu, wildcard terakhir
+        // =======================================================
+
+        Route::get('/tlfe/sheet', [TlfeLeadershipSheetController::class, 'index'])
+            ->name('tlfe.sheet');
+
+        // Route::get('tlfe/sheet', function () {
+        //     dd('HIT ROUTE TLFE');
+        // });
+        Route::post('/tlfe/sheet/recalc', [TlfeLeadershipSheetController::class, 'recalc'])
+            ->name('tlfe.sheet.recalc');
+            
+        Route::get('/ksfe/sheet', [KsfeLeadershipSheetController::class, 'index'])
+            ->name('ksfe.sheet');
+
+        Route::post('/ksfe/sheet/recalc', [KsfeLeadershipSheetController::class, 'recalc'])
+            ->name('ksfe.sheet.recalc');
 
         // =======================================================
         // SO (INI YANG BIKIN ERROR KEMARIN) — static dulu, wildcard terakhir
