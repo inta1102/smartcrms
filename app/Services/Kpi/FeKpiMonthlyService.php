@@ -61,6 +61,12 @@ class FeKpiMonthlyService
         return min($v, 200.0);
     }
 
+    private function latestLoanPositionDate(): ?string
+    {
+        // sesuaikan nama kolom & table kamu
+        return DB::table('loan_accounts')->max('position_date'); // 'Y-m-d' atau null
+    }
+
     // =========================================================
     // MAIN: build FE KPI for period (YTD Accumulation)
     // Target YTD  : dari kpi_fe_targets
@@ -84,19 +90,20 @@ class FeKpiMonthlyService
 
         $startYtd = $startMonth->toDateString();
 
-        // ✅ AS OF DATE: realtime = last position_date loan_accounts (bukan endOfMonth)
-        $asOfDate = $endMonth->copy()->endOfMonth()->toDateString(); // default eom
+        // default EOM untuk label
+        $asOfDate = $endMonth->copy()->endOfMonth()->toDateString();
+
+        // realtime => ambil last position_date loan_accounts, tapi jangan lewat bulan yg dipilih
         if ($endMonthMode === 'realtime') {
             $latest = $this->latestLoanPositionDate(); // ex: 2026-02-20
             if ($latest) {
-                // guard: jangan sampai keluar dari bulan yg dipilih
-                $latestC = Carbon::parse($latest)->toDateString();
+                $latestC  = Carbon::parse($latest)->toDateString();
                 $monthEnd = $endMonth->copy()->endOfMonth()->toDateString();
                 $asOfDate = min($latestC, $monthEnd);
             }
         }
 
-        // ✅ endYtd ikut asOfDate
+        // ✅ endYtd untuk LABEL / header akumulasi
         $endYtd = $asOfDate;
 
         // =========================
@@ -295,12 +302,6 @@ class FeKpiMonthlyService
         ];
     }
 
-    private function latestLoanPositionDate(): ?string
-    {
-        // sesuaikan field kalau beda (position_date / as_of_date)
-        $d = DB::table('loan_accounts')->max('position_date');
-        return $d ? Carbon::parse($d)->toDateString() : null;
-    }
     // =========================================================
     // ROLE NORMALIZER
     // =========================================================

@@ -112,7 +112,7 @@ use App\Http\Controllers\Kpi\CommunityHandlingController;
 
 use App\Http\Controllers\Kpi\KsfeLeadershipSheetController;
 use App\Http\Controllers\Kpi\TlfeLeadershipSheetController;
-
+use App\Http\Controllers\Kpi\TlroLeadershipSheetController;
 
 /**
  * =======================================================
@@ -684,6 +684,12 @@ Route::middleware('auth')->group(function () {
 
         Route::post('/ksfe/sheet/recalc', [KsfeLeadershipSheetController::class, 'recalc'])
             ->name('ksfe.sheet.recalc');
+
+        Route::get('/tlro/sheet', [TlroLeadershipSheetController::class, 'index'])
+            ->name('tlro.sheet');
+
+        Route::post('/tlro/sheet/recalc', [TlroLeadershipSheetController::class, 'recalc'])
+            ->name('tlro.sheet.recalc');
 
         // =======================================================
         // SO (INI YANG BIKIN ERROR KEMARIN) — static dulu, wildcard terakhir

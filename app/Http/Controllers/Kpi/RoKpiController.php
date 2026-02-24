@@ -12,6 +12,33 @@ class RoKpiController extends Controller
 {
     public function index(Request $request)
     {
+        $me = auth()->user();
+        abort_unless($me, 403);
+
+        $role = strtoupper($me->roleValue());
+
+        $roIdQ = (int) request()->query('ro_id', 0);
+        $subjectUser = $me;
+
+        if ($roIdQ > 0) {
+
+            abort_unless(in_array($role, ['TLRO','KSLR','KBL','ADMIN','SUPERADMIN'], true), 403);
+
+            $subjectUser = \App\Models\User::findOrFail($roIdQ);
+
+            abort_unless(strtoupper($subjectUser->roleValue()) === 'RO', 403);
+
+            // optional: cek scope TLRO -> RO
+            if ($role === 'TLRO') {
+                $isInScope = DB::table('org_assignments')
+                    ->where('leader_id', $me->id)
+                    ->where('user_id', $subjectUser->id)
+                    ->where('active', 1)
+                    ->exists();
+
+                abort_unless($isInScope, 403);
+            }
+        }
         // defaults
         $period = $request->input('period', now()->startOfMonth()->toDateString()); // YYYY-MM-01
         $mode   = $request->input('mode', 'realtime'); // realtime|eom

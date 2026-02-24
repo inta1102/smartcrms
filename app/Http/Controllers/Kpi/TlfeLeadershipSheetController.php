@@ -24,60 +24,89 @@ class TlfeLeadershipSheetController extends Controller
         $periodQ = trim((string)$request->query('period', now()->startOfMonth()->toDateString()));
         $period  = Carbon::parse($periodQ)->startOfMonth();
 
-        /**
-         * =====================================================
-         * 1) Build YTD FE items + TL recap (SOURCE OF TRUTH)
-         *    - ini yang kemarin sudah benar
-         * =====================================================
-         */
-        $pack = $feSvc->buildForPeriod($period->format('Y-m'), $me);
+        // ==== View-as TLFE (from KSFE breakdown click) ====
+        $tlfeIdQ = (int) $request->query('tlfe_id', 0);
+        $subjectUser = null;
 
-        // items = FE KPI YTD (per FE)
-        $items   = collect($pack['items'] ?? []);
-        $tlRecap = $pack['tlFeRecap'] ?? null;
+        // Case A) TLFE login => selalu lihat dirinya sendiri, abaikan tlfe_id (biar aman)
+        if ($role === 'TLFE') {
+            $subjectUser = $me;
+        } else {
+            // Case B) role leader/admin => boleh view TLFE tertentu, tapi harus ada tlfe_id
+            abort_unless($tlfeIdQ > 0, 404); // atau 403 kalau kamu mau strict
+
+            $subjectUser = \App\Models\User::query()
+                ->whereKey($tlfeIdQ)
+                ->firstOrFail();
+
+            abort_unless(strtoupper($subjectUser->roleValue()) === 'TLFE', 403);
+
+            // KSFE: TLFE harus termasuk scope
+            if ($role === 'KSFE') {
+                $isInScope = DB::table('org_assignments')
+                    ->where('leader_id', (int)$me->id)
+                    ->where('user_id', (int)$subjectUser->id)
+                    ->exists();
+
+                abort_unless($isInScope, 403);
+            }
+
+            // KBL rules: skip dulu (sesuai keputusan kamu)
+            // ADMIN/SUPERADMIN: bebas
+        }
+
+        // =====================================================
+        // 1) SOURCE OF TRUTH: FE pack (YTD) - pakai subject TLFE
+        // =====================================================
+        $pack = $feSvc->buildForPeriod($period->format('Y-m'), $subjectUser);
+
+        $items    = collect($pack['items'] ?? []);
+        $tlRecap  = $pack['tlFeRecap'] ?? null;
+
+        // start YTD (display)
         $startYtd = $pack['startYtd'] ?? $period->copy()->startOfYear()->toDateString();
 
         // =====================================================
-        // endYtd:
-        // - kalau bulan berjalan => pakai tanggal terakhir data (loan_accounts / fallback)
-        // - kalau bulan lampau => endOfMonth
+        // endYtd / asOfDate (display):
+        // - past month => endOfMonth(period)
+        // - current month => last position date (loan_accounts / kpi_os_daily_aos) capped <= endOfMonth(period)
         // =====================================================
         $isCurrentMonth = $period->equalTo(now()->startOfMonth());
 
-        $endYtd = $pack['endYtd'] ?? $period->copy()->endOfMonth()->toDateString();
+        // default end (EOM of selected period)
+        $monthEnd = $period->copy()->endOfMonth()->toDateString();
+        $endYtd   = $pack['endYtd'] ?? $monthEnd; // kalau service sudah ngasih, pakai itu dulu
 
         if ($isCurrentMonth) {
             $latest = null;
 
-            // 1) kalau loan_accounts punya kolom position_date
-            if (Schema::hasColumn('loan_accounts', 'position_date')) {
+            if (Schema::hasTable('loan_accounts') && Schema::hasColumn('loan_accounts', 'position_date')) {
                 $latest = DB::table('loan_accounts')->max('position_date');
             }
 
-            // 2) fallback: kalau ada kpi_os_daily_aos (biasanya paling update)
             if (!$latest && Schema::hasTable('kpi_os_daily_aos') && Schema::hasColumn('kpi_os_daily_aos', 'position_date')) {
                 $latest = DB::table('kpi_os_daily_aos')->max('position_date');
             }
 
-            // 3) fallback terakhir: end of month
             if ($latest) {
-                $endYtd = Carbon::parse($latest)->toDateString();
+                $latestDate = Carbon::parse($latest)->toDateString();
+                // guard: jangan lewat dari akhir bulan period yang dipilih
+                $endYtd = min($latestDate, $monthEnd);
+            } else {
+                $endYtd = $monthEnd;
             }
+        } else {
+            // bulan lampau: endYtd harus endOfMonth(period)
+            $endYtd = $monthEnd;
         }
 
-        /**
-         * =====================================================
-         * 2) Leadership row (optional)
-         *    - builder boleh tetap dipakai buat LI/narrative/meta,
-         *      tapi ANGKA KPI utamanya tetap dari $tlRecap
-         * =====================================================
-         */
-        $row = $builder->build((int)$me->id, $period->toDateString());
+        // =====================================================
+        // 2) Leadership row (LI/meta)
+        // =====================================================
+        $row = $builder->build((int)$subjectUser->id, $period->toDateString());
 
-        // ==== FE Scope count (pakai tlRecap jika ada, biar konsisten) ====
         $scopeCount = $tlRecap?->scope_count ?? $items->count();
 
-        // ==== AI Narrative (boleh tetap dari $row + $items) ====
         [$aiTitle, $aiBullets, $aiActions] = $this->buildAiNarrative($row, $items);
 
         $fmt2 = fn($v) => number_format((float)($v ?? 0), 2, ',', '.');
@@ -85,29 +114,20 @@ class TlfeLeadershipSheetController extends Controller
         $periodLabel = $period->translatedFormat('F Y');
         $modeLabel   = (($pack['mode'] ?? 'eom') === 'realtime') ? 'Realtime (bulan berjalan)' : 'Freeze / EOM';
 
-        /**
-         * =====================================================
-         * 3) IMPORTANT:
-         *    - untuk reuse sheet_fe: kirim 'items' sebagai FE rows
-         *    - kirim tlRecap dari service (YTD TL aggregate)
-         * =====================================================
-         */
         return view('kpi.tlfe.sheet', [
             'me'          => $me,
+            'subjectUser' => $subjectUser,
+            'viewerUser'  => $me,
             'period'      => $period->toDateString(),
             'periodLabel' => $periodLabel,
             'modeLabel'   => $modeLabel,
 
-            // row leadership (LI, meta)
             'row'         => $row,
 
-            // ✅ FE breakdown YTD (ini yang ditampilkan di ranking FE scope)
             'feRows'      => $items,
-
-            // ✅ TL recap YTD (ini yang harus dipakai header angka TL)
             'tlRecap'     => $tlRecap,
 
-            // ✅ window YTD bener
+            // ✅ ini yang dipakai chip "Akumulasi ..."
             'startYtd'    => $startYtd,
             'endYtd'      => $endYtd,
 
@@ -116,7 +136,6 @@ class TlfeLeadershipSheetController extends Controller
             'aiActions'   => $aiActions,
             'fmt2'        => $fmt2,
 
-            // bonus tampilan
             'scopeCount'  => $scopeCount,
         ]);
     }

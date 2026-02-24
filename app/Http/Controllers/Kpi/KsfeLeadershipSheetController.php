@@ -8,6 +8,7 @@ use App\Services\Kpi\KsfeLeadershipBuilder;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema; 
 
 class KsfeLeadershipSheetController extends Controller
 {
@@ -19,7 +20,7 @@ class KsfeLeadershipSheetController extends Controller
         // ===== Guard role (sesuaikan sesuai sistem role kamu) =====
         // Opsi 1: ada kolom role string: $me->role
         // Opsi 2: ada method hasRole()
-        $role = strtoupper((string)($me->role ?? ''));
+        $role = strtoupper($me->roleValue());
         $can = in_array($role, ['KSFE', 'KBL', 'ADMIN', 'SUPERADMIN'], true)
             || (method_exists($me, 'hasRole') && ($me->hasRole('KSFE') || $me->hasRole('KBL') || $me->hasRole('ADMIN')));
 
@@ -29,6 +30,37 @@ class KsfeLeadershipSheetController extends Controller
         $periodQ = trim((string)$request->query('period', now()->startOfMonth()->toDateString()));
         $period  = Carbon::parse($periodQ)->startOfMonth();
 
+        // =====================================================
+        // YTD DISPLAY WINDOW (tampilan saja)
+        // - startYtd: 1 Jan tahun berjalan
+        // - endYtd:
+        //   * bulan lampau => endOfMonth(period)
+        //   * bulan berjalan => last position date (loan_accounts / fallback kpi_os_daily_aos) capped <= endOfMonth(period)
+        // =====================================================
+        $startYtd = $period->copy()->startOfYear()->toDateString();
+
+        $monthEnd = $period->copy()->endOfMonth()->toDateString();
+        $endYtd   = $monthEnd;
+
+        $isCurrentMonth = $period->equalTo(now()->startOfMonth());
+        if ($isCurrentMonth) {
+            $latest = null;
+
+            if (Schema::hasTable('loan_accounts') && Schema::hasColumn('loan_accounts', 'position_date')) {
+                $latest = DB::table('loan_accounts')->max('position_date');
+            }
+
+            if (!$latest && Schema::hasTable('kpi_os_daily_aos') && Schema::hasColumn('kpi_os_daily_aos', 'position_date')) {
+                $latest = DB::table('kpi_os_daily_aos')->max('position_date');
+            }
+
+            if ($latest) {
+                $latestDate = Carbon::parse($latest)->toDateString();
+                $endYtd = min($latestDate, $monthEnd); // guard jangan lewat akhir bulan
+            }
+        }
+
+        
         // ===== Auto-build (optional): build saat page dibuka supaya selalu ada data =====
         // Kalau kamu mau "hemat", kamu bisa matiin dan hanya pakai tombol recalc.
         $row = $builder->build((int)$me->id, $period->toDateString());
@@ -36,7 +68,6 @@ class KsfeLeadershipSheetController extends Controller
         // ===== Ambil list TLFE scope untuk breakdown =====
         $tlfeIds = DB::table('org_assignments')
             ->where('leader_id', (int)$me->id)
-            ->where('active', 1)
             ->pluck('user_id')
             ->toArray();
 
@@ -72,6 +103,8 @@ class KsfeLeadershipSheetController extends Controller
                 });
         }
 
+        $scopeCount = (int)($row->tlfe_count ?? $tlfeRows->count());
+
         // ===== Label period =====
         $periodLabel = $period->translatedFormat('F Y'); // pastikan locale id sudah diset
         $modeLabel = $row->calc_mode === 'realtime'
@@ -95,6 +128,11 @@ class KsfeLeadershipSheetController extends Controller
             'aiBullets'   => $aiBullets,
             'aiActions'   => $aiActions,
             'fmt2'        => $fmt2,
+
+            // ✅ tambahan untuk chip "Akumulasi ..."
+            'startYtd'    => $startYtd,
+            'endYtd'      => $endYtd,
+            'scopeCount'  => $scopeCount,
         ]);
     }
 

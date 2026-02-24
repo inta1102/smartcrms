@@ -619,28 +619,56 @@
                 ),
             ],
 
+             [
+                'label'  => 'KPI TLRO',
+                'icon'   => '📊',
+                'href'   => \Illuminate\Support\Facades\Route::has('kpi.tlro.sheet') ? route('kpi.tlro.sheet') : null,
+                'active' => request()->routeIs('kpi.tlro.sheet*'),
+                'show' => $u && in_array($u->roleValue(), ['TLRO','KBL'], true),
+                
+            ],
+
             [
-                'label'  => 'Sheet KSBE',
-                'icon'   => '📄',
+                'label'  => 'KPI TLFE',
+                'icon'   => '📊',
+                'href'   => \Illuminate\Support\Facades\Route::has('kpi.tlfe.sheet') ? route('kpi.tlfe.sheet') : null,
+                'active' => request()->routeIs('kpi.tlfe.sheet*'),
+                'show' => $u && in_array($u->roleValue(), ['TLFE','KBL'], true),
+                
+            ],
+
+            [
+                'label'  => 'KPI TLBE',
+                'icon'   => '📊',
+                'href'   => \Illuminate\Support\Facades\Route::has('kpi.tlbe.sheet') ? route('kpi.tlbe.sheet') : null,
+                'active' => request()->routeIs('kpi.ksbe.sheet*'),
+                'show' => $u && in_array($u->roleValue(), ['TLBE','KBL'], true),
+                
+            ],
+
+            [
+                'label'  => 'KPI KSFE',
+                'icon'   => '📊',
+                'href'   => \Illuminate\Support\Facades\Route::has('kpi.ksfe.sheet') ? route('kpi.ksfe.sheet') : null,
+                'active' => request()->routeIs('kpi.ksfe.sheet*'),
+                'show' => $u && in_array($u->roleValue(), ['KSFE','KBL'], true),
+                
+            ],
+
+            [
+                'label'  => 'KPI KSBE',
+                'icon'   => '📊',
                 'href'   => \Illuminate\Support\Facades\Route::has('kpi.marketing.sheet.ksbe')
                     ? route('kpi.marketing.sheet.ksbe')
                     : null,
                 'active' => request()->routeIs('kpi.marketing.sheet.ksbe'),
                 'show'   => $u && in_array(
                     strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)),
-                    ['KSBE','KASI','KBL'],
+                    ['KSBE','KBL'],
                     true
                 ),
             ],
 
-            [
-                'label'  => 'KSFE Sheet',
-                'icon'   => '📊',
-                'href'   => \Illuminate\Support\Facades\Route::has('kpi.ksfe.sheet') ? route('kpi.ksfe.sheet') : null,
-                'active' => request()->routeIs('kpi.ksfe.sheet*'),
-                'show' => $u && in_array($u->roleValue(), ['KSFE','KBL','ADMIN','SUPERADMIN'], true),
-                
-            ],
 
         ],
 

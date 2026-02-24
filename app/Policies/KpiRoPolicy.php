@@ -5,19 +5,20 @@ namespace App\Policies;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class KpiRoPolicy
 {
     public function view(User $viewer, User $target): bool
     {
-        // 0) Guard: hanya untuk target RO (anti-bocor akses lewat URL /kpi/ro/{id})
+        // 0) Guard: hanya untuk target RO
         $targetLevel = strtoupper(trim((string)($target->level instanceof \BackedEnum ? $target->level->value : $target->level)));
         if ($targetLevel !== 'RO') return false;
 
         // 1) self selalu boleh
         if ((int)$viewer->id === (int)$target->id) return true;
 
-        // 2) role viewer (aman untuk enum/string)
+        // ✅ 2) definisikan role viewer dulu (ini yg bikin error kemarin)
         $role = $this->resolveViewerRole($viewer);
 
         // 3) management/admin roles: boleh lihat semua RO
@@ -25,34 +26,34 @@ class KpiRoPolicy
             return true;
         }
 
-        // 4) TL: hanya bawahan sesuai org_assignments + leader_role + effective range
+        // 4) TL layer (TLRO, TL*, dll): scope via org_assignments (leader_id -> user_id)
         if (str_starts_with($role, 'TL')) {
-            $periodYmd = $this->resolvePeriodYmdFromRequest(); // startOfMonth Y-m-d
-
-            // role alias: "TLRO", "TL RO", "tlro ", dll
-            $aliases = $this->roleAliases($role);
+            $periodYmd = $this->resolvePeriodYmdFromRequest();
 
             return DB::table('org_assignments as oa')
                 ->where('oa.leader_id', (int)$viewer->id)
                 ->where('oa.user_id', (int)$target->id)
                 ->where('oa.is_active', 1)
-                ->whereIn(DB::raw('LOWER(TRIM(oa.leader_role))'), $aliases)
                 ->whereDate('oa.effective_from', '<=', $periodYmd)
                 ->where(function ($q) use ($periodYmd) {
                     $q->whereNull('oa.effective_to')
-                      ->orWhereDate('oa.effective_to', '>=', $periodYmd);
+                    ->orWhereDate('oa.effective_to', '>=', $periodYmd);
                 })
                 ->exists();
         }
 
-        // default deny
         return false;
     }
 
-    private function resolveViewerRole(User $viewer): string
+    private function resolveUserRole(User $u): string
     {
         // prioritas roleValue() bila ada
-        $raw = $viewer->roleValue() ?? $viewer->level ?? '';
+        $raw = null;
+        if (method_exists($u, 'roleValue')) {
+            $raw = $u->roleValue();
+        }
+        $raw = $raw ?? ($u->role ?? null) ?? ($u->level ?? '');
+
         if ($raw instanceof \BackedEnum) $raw = $raw->value;
         return strtoupper(trim((string)$raw));
     }
@@ -76,5 +77,19 @@ class KpiRoPolicy
         $r1 = strtolower(trim($role));
         $r2 = strtolower(trim(str_replace(' ', '', $role)));
         return array_values(array_unique([$r1, $r2]));
+    }
+
+    private function resolveViewerRole(User $viewer): string
+    {
+        // kalau kamu punya method roleValue()
+        $raw = method_exists($viewer, 'roleValue')
+            ? $viewer->roleValue()
+            : ($viewer->level ?? '');
+
+        if ($raw instanceof \BackedEnum) {
+            $raw = $raw->value;
+        }
+
+        return strtoupper(trim((string)$raw));
     }
 }

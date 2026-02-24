@@ -22,7 +22,6 @@ class KsfeLeadershipBuilder
             */
             $tlfeIds = DB::table('org_assignments')
                 ->where('leader_id', $ksfeId)
-                ->where('active', 1)
                 ->pluck('user_id')
                 ->toArray();
 

@@ -8,6 +8,7 @@ use Illuminate\Support\Facades\DB;
 use App\Services\Kpi\KpiScoreHelper;
 use App\Services\Kpi\KsbeKpiMonthlyService;
 use App\Services\Kpi\KsbeLeadershipIndexService;
+use Illuminate\Support\Facades\Schema;
 
 class MarketingKpiSheetController
 {
@@ -691,8 +692,31 @@ class MarketingKpiSheetController
         // - Feb = Jan+Feb, Mar = Jan+Feb+Mar, dst
         // - target & actual KPI SUM (kecuali RR dihitung weighted ratio)
         // =========================================================
-        $startYtd = \Carbon\Carbon::parse($periodDate)->startOfYear()->toDateString();
-        $endYtd   = \Carbon\Carbon::parse($periodDate)->startOfMonth()->toDateString(); // asumsi periodDate = YYYY-mm-01
+        $startYtd = Carbon::parse($periodDate)->startOfYear()->toDateString();
+
+        // default: akhir bulan period (buat label aman)
+        $monthEnd = Carbon::parse($periodDate)->endOfMonth()->toDateString();
+        $endYtd   = $monthEnd;
+
+        // kalau bulan berjalan, tampilkan last position_date (capped <= monthEnd)
+        $isCurrentMonth = Carbon::parse($periodDate)->startOfMonth()->equalTo(now()->startOfMonth());
+
+        if ($isCurrentMonth) {
+            $latest = null;
+
+            if (Schema::hasTable('loan_accounts') && Schema::hasColumn('loan_accounts', 'position_date')) {
+                $latest = DB::table('loan_accounts')->max('position_date');
+            }
+
+            if (!$latest && Schema::hasTable('kpi_os_daily_aos') && Schema::hasColumn('kpi_os_daily_aos', 'position_date')) {
+                $latest = DB::table('kpi_os_daily_aos')->max('position_date');
+            }
+
+            if ($latest) {
+                $latestDate = Carbon::parse($latest)->toDateString();
+                $endYtd = min($latestDate, $monthEnd); // guard
+            }
+        }
 
         // helper local skor 1..6 berbasis achievement pct (0..∞)
         // (dipakai untuk NOA/OS/Community/Daily; RR tetap pakai helper RR)

@@ -18,7 +18,7 @@
   {{-- Header --}}
   <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
     <div>
-      <div class="text-sm text-slate-500">Periode Errorrrr</div>
+      <div class="text-sm text-slate-500">Periode</div>
       <div class="text-4xl font-extrabold text-slate-900">{{ $periodLabel }}</div>
 
       <div class="mt-2 text-sm text-slate-600">
