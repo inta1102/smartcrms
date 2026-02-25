@@ -656,6 +656,15 @@
             ],
 
             [
+                'label'  => 'KPI KSLR',
+                'icon'   => '📊',
+                'href'   => \Illuminate\Support\Facades\Route::has('kpi.kslr.sheet') ? route('kpi.kslr.sheet') : null,
+                'active' => request()->routeIs('kpi.kslr.sheet*'),
+                'show' => $u && in_array($u->roleValue(), ['KSLR','KBL'], true),
+                
+            ],
+
+            [
                 'label'  => 'KPI KSBE',
                 'icon'   => '📊',
                 'href'   => \Illuminate\Support\Facades\Route::has('kpi.marketing.sheet.ksbe')
@@ -1015,9 +1024,9 @@
     </div>
 </aside>
 
-{{-- Sidebar mobile drawer --}}
-<div x-data="{ open:false }" <div
-  x-data="{ open:false }"
+{{-- Sidebar mobile drawer (MATCH DESKTOP) --}}
+<div
+    x-data="{ open:false }"
     x-on:toggle-sidebar.window="
         open = !open;
         if (open) {
@@ -1029,7 +1038,6 @@
     x-cloak
     class="sm:hidden"
 >
-
     <div x-show="open" class="fixed inset-0 z-40">
         <div class="absolute inset-0 bg-black/40" @click="open=false"></div>
 
@@ -1038,7 +1046,14 @@
                 <div>
                     <div class="text-sm font-bold text-slate-900">Menu</div>
                     <div class="text-xs text-slate-500">Navigasi utama</div>
+
+                    {{-- match desktop debug --}}
+                    <div class="mt-1 text-[11px] text-slate-400">
+                        roleValue: {{ $u?->roleValue() }} |
+                        <!-- isBE: {{ $isBE ? 'YES' : 'NO' }} -->
+                    </div>
                 </div>
+
                 <button class="rounded-lg border border-slate-200 px-2 py-1 text-sm" @click="open=false">✕</button>
             </div>
 
@@ -1055,15 +1070,14 @@
                                     <span class="font-semibold flex-1">{{ $m['label'] }}</span>
 
                                     @php
-                                    $badgeCls = ($m['label'] === 'Cek SHM')
-                                        ? $badgeWarnClass((bool)$m['active'])
-                                        : $badgeClass((bool)$m['active']);
+                                        $badgeCls = ($m['label'] === 'Cek SHM')
+                                            ? $badgeWarnClass((bool)$m['active'])
+                                            : $badgeClass((bool)$m['active']);
                                     @endphp
 
                                     @if(!empty($m['badge']))
-                                    <span class="{{ $badgeCls }}">{{ $m['badge'] }}</span>
+                                        <span class="{{ $badgeCls }}">{{ $m['badge'] }}</span>
                                     @endif
-
                                 </a>
                             @else
                                 <div class="px-3 py-2 text-xs text-slate-400">
@@ -1074,7 +1088,7 @@
                     @endforeach
                 </div>
 
-                {{-- LEGAL (opsional) --}}
+                {{-- LEGAL (opsional, tampil kalau ada) --}}
                 @if(!empty($menus['legal']))
                     <div class="{{ $sectionDivider }}"></div>
                     <div class="{{ $sectionTitle }}">Legal</div>
@@ -1131,7 +1145,7 @@
                     </div>
                 @endif
 
-                {{-- EWS (mobile konsisten: rs + macet) --}}
+                {{-- EWS (MATCH DESKTOP: rs + macet detail) --}}
                 @if(!empty($menus['ews']))
                     <div class="{{ $sectionDivider }}"></div>
                     <div class="{{ $sectionTitle }}">EWS</div>
@@ -1149,6 +1163,7 @@
                                             $meta = $m['warn_meta'] ?? null;
                                         @endphp
 
+                                        {{-- Badge RS --}}
                                         @if($kind === 'rs')
                                             @php
                                                 $ratio = 0.0;
@@ -1176,10 +1191,20 @@
                                                 </span>
                                             @endif
 
+                                        {{-- Badge Macet --}}
                                         @elseif($kind === 'macet')
                                             @php
                                                 $warnRek = is_array($meta) ? (int)($meta['warn_rek'] ?? 0) : 0;
-                                                $title = "Warning Usia Macet: {$warnRek} rek";
+                                                $ag6     = is_array($meta) ? (int)($meta['ag6']['rek'] ?? 0) : 0;
+                                                $ag9     = is_array($meta) ? (int)($meta['ag9']['rek'] ?? 0) : 0;
+
+                                                $warnOs  = is_array($meta) ? (float)($meta['warn_os'] ?? 0) : 0.0;
+                                                $ratio   = is_array($meta) ? (float)($meta['ratio'] ?? 0) : 0.0;
+                                                $ratioText = rtrim(rtrim(number_format($ratio, 2), '0'), '.');
+
+                                                $title = "Warning Usia Macet: {$warnRek} rek | Ag6={$ag6}, Ag9={$ag9} | OS: Rp "
+                                                    .number_format($warnOs,0,',','.')
+                                                    ." ({$ratioText}%)";
                                             @endphp
 
                                             @if($warnRek > 0)
@@ -1199,6 +1224,7 @@
                         @endforeach
                     </div>
                 @endif
+
                 {{-- KPI MARKETING --}}
                 @if(!empty($menus['kpi_marketing']))
                     @php
@@ -1235,6 +1261,27 @@
                     @endif
                 @endif
 
+                {{-- Apply (MATCH DESKTOP) --}}
+                <div class="{{ $sectionDivider }}"></div>
+                <div class="{{ $sectionTitle }}">Adminsitrasi</div>
+                <div class="mt-2 space-y-1">
+                    @foreach($menus['apply'] as $m)
+                        @if(!array_key_exists('show', $m) || $m['show'])
+                            @if(!empty($m['href']))
+                                <a href="{{ $m['href'] }}"
+                                   class="{{ $itemClass((bool)$m['active']) }}">
+                                    <span class="opacity-90">{{ $m['icon'] }}</span>
+                                    <span class="font-semibold flex-1">{{ $m['label'] }}</span>
+                                </a>
+                            @else
+                                <div class="px-3 py-2 text-xs text-slate-400">
+                                    {{ $m['disabledText'] ?? 'TopUp / Order SP' }}
+                                </div>
+                            @endif
+                        @endif
+                    @endforeach
+                </div>
+
                 {{-- MONITORING --}}
                 <div class="{{ $sectionDivider }}"></div>
                 <div class="{{ $sectionTitle }}">Monitoring</div>
@@ -1254,7 +1301,7 @@
                     @endforeach
                 </div>
 
-                {{-- ADMIN --}}
+                {{-- ADMINISTRASI (MATCH DESKTOP, gate manage-org-assignments) --}}
                 @can('manage-org-assignments')
                     @if(!empty($menus['admin']))
                         <div class="{{ $sectionDivider }}"></div>

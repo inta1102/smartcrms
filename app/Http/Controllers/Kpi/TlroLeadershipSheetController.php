@@ -17,6 +17,13 @@ class TlroLeadershipSheetController extends Controller
         $me = auth()->user();
         abort_unless($me, 403);
 
+        $userId = $request->query('user') ?? auth()->id();
+        $period = $request->query('period') ?? now()->format('Y-m-01');
+
+        $periodDate = \Carbon\Carbon::parse($period)->startOfMonth()->toDateString();
+
+        $user = \App\Models\User::findOrFail($userId);
+        
         $role = strtoupper($me->roleValue());
         abort_unless(in_array($role, ['TLRO','KSLR','KBL','ADMIN','SUPERADMIN'], true), 403);
 

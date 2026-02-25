@@ -731,6 +731,17 @@ Route::middleware('auth')->group(function () {
                 ->name('show');
         });
 
+        // ================================
+        // KSLR (Kasi Lending Reguler)
+        // ================================
+        Route::prefix('kslr')->name('kslr.')->group(function () {
+            Route::get('/sheet', [\App\Http\Controllers\Kpi\KslrLeadershipSheetController::class, 'index'])
+                ->name('sheet');
+
+            Route::post('/sheet/recalc', [\App\Http\Controllers\Kpi\KslrLeadershipSheetController::class, 'recalc'])
+                ->name('sheet.recalc');
+        });
+
         // =======================================================
         // KPI MARKETING (TARGETS + APPROVAL + ACHIEVEMENT + RANKING)
         // =======================================================

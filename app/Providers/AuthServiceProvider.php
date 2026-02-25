@@ -166,5 +166,7 @@ class AuthServiceProvider extends ServiceProvider
         Gate::define('kpi-fe-view', function (User $viewer, User $target) {
             return (new KpiFePolicy())->view($viewer, $target);
         });
+
+        Gate::define('kpi-kslr-view', [\App\Policies\KpiKslrPolicy::class, 'view']);
     }
 }
