@@ -168,5 +168,7 @@ class AuthServiceProvider extends ServiceProvider
         });
 
         Gate::define('kpi-kslr-view', [\App\Policies\KpiKslrPolicy::class, 'view']);
+
+        Gate::define('kpi-kbl-view', [\App\Policies\KpiKblPolicy::class, 'view']);
     }
 }

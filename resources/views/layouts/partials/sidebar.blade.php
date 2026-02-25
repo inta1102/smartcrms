@@ -678,6 +678,15 @@
                 ),
             ],
 
+            [
+                'label'  => 'KPI Kabag Lending',
+                'icon'   => '📊',
+                'href'   => \Illuminate\Support\Facades\Route::has('kpi.kbl.sheet') ? route('kpi.kbl.sheet') : null,
+                'active' => request()->routeIs('kpi.kbl.sheet*'),
+                'show' => $u && in_array($u->roleValue(), ['KBO','KBL'], true),
+                
+            ],
+
 
         ],
 

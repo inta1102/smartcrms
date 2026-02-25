@@ -113,6 +113,8 @@ use App\Http\Controllers\Kpi\CommunityHandlingController;
 use App\Http\Controllers\Kpi\KsfeLeadershipSheetController;
 use App\Http\Controllers\Kpi\TlfeLeadershipSheetController;
 use App\Http\Controllers\Kpi\TlroLeadershipSheetController;
+use App\Http\Controllers\Kpi\KblLeadershipSheetController;
+
 
 /**
  * =======================================================
@@ -691,6 +693,19 @@ Route::middleware('auth')->group(function () {
         Route::post('/tlro/sheet/recalc', [TlroLeadershipSheetController::class, 'recalc'])
             ->name('tlro.sheet.recalc');
 
+            
+        Route::get('/kbl/sheet', [KblLeadershipSheetController::class, 'index'])
+            ->name('kbl.sheet');
+
+        Route::post('/kbl/sheet/recalc', [KblLeadershipSheetController::class, 'recalc'])
+            ->name('kbl.sheet.recalc');
+
+        Route::get('/kbl/target',  [\App\Http\Controllers\Kpi\KblTargetController::class, 'edit'])
+            ->name('kbl.target.edit');
+
+        Route::post('/kbl/target', [\App\Http\Controllers\Kpi\KblTargetController::class, 'upsert'])
+            ->name('kbl.target.upsert');
+            
         // =======================================================
         // SO (INI YANG BIKIN ERROR KEMARIN) — static dulu, wildcard terakhir
         // =======================================================
