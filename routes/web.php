@@ -114,6 +114,7 @@ use App\Http\Controllers\Kpi\KsfeLeadershipSheetController;
 use App\Http\Controllers\Kpi\TlfeLeadershipSheetController;
 use App\Http\Controllers\Kpi\TlroLeadershipSheetController;
 use App\Http\Controllers\Kpi\KblLeadershipSheetController;
+use App\Http\Controllers\Kpi\RoManualNoaController;
 
 
 /**
@@ -705,7 +706,13 @@ Route::middleware('auth')->group(function () {
 
         Route::post('/kbl/target', [\App\Http\Controllers\Kpi\KblTargetController::class, 'upsert'])
             ->name('kbl.target.upsert');
-            
+        
+        
+        Route::get('/ro/noa-pengembangan', [RoManualNoaController::class, 'edit'])
+            ->name('ro.noa.edit');
+
+        Route::post('/ro/noa-pengembangan', [RoManualNoaController::class, 'upsert'])
+            ->name('ro.noa.upsert');
         // =======================================================
         // SO (INI YANG BIKIN ERROR KEMARIN) — static dulu, wildcard terakhir
         // =======================================================

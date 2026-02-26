@@ -212,12 +212,6 @@ class MarketingKpiSheetController
                 'dpk'       => 0.30,
             ];
 
-            // target per ao_code (optional, kalau belum ada pakai default)
-            // $targetMap = DB::table('kpi_ro_targets')
-            //     ->whereDate('period', $periodDate)
-            //     ->get()
-            //     ->keyBy('ao_code');
-
             $leader = auth()->user();
             $leaderRole = $this->leaderRoleValue($leader);
 
@@ -228,12 +222,34 @@ class MarketingKpiSheetController
             // =========================
             // AKUMULASI RANGE (YTD)
             // =========================
-            $endMonth = \Carbon\Carbon::parse($periodDate)->startOfMonth();      // contoh: 2026-02-01
-            $startMonth = $endMonth->copy()->startOfYear();                     // 2026-01-01
+            $endMonth   = \Carbon\Carbon::parse($periodDate)->startOfMonth(); // contoh: 2026-02-01
+            $startMonth = $endMonth->copy()->startOfYear();                  // 2026-01-01
 
             // bulan terpilih pakai realtime hanya kalau itu bulan berjalan
             $isEndMonthCurrent = $endMonth->equalTo(now()->startOfMonth());
-            $endMonthMode = $isEndMonthCurrent ? 'realtime' : 'eom';
+            $endMonthMode      = $isEndMonthCurrent ? 'realtime' : 'eom';
+
+            // =========================
+            // LABEL RANGE (YTD) - end date
+            // - realtime: pakai latest position_date (biar tidak misleading)
+            // - eom     : pakai endOfMonth period tsb
+            // =========================
+            $startYtdDate = $startMonth->toDateString(); // 2026-01-01
+            $endYtdDate   = $endMonth->copy()->endOfMonth()->toDateString(); // default EOM label
+
+            if ($endMonthMode === 'realtime') {
+
+                // default: pakai sumber yang kamu anggap paling valid
+                // opsi A: KPI harian (kalau tabel ini memang update tiap hari)
+                // $latestPos = DB::table('kpi_os_daily_aos')->max('position_date');
+
+                // opsi B: loan_accounts (sesuai statement kamu)
+                $latestPos = DB::table('loan_accounts')->max('position_date');
+
+                if ($latestPos) {
+                    $endYtdDate = \Carbon\Carbon::parse($latestPos)->toDateString();
+                }
+            }
 
             // =========================
             // BASE USERS (RO)
@@ -290,31 +306,24 @@ class MarketingKpiSheetController
                 ");
 
             // =========================
-            // JOIN USERS + KPI AGG
+            // AKUMULASI TARGET (Jan s/d periodStart) (target disimpan tgl 1)
             // =========================
-            // ===== AKUMULASI TARGET (Jan s/d period) =====
-            $endMonthStart = \Carbon\Carbon::parse($periodDate)->startOfMonth();  // 2026-02-01
-            $endMonthEnd   = $endMonthStart->copy()->endOfMonth();               // 2026-02-28
-            $startYtdDate  = $endMonthStart->copy()->startOfYear()->toDateString(); // 2026-01-01
-
-            // untuk query target: Jan s/d 1st day of end month (inclusive) ✅ (karena period target disimpan di tanggal 1)
             $targetStart = $startYtdDate;
-            $targetEnd   = $endMonthStart->toDateString();
+            $targetEnd   = $endMonth->toDateString(); // 1st day of selected month
 
-            // target per ao_code (AKUMULASI)
             $targetMap = DB::table('kpi_ro_targets')
                 ->whereBetween('period', [$targetStart, $targetEnd])
                 ->selectRaw("
                     ao_code,
                     SUM(COALESCE(target_topup,0)) as target_topup_acc,
                     SUM(COALESCE(target_noa,0))   as target_noa_acc,
-                    MAX(COALESCE(target_rr_pct,0)) as target_rr_pct,       -- biasanya 100
-                    MAX(COALESCE(target_dpk_pct,0)) as target_dpk_pct      -- biasanya 1
+                    MAX(COALESCE(target_rr_pct,0)) as target_rr_pct,
+                    MAX(COALESCE(target_dpk_pct,0)) as target_dpk_pct
                 ")
                 ->groupBy('ao_code')
                 ->get()
                 ->keyBy('ao_code');
-                
+
             $rows = $usersQ
                 ->leftJoinSub($kpiAgg, 'ka', function ($j) {
                     $j->on('ka.ao_code', '=', 'u.ao_code');
@@ -341,86 +350,87 @@ class MarketingKpiSheetController
                 ->orderBy('u.name')
                 ->get();
 
-            // =========================
+            $periodDate = $periodDate ?? ($periodYmd ?? null);
+            if (!$periodDate) {
+                $raw = trim((string)request('period', ''));
+                $periodDate = $raw
+                    ? (\Carbon\Carbon::parse($raw)->startOfMonth()->toDateString())
+                    : now()->startOfMonth()->toDateString();
+            }
+
+            $manualNoaMap = DB::table('kpi_ro_manual_actuals')
+                ->whereDate('period', $periodDate)
+                ->get()
+                ->keyBy(fn($m) => str_pad(trim((string)$m->ao_code), 6, '0', STR_PAD_LEFT));
+
+           // =========================
             // MAP -> HITUNG ACH, SCORE, PI
             // =========================
-            $items = $rows->map(function ($r) use ($weights, $targetMap) {
+            $items = $rows->map(function ($r) use ($weights, $targetMap, $manualNoaMap) {
 
-                // ===== Targets (fallback default) =====
-                $tg = $targetMap->get($r->ao_code);
+                // =========================
+                // >>> INI ISI MAP UTUH PUNYAMU (JANGAN DIHAPUS)
+                // =========================
+                $ao = str_pad(trim((string)$r->ao_code), 6, '0', STR_PAD_LEFT);
 
-                // ✅ TARGET AKUMULASI
+                $tg = $targetMap->get($ao);
+
                 $targetTopup = (float)($tg->target_topup_acc ?? 0);
-                $targetNoa   = (int)  ($tg->target_noa_acc ?? 0);
+                $targetNoa   = (int)($tg->target_noa_acc ?? 0);
 
-                // target RR & DPK (biasanya konstan; ambil MAX dari range)
-                $targetRr    = (float)($tg->target_rr_pct ?? 100);
-
-                // ⚠️ jangan biarkan 0 (karena reverse metric jadi “ga bisa dihitung”)
-                $targetDpk   = (float)($tg->target_dpk_pct ?? 1);
-                if ($targetDpk <= 0) $targetDpk = 1.0;
-
-                // ===== RR YTD (recompute) =====
-                $totalOs = (float)($r->repayment_total_os ?? 0);
+                // RR actual
+                $totalOs  = (float)($r->repayment_total_os ?? 0);
                 $osLancar = (float)($r->repayment_os_lancar ?? 0);
-                $rrPct = $totalOs > 0 ? round(($osLancar / $totalOs) * 100.0, 2) : 0.0;
+                $rrActual = $totalOs > 0 ? round(($osLancar / $totalOs) * 100.0, 2) : 0.0;
+                $scoreRr  = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6ByActualRr($rrActual);
 
-                // ===== Achievement =====
-                $achRr    = \App\Services\Kpi\KpiScoreHelper::achievementPct($rrPct, $targetRr);
-                $scoreRr  = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6($achRr);
-
+                // TopUp vs target
                 $topupReal  = (float)($r->topup_realisasi ?? 0);
                 $achTopup   = \App\Services\Kpi\KpiScoreHelper::achievementPct($topupReal, $targetTopup);
                 $scoreTopup = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6($achTopup);
 
-                $noaReal  = (int)($r->noa_realisasi ?? 0);
+                // NOA manual vs target
+                $manual  = $manualNoaMap->get($ao);
+                $noaReal = (int)($manual->noa_pengembangan ?? 0);
                 $achNoa   = \App\Services\Kpi\KpiScoreHelper::achievementPct((float)$noaReal, (float)$targetNoa);
                 $scoreNoa = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6($achNoa);
 
-                // ===== DPK reverse =====
+                // DPK actual reverse
                 $sumMigrasiOs = (float)($r->dpk_migrasi_os ?? 0);
                 $sumOsAkhir   = (float)($r->dpk_total_os_akhir ?? 0);
-                $dpkActual = $sumOsAkhir > 0 ? round(($sumMigrasiOs / $sumOsAkhir) * 100.0, 2) : 0.0;
+                $dpkActual    = $sumOsAkhir > 0 ? round(($sumMigrasiOs / $sumOsAkhir) * 100.0, 2) : 0.0;
+                $scoreDpk     = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6ByActualDpkReverse($dpkActual);
 
-                $achDpk = 0.0;
-                if ($targetDpk > 0) {
-                    $achDpk = ($dpkActual <= 0) ? 100.0 : round(($targetDpk / $dpkActual) * 100.0, 2);
-                    $achDpk = min($achDpk, 200.0);
-                }
-                $scoreDpk = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6($achDpk);
-
-                // ===== PI =====
+                // PI
                 $piRepay = round($scoreRr    * $weights['repayment'], 2);
                 $piTopup = round($scoreTopup * $weights['topup'], 2);
                 $piNoa   = round($scoreNoa   * $weights['noa'], 2);
                 $piDpk   = round($scoreDpk   * $weights['dpk'], 2);
-
                 $piTotal = round($piRepay + $piTopup + $piNoa + $piDpk, 2);
 
                 return (object) array_merge((array)$r, [
-                    // display
-                    'repayment_pct_display' => $rrPct,
+                    'ao_code' => $ao,
+
+                    'repayment_pct_display' => $rrActual,
                     'dpk_pct_display'       => $dpkActual,
 
-                    // targets
-                    'target_rr_pct'  => $targetRr,
-                    'target_topup'   => $targetTopup,
-                    'target_noa'     => $targetNoa,
-                    'target_dpk_pct' => $targetDpk,
+                    'noa_is_manual'    => (bool)$manual,
+                    'noa_manual_notes' => $manual->notes ?? null,
+                    'noa_realisasi'    => $noaReal,
 
-                    // achievement
-                    'ach_rr'    => $achRr,
+                    'target_topup' => $targetTopup,
+                    'target_noa'   => $targetNoa,
+
+                    'ach_rr'    => $rrActual,
+                    'ach_dpk'   => $dpkActual,
                     'ach_topup' => $achTopup,
                     'ach_noa'   => $achNoa,
-                    'ach_dpk'   => $achDpk,
 
-                    // override score
                     'repayment_score' => $scoreRr,
                     'topup_score'     => $scoreTopup,
                     'noa_score'       => $scoreNoa,
                     'dpk_score'       => $scoreDpk,
 
-                    // PI
                     'pi_repayment' => $piRepay,
                     'pi_topup'     => $piTopup,
                     'pi_noa'       => $piNoa,
@@ -429,9 +439,7 @@ class MarketingKpiSheetController
                 ]);
             });
 
-            // (TL recap kamu boleh tetap, karena sekarang items sudah YTD)
-            // kalau kamu mau, TL recap bisa pakai $items langsung tanpa filter ulang.
-
+            // penting: tetap kirim items ke view
             return view('kpi.marketing.sheet', [
                 'role'     => $role,
                 'periodYm' => $periodYm,
@@ -441,12 +449,9 @@ class MarketingKpiSheetController
                 'items'    => $items,
                 'tlRecap'  => $tlRecap ?? null,
 
-                // supaya label "Akumulasi ..." bisa dipakai juga di RO blade
                 'startYtd' => $startYtdDate,
-                'endYtd'   => $endMonthEnd->toDateString(),
-            ]);
-        }
-
+                'endYtd'   => $endYtdDate, // pakai label endYtdDate yang kamu hitung (latest position_date kalau realtime)
+            ]);        }
         // ========= SO =========
         if ($role === 'SO') {
             $weights = [

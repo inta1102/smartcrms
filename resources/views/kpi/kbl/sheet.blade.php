@@ -185,100 +185,156 @@
       </div>
     </div>
 
-    {{-- Migrasi DPK --}}
-    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+    {{-- =========================
+        CARD: Migrasi DPK (DPK→NPL)
+        KPI: migrasi_pct = mig_os / total_os (sudah kamu pakai)
+        Target kecil (default fallback 2%)
+        Delta: Target - Actual (karena makin kecil makin bagus)
+      ========================= --}}
+      @php
+        $dpkActual = (float)($kblRow->dpk_mig_pct ?? 0);
+        $dpkTarget = (float)($targetRow->target_dpk_mig_pct ?? 2); // fallback 2%
+        $gapDpk    = $dpkTarget - $dpkActual; // ✅ makin kecil makin bagus
+        [$gapDpkTxt, $gapDpkCls] = $deltaPp($gapDpk);
+      @endphp
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-4">
         <div class="text-xs text-slate-500">Migrasi DPK (DPK→NPL)</div>
 
         <div class="mt-1 text-2xl font-black text-slate-900">
-            {{ $fmtPct($kblRow->dpk_mig_pct ?? 0) }}
+          {{ $fmtPct($dpkActual) }}
         </div>
 
-        <div class="text-xs text-slate-500 mt-2">
+        <div class="text-xs text-slate-500 mt-2 space-y-0.5">
+          <div>Target: <b>{{ number_format($dpkTarget, 2, ',', '.') }}%</b></div>
+          <div>
+            <span class="text-[11px] text-slate-400">Δ (Target-Actual):</span>
+            <b class="text-[11px] font-bold {{ $gapDpkCls }}">{{ $gapDpkTxt }}</b>
+          </div>
+
+          <div class="pt-1">
             Migrasi OS: <b>{{ $fmtRp($kblRow->dpk_to_npl_os ?? 0) }}</b><br>
             Migrasi NOA: <b>{{ (int)($kblRow->dpk_to_npl_noa ?? 0) }}</b><br>
-            <span class="text-slate-400">Cohort base DPK OS:</span> <b>{{ $fmtRp($kblRow->dpk_base_os ?? 0) }}</b>
+            <span class="text-slate-400">Cohort base DPK OS:</span>
+            <b>{{ $fmtRp($kblRow->dpk_base_os ?? 0) }}</b>
+          </div>
         </div>
 
         @php [$lbl,$cls] = $scoreBadge($kblRow->score_dpk ?? 0); @endphp
         <div class="mt-2">
-            <span class="{{ $pill($lbl, $cls) }}">{{ $lbl }}</span>
-            <span class="text-xs text-slate-500 ml-2">Score: <b>{{ (int)($kblRow->score_dpk ?? 0) }}</b></span>
-        </div>
-        
-    </div>
-
-    {{-- Achievement NPL --}}
-    <div class="rounded-2xl border border-slate-200 bg-white p-4">
-      <div class="text-xs text-slate-500">Achievement NPL</div>
-      <div class="mt-1 text-2xl font-black text-slate-900">{{ $fmtPct($kblRow->npl_ach_pct ?? 0) }}</div>
-      <div class="text-xs text-slate-500 mt-2">
-        NPL Ratio: <b>{{ $fmtPct($kblRow->npl_ratio_pct ?? 0) }}</b><br>
-      </div>
-      @php
-        $dpkActual = (float)($kblRow->dpk_mig_pct ?? 0);
-        $dpkTarget = (float)($targetRow->target_dpk_mig_pct ?? 2); // fallback 2%
-        $gapDpk = $dpkTarget - $dpkActual; // makin kecil makin bagus => target-actual
-        [$gapDpkTxt, $gapDpkCls] = $deltaPp($gapDpk);
-      @endphp
-
-      <div class="text-xs text-slate-500 mt-2">
-        Target: <b>{{ number_format($dpkTarget, 2, ',', '.') }}%</b>
-        <div class="mt-1">
-          <span class="text-[11px] text-slate-400">Δ (Target-Actual):</span>
-          <b class="text-[11px] font-bold {{ $gapDpkCls }}">{{ $gapDpkTxt }}</b>
+          <span class="{{ $pill($lbl, $cls) }}">{{ $lbl }}</span>
+          <span class="text-xs text-slate-500 ml-2">Score: <b>{{ (int)($kblRow->score_dpk ?? 0) }}</b></span>
         </div>
       </div>
+
+
+      {{-- =========================
+        CARD: Achievement NPL
+        Actual: npl_ratio_pct (makin kecil makin bagus)
+        Target: npl_target_pct
+        Delta: Target - Actual
+      ========================= --}}
       @php
         $nplActual = (float)($kblRow->npl_ratio_pct ?? 0);
         $nplTarget = (float)($kblRow->npl_target_pct ?? 0);
-        $gapNpl = $nplTarget - $nplActual; // makin kecil makin bagus
+        $gapNpl    = $nplTarget - $nplActual; // ✅ makin kecil makin bagus
         [$gapNplTxt, $gapNplCls] = $deltaPp($gapNpl);
       @endphp
 
-      <div class="mt-1">
-        <span class="text-[11px] text-slate-400">Δ (Target-Actual):</span>
-        <b class="text-[11px] font-bold {{ $gapNplCls }}">{{ $gapNplTxt }}</b>
-      </div>
-      
-      @php [$lbl,$cls] = $scoreBadge($kblRow->score_npl ?? 0); @endphp
-      <div class="mt-2">
-        <span class="{{ $pill($lbl, $cls) }}">{{ $lbl }}</span>
-        <span class="text-xs text-slate-500 ml-2">Score: <b>{{ (int)($kblRow->score_npl ?? 0) }}</b></span>
-      </div>
-    </div>
+      <div class="rounded-2xl border border-slate-200 bg-white p-4">
+        <div class="text-xs text-slate-500">Achievement NPL</div>
 
-    {{-- Pendapatan Bunga --}}
-    <div class="rounded-2xl border border-slate-200 bg-white p-4">
-      <div class="text-xs text-slate-500">Pendapatan Bunga</div>
-      <div class="mt-1 text-2xl font-black text-slate-900">{{ $fmtPct($kblRow->interest_ach_pct ?? 0) }}</div>
-      <div class="text-xs text-slate-500 mt-2">
-        Aktual: <b>{{ $fmtRp($kblRow->interest_actual ?? 0) }}</b><br>
-        Target: <b>{{ $fmtRp($kblRow->interest_target ?? 0) }}</b>
-      </div>
-      @php [$lbl,$cls] = $scoreBadge($kblRow->score_interest ?? 0); @endphp
-      <div class="mt-2">
-        <span class="{{ $pill($lbl, $cls) }}">{{ $lbl }}</span>
-        <span class="text-xs text-slate-500 ml-2">Score: <b>{{ (int)($kblRow->score_interest ?? 0) }}</b></span>
-      </div>
-    </div>
+        <div class="mt-1 text-2xl font-black text-slate-900">
+          {{ $fmtPct($kblRow->npl_ach_pct ?? 0) }}
+        </div>
 
-    {{-- Komunitas --}}
-    <div class="rounded-2xl border border-slate-200 bg-white p-4">
-      <div class="text-xs text-slate-500">Pemasaran Komunitas</div>
-      <div class="mt-1 text-2xl font-black text-slate-900">
-        {{ (int)($kblRow->community_actual ?? 0) }}
-      </div>
-      <div class="text-xs text-slate-500 mt-2">
-        Target: <b>{{ (int)($kblRow->community_target ?? 0) }}</b>
-        <span class="ml-2">({{ $fmtPct(($kblRow->community_target ?? 0) > 0 ? (($kblRow->community_actual ?? 0)/($kblRow->community_target))*100 : 0) }})</span>
-      </div>
-      @php [$lbl,$cls] = $scoreBadge($kblRow->score_community ?? 0); @endphp
-      <div class="mt-2">
-        <span class="{{ $pill($lbl, $cls) }}">{{ $lbl }}</span>
-        <span class="text-xs text-slate-500 ml-2">Score: <b>{{ (int)($kblRow->score_community ?? 0) }}</b></span>
-      </div>
-    </div>
+        <div class="text-xs text-slate-500 mt-2 space-y-0.5">
+          <div>NPL Ratio: <b>{{ $fmtPct($nplActual) }}</b></div>
+          <div>Target: <b>{{ $fmtPct($nplTarget) }}</b></div>
+          <div>
+            <span class="text-[11px] text-slate-400">Δ (Target-Actual):</span>
+            <b class="text-[11px] font-bold {{ $gapNplCls }}">{{ $gapNplTxt }}</b>
+          </div>
+        </div>
 
+        @php [$lbl,$cls] = $scoreBadge($kblRow->score_npl ?? 0); @endphp
+        <div class="mt-2">
+          <span class="{{ $pill($lbl, $cls) }}">{{ $lbl }}</span>
+          <span class="text-xs text-slate-500 ml-2">Score: <b>{{ (int)($kblRow->score_npl ?? 0) }}</b></span>
+        </div>
+      </div>
+
+
+      {{-- =========================
+        CARD: Pendapatan Bunga
+        Delta: Actual - Target (makin besar makin bagus)
+      ========================= --}}
+      @php
+        $intActual = (float)($kblRow->interest_actual ?? 0);
+        $intTarget = (float)($kblRow->interest_target ?? 0);
+        $gapInt    = $intActual - $intTarget; // ✅ makin besar makin bagus
+        [$gapIntTxt, $gapIntCls] = $deltaRp($gapInt);
+      @endphp
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-4">
+        <div class="text-xs text-slate-500">Pendapatan Bunga</div>
+
+        <div class="mt-1 text-2xl font-black text-slate-900">
+          {{ $fmtPct($kblRow->interest_ach_pct ?? 0) }}
+        </div>
+
+        <div class="text-xs text-slate-500 mt-2 space-y-0.5">
+          <div>Aktual: <b>{{ $fmtRp($intActual) }}</b></div>
+          <div>Target: <b>{{ $fmtRp($intTarget) }}</b></div>
+          <div>
+            <span class="text-[11px] text-slate-400">Δ (Actual-Target):</span>
+            <b class="text-[11px] font-bold {{ $gapIntCls }}">{{ $gapIntTxt }}</b>
+          </div>
+        </div>
+
+        @php [$lbl,$cls] = $scoreBadge($kblRow->score_interest ?? 0); @endphp
+        <div class="mt-2">
+          <span class="{{ $pill($lbl, $cls) }}">{{ $lbl }}</span>
+          <span class="text-xs text-slate-500 ml-2">Score: <b>{{ (int)($kblRow->score_interest ?? 0) }}</b></span>
+        </div>
+      </div>
+
+
+      {{-- =========================
+        CARD: Pemasaran Komunitas
+        Delta: Actual - Target (makin besar makin bagus)
+      ========================= --}}
+      @php
+        $comActual = (int)($kblRow->community_actual ?? 0);
+        $comTarget = (int)($kblRow->community_target ?? 0);
+        $gapCom    = $comActual - $comTarget; // ✅ makin besar makin bagus
+        [$gapComTxt, $gapComCls] = $deltaInt($gapCom);
+
+        $comPct = $comTarget > 0 ? ($comActual / $comTarget) * 100 : 0;
+      @endphp
+
+      <div class="rounded-2xl border border-slate-200 bg-white p-4">
+        <div class="text-xs text-slate-500">Pemasaran Komunitas</div>
+
+        <div class="mt-1 text-2xl font-black text-slate-900">{{ $comActual }}</div>
+
+        <div class="text-xs text-slate-500 mt-2 space-y-0.5">
+          <div>
+            Target: <b>{{ $comTarget }}</b>
+            <span class="ml-2">({{ $fmtPct($comPct) }})</span>
+          </div>
+          <div>
+            <span class="text-[11px] text-slate-400">Δ (Actual-Target):</span>
+            <b class="text-[11px] font-bold {{ $gapComCls }}">{{ $gapComTxt }}</b>
+          </div>
+        </div>
+
+        @php [$lbl,$cls] = $scoreBadge($kblRow->score_community ?? 0); @endphp
+        <div class="mt-2">
+          <span class="{{ $pill($lbl, $cls) }}">{{ $lbl }}</span>
+          <span class="text-xs text-slate-500 ml-2">Score: <b>{{ (int)($kblRow->score_community ?? 0) }}</b></span>
+        </div>
+      </div>
   </div>
 
   {{-- TOTAL SCORE CARD --}}

@@ -272,17 +272,20 @@ class RoKpiMonthlyBuilder
         $rows = $base->groupBy('ao_code')->get();
 
         $out = [];
-        foreach ($rows as $r) {
+       foreach ($rows as $r) {
             $total  = (float) ($r->total_os ?? 0);
             $lancar = (float) ($r->os_lancar ?? 0);
 
+            // RR = os_lancar / total_os
             $rate = $total > 0 ? ($lancar / $total) : 0.0;
-            $pct  = $rate * 100.0;
 
-            $out[(string)$r->ao_code] = [
-                'rate'  => $rate,
-                'pct'   => $pct,
-                'score' => $this->scoreRepaymentPct($pct),
+            // pct dalam skala 0..100
+            $pct = round($rate * 100.0, 2);
+
+            $out[(string) $r->ao_code] = [
+                'rate'      => $rate,                 // 0..1
+                'pct'       => $pct,                  // 0..100
+                'score'     => $this->scoreRepaymentPct($pct),
                 'total_os'  => $total,
                 'os_lancar' => $lancar,
             ];

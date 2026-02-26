@@ -240,4 +240,52 @@ class KpiScoreHelper
         return round($pct, $decimals);
     }
 
+    /**
+     * ==========================================================
+     * RR ACTUAL (Semakin besar semakin baik)
+     * Input: percent 0 – 100
+     * Output: score 1 – 6
+     * ==========================================================
+     */
+    public static function scoreBand1to6ByActualRr(float $rrPct): float
+    {
+        $rrPct = max(0, min($rrPct, 100)); // clamp 0–100
+
+        if ($rrPct >= 95) return 6;
+        if ($rrPct >= 90) return 5;
+        if ($rrPct >= 85) return 4;
+        if ($rrPct >= 80) return 3;
+        if ($rrPct >= 70) return 2;
+        return 1;
+    }
+
+    /**
+     * ==========================================================
+     * DPK ACTUAL (Reverse Metric)
+     * Semakin kecil semakin baik
+     * Input: percent 0 – 100
+     * Output: score 1 – 6
+     * ==========================================================
+     */
+    public static function scoreBand1to6ByActualDpkReverse(float $dpkPct): float
+    {
+        $dpkPct = max(0, $dpkPct); // no negative
+
+        if ($dpkPct <= 1) return 6;
+        if ($dpkPct <= 2) return 5;
+        if ($dpkPct <= 3) return 4;
+        if ($dpkPct <= 5) return 3;
+        if ($dpkPct <= 8) return 2;
+        return 1;
+    }
+
+    /**
+     * ==========================================================
+     * Optional: Utility clamp percent
+     * ==========================================================
+     */
+    public static function clampPercent(float $value): float
+    {
+        return max(0, min($value, 100));
+    }
 }

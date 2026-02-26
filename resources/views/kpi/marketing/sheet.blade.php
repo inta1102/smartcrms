@@ -15,8 +15,8 @@
   $periodYmd = $periodYm . '-01';
 
   // akses input komunitas only KBL & SO
-  $canInputSoCommunity = ($roleSel === 'SO') && auth()->user()?->hasAnyRole(['KBL']);
-  $canManageTargets = auth()->user()?->hasAnyRole(['KBL']);
+  $canInputSoCommunity = ($roleSel === 'SO') && auth()->user()?->hasAnyRole(['TLSO','KSLR', 'KBL']);
+  $canManageTargets = auth()->user()?->hasAnyRole(['TLRO','TLSO','TLUM','KSLR','KBL']);
 
   // ✅ Normalisasi items agar aman (Collection / array / null)
   $itemsCol = $items instanceof \Illuminate\Support\Collection ? $items : collect($items ?? []);
@@ -83,7 +83,14 @@
             class="rounded-xl bg-emerald-600 px-4 py-2 text-white text-sm font-semibold hover:bg-emerald-700">
             🎯 Input Target RO
           </a>
+
+          <a href="{{ route('kpi.ro.noa.edit', ['period' => request('period', now()->format('Y-m'))]) }}"
+            class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700">
+            Input NOA Pengembangan
+          </a>
         @endif
+
+
 
         @if($roleSel === 'FE' && $canManageTargets)
           <a href="{{ route('kpi.fe.targets.index', ['period' => $periodYm]) }}"

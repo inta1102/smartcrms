@@ -31,8 +31,11 @@
 
   // label akumulasi (opsional dari controller)
   $accText = null;
+
   if (!empty($startYtd) && !empty($endYtd)) {
-      $accText = 'Akumulasi ' . \Carbon\Carbon::parse($startYtd)->format('d M Y') . ' – ' . \Carbon\Carbon::parse($endYtd)->format('d M Y');
+      $startLabel = \Carbon\Carbon::parse($startYtd)->translatedFormat('d M Y');
+      $endLabel   = \Carbon\Carbon::parse($endYtd)->translatedFormat('d M Y');
+      $accText    = "Akumulasi {$startLabel} – {$endLabel}";
   }
 
   $modeLabel = strtoupper($mode ?? '');
@@ -57,13 +60,14 @@
   $sumTopupTarget = (float) $roList->sum(fn($r) => (float)($r->target_topup ?? 0));
   $sumNoaTarget   = (int)   $roList->sum(fn($r) => (int)($r->target_noa ?? 0));
 
-  // RR target + fallback ach rr
-  $rrTarget   = (float)($tlRecap->target_rr_pct ?? 100);
+  // RR target + fallback actual
+  $rrTarget    = (float)($tlRecap->target_rr_pct ?? 100);
   $rrActualPct = (float)($tlRecap->rr_actual_avg ?? 0);
-  if ($rrActualPct <= 0 && $rrPctCalc > 0) $rrActualPct = $rrPctCalc;
+  if ($rrActualPct <= 0 && ($rrPctCalc ?? 0) > 0) $rrActualPct = (float)$rrPctCalc;
 
+  // ✅ SO RULE: Ach RR = Actual RR
   $rrAch = (float)($tlRecap->ach_rr ?? 0);
-  if ($rrAch <= 0 && $rrTarget > 0) $rrAch = round(($rrActualPct / $rrTarget) * 100, 2);
+  if ($rrAch <= 0) $rrAch = round($rrActualPct, 2);
 
   // TopUp target/ach fallback
   $topupTarget = (float)($tlRecap->target_topup_total ?? 0);
@@ -300,12 +304,20 @@
 @php
   $baselineOk = ((int)($it->baseline_ok ?? 0) === 1);
 
-  $rrPct   = (float)($it->repayment_pct_display ?? 0);
-  $rrAch   = (float)($it->ach_rr ?? 0);
+  $rrPct = (float)($it->repayment_pct_display ?? 0);
 
-  $dpkAct  = (float)($it->dpk_pct_display ?? $it->dpk_pct ?? 0);
-  $dpkAch  = (float)($it->ach_dpk ?? 0);
-  $dpkTgt  = (float)($it->target_dpk_pct ?? 1.0);
+  // ✅ RO RULE: ach RR = actual RR
+  $rrAch = (float)($it->ach_rr ?? 0);
+  if ($rrAch <= 0) $rrAch = round($rrPct, 2);
+
+  $dpkAct = (float)($it->dpk_pct_display ?? $it->dpk_pct ?? 0);
+
+  // ✅ RO RULE: ach DPK = actual DPK (bukan ratio target/actual)
+  $dpkAch = (float)($it->ach_dpk ?? 0);
+  if ($dpkAch <= 0) $dpkAch = round($dpkAct, 2);
+
+  // target boleh tetap dipakai untuk display / badge reverse
+  $dpkTgt = (float)($it->target_dpk_pct ?? 1.0);;
 
   $topReal = (float)($it->topup_realisasi ?? 0);
   $topAch  = (float)($it->ach_topup ?? 0);

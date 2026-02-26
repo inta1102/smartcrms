@@ -170,5 +170,10 @@ class AuthServiceProvider extends ServiceProvider
         Gate::define('kpi-kslr-view', [\App\Policies\KpiKslrPolicy::class, 'view']);
 
         Gate::define('kpi-kbl-view', [\App\Policies\KpiKblPolicy::class, 'view']);
+
+        Gate::define('kpi-ro-noa-manual-edit', function ($user) {
+            $role = strtoupper((string)($user->roleValue() ?? ''));
+            return in_array($role, ['TLRO', 'KSLR', 'KBL'], true);
+        });
     }
 }
