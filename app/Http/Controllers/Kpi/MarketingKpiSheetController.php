@@ -136,14 +136,12 @@ class MarketingKpiSheetController
         $role = strtoupper(trim($role));
         return $role !== '' ? $role : 'LEADER';
     }
-
-    
-    public function scopeAoCodesForLeader(\App\Models\User $leader, $asOfDate): array
+   
+    public function scopeUserIdsForLeader(\App\Models\User $leader, $asOfDate): array
     {
-        $asOf = Carbon::parse($asOfDate)->toDateString();
+        $asOf = \Carbon\Carbon::parse($asOfDate)->toDateString();
 
-        // 1) ambil user_id bawahan yang aktif pada tanggal asOf
-        $subUserIds = DB::table('org_assignments')
+        return \Illuminate\Support\Facades\DB::table('org_assignments')
             ->where('leader_id', $leader->id)
             ->where('is_active', 1)
             ->whereDate('effective_from', '<=', $asOf)
@@ -155,20 +153,9 @@ class MarketingKpiSheetController
             ->unique()
             ->values()
             ->all();
-
-        if (empty($subUserIds)) return [];
-
-        // 2) translate user_id -> ao_code dari tabel users
-        return DB::table('users')
-            ->whereIn('id', $subUserIds)
-            ->whereNotNull('ao_code')
-            ->where('ao_code', '!=', '')
-            ->pluck('ao_code')
-            ->map(fn($x) => str_pad(trim((string)$x), 6, '0', STR_PAD_LEFT))
-            ->unique()
-            ->values()
-            ->all();
     }
+
+
 
     // =========================
     // Controller
@@ -190,7 +177,7 @@ class MarketingKpiSheetController
         }
 
         $periodDate = $period->toDateString();
-
+        $periodYmd = $period->toDateString(); // "2026-02-01"
         // =========================
         // Role selector (AO|SO|RO|FE|BE)
         // =========================
@@ -210,6 +197,12 @@ class MarketingKpiSheetController
             $endYtd   = $end->toDateString();
         }
 
+        logger()->info('[KPI RO Sheet] period debug', [
+        'query_period' => request()->query('period'),
+        'periodYm' => $periodYm ?? null,
+        'periodYmd' => $periodYmd ?? null,
+        'period' => isset($period) ? $period->toDateString() : null,
+        ]);
         // ==========================================================
         // RO (auto mode: bulan ini realtime, bulan lalu ke bawah EOM)
         // + AKUMULASI (YTD s/d bulan terpilih)
@@ -236,7 +229,7 @@ class MarketingKpiSheetController
             ? $latestDataDate->toDateString()
             : $periodCarbon->copy()->endOfMonth()->toDateString();
 
-            $scopeAoCodes = $this->scopeAoCodesForLeader($leader, $asOfDate);
+            $scopeUserIds = $this->scopeUserIdsForLeader($leader, $asOfDate);
 
             $isLeader = in_array($leaderRole, ['TLRO','KSLU','KSLR','KSBE','KSFE','KBL','PE','DIR','KOM','DIREKSI'], true);
 
@@ -275,14 +268,27 @@ class MarketingKpiSheetController
             // =========================
             // BASE USERS (RO)
             // =========================
-            $usersQ = DB::table('users as u')
-                ->whereRaw("UPPER(TRIM(u.level)) = 'RO'")
-                ->whereNotNull('u.ao_code')
-                ->whereRaw("TRIM(u.ao_code) <> ''");
+            $scopeUserIds = $this->scopeUserIdsForLeader($leader, $asOfDate);
 
-            if ($isLeader && !empty($scopeAoCodes)) {
-                $usersQ->whereIn('u.ao_code', array_values($scopeAoCodes));
+            $usersQ = DB::table('users as u')
+                ->where('u.level', 'RO'); // atau role RO sesuai sistemmu
+
+            // KBL / Direksi / Kom / PE -> GLOBAL
+            $isGlobal = in_array($leaderRole, ['KBL','DIR','DIREKSI','KOM','PE'], true);
+
+            if ($isLeader && !$isGlobal) {
+                $scopeUserIds = $this->scopeUserIdsForLeader($leader, $asOfDate);
+
+                if (!empty($scopeUserIds)) {
+                    $usersQ->whereIn('u.id', $scopeUserIds);
+                } else {
+                    $usersQ->whereRaw('1=0'); // leader tapi tidak ada mapping
+                }
             }
+
+            // if ($isLeader && !empty($scopeAoCodes)) {
+            //     $usersQ->whereIn('u.ao_code', array_values($scopeAoCodes));
+            // }
 
             // =========================
             // SUBQUERY KPI RANGE (aggregate per AO)
@@ -344,6 +350,18 @@ class MarketingKpiSheetController
                 ->groupBy('ao_code')
                 ->get()
                 ->keyBy('ao_code');
+
+            $scopeUserIds = $this->scopeUserIdsForLeader($leader, $asOfDate);
+
+            logger()->info('[KPI RO Sheet] scope debug', [
+            'leader_id' => $leader->id,
+            'leader_role' => $leaderRole,
+            'isLeader' => $isLeader,
+            'mode' => $mode,
+            'asOfDate' => $asOfDate,
+            'scopeUserIds_cnt' => count($scopeUserIds),
+            'scopeUserIds_sample' => array_slice($scopeUserIds, 0, 10),
+            ]);
 
             $rows = $usersQ
                 ->leftJoinSub($kpiAgg, 'ka', function ($j) {
