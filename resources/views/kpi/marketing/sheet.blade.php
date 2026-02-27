@@ -88,6 +88,11 @@
             class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700">
             Input NOA Pengembangan
           </a>
+
+          <a href="{{ route('kpi.ro.topup_adj.index', ['period' => request('period', now()->format('Y-m'))]) }}"
+            class="inline-flex items-center rounded-xl px-4 py-2 text-sm font-semibold bg-indigo-600 text-white hover:bg-indigo-700">
+            Krs Djusment TopUp
+          </a>
         @endif
 
 
