@@ -39,13 +39,7 @@ class RoOsDailyDashboardController extends Controller
             ? Carbon::parse($request->input('to'))->startOfDay()
             : $latestInKpi->copy()->startOfDay();
 
-            logger()->info('range_debug', [
-                'from' => $from->toDateTimeString(),
-                'to'   => $to->toDateTimeString(),
-                'ao'   => $ao,
-                'db'   => config('database.default'),
-                'conn' => DB::connection()->getDatabaseName(),
-                ]);
+           
 
         // guard kalau user input kebalik
         if ($from->gt($to)) {
@@ -94,11 +88,7 @@ class RoOsDailyDashboardController extends Controller
             ->orderBy('d')
             ->get();
 
-            logger()->info('rows_debug', [
-                'count' => $rows->count(),
-                'first' => $rows->first(),
-                'sql'   => $rows->count() ? 'has_rows' : 'no_rows',
-                ]);
+           
 
         $byDate = [];
         foreach ($rows as $r) {
@@ -932,14 +922,7 @@ class RoOsDailyDashboardController extends Controller
                 ->whereRaw("LPAD(TRIM(ao_code),6,'0') = ?", [$ao])
                 ->count();
 
-            logger()->info('L0EOM_CHAIN_DEBUG', [
-                'prevSnapMonth' => $prevSnapMonth,
-                'latestPosDate' => $latestPosDate,
-                'snap_total'    => $debugSnapTotal,
-                'snap_l0_total' => $debugSnapL0,
-                'snap_l0_ao'    => $debugSnapL0Ao,
-                'la_latest_ao'  => $debugLaLatestAo,
-            ]);
+            
 
         // 5) Query utama: cohort dari monthly (m), join ke posisi latest (la) via acc_key
         $l0Eom = DB::table('loan_account_snapshots_monthly as m')
@@ -1157,12 +1140,7 @@ class RoOsDailyDashboardController extends Controller
         ];
 
 
-        logger()->info('chart_debug', [
-            'labels_count' => count($labels ?? []),
-            'sample_labels'=> array_slice($labels ?? [], 0, 3),
-            'dataset_keys' => array_keys($datasetByMetric ?? []),
-            'sample_os_total' => array_slice($datasetByMetric['os_total']['data'] ?? [], 0, 5),
-        ]);
+       
 
         return view('kpi.ro.os_daily', [
             'from' => $from->toDateString(),

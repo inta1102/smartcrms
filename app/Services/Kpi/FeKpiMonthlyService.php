@@ -112,12 +112,7 @@ class FeKpiMonthlyService
         $leader = $leaderUser ?: auth()->user();
         $scopeUserIds = $this->scopeFeUserIdsForLeader($leader, $period);
 
-        logger()->info('FE scope debug', [
-            'leader_id'   => (int)($leader?->id ?? 0),
-            'leader_role' => $this->leaderRoleValue($leader),
-            'scope_cnt'   => count($scopeUserIds),
-            'scope_ids'   => array_slice($scopeUserIds, 0, 10),
-        ]);
+       
 
         // =====================================================
         // ACTUAL AGG (YTD): dari kpi_fe_monthlies
@@ -214,7 +209,7 @@ class FeKpiMonthlyService
             ")
             ->get();
 
-        logger()->info('FE rows count', ['cnt' => $rows->count()]);
+        
 
         // =========================
         // Map => compute KPI YTD
@@ -285,7 +280,7 @@ class FeKpiMonthlyService
             ]);
         });
 
-        logger()->info('FE items count', ['cnt' => $items->count()]);
+        
 
         // $asOfDate  = $period->copy()->endOfMonth()->toDateString();
         $tlFeRecap = $this->buildTlFeRecap($items, $asOfDate, $leaderUser);

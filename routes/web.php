@@ -115,7 +115,7 @@ use App\Http\Controllers\Kpi\TlfeLeadershipSheetController;
 use App\Http\Controllers\Kpi\TlroLeadershipSheetController;
 use App\Http\Controllers\Kpi\KblLeadershipSheetController;
 use App\Http\Controllers\Kpi\RoManualNoaController;
-
+use App\Http\Controllers\Kpi\RoTopupAdjustmentController;
 
 /**
  * =======================================================
@@ -713,6 +713,8 @@ Route::middleware('auth')->group(function () {
 
         Route::post('/ro/noa-pengembangan', [RoManualNoaController::class, 'upsert'])
             ->name('ro.noa.upsert');
+
+
         // =======================================================
         // SO (INI YANG BIKIN ERROR KEMARIN) — static dulu, wildcard terakhir
         // =======================================================
@@ -861,6 +863,21 @@ Route::middleware('auth')->group(function () {
         });
     });
 
+    Route::prefix('kpi/ro/topup-adjustments')->name('kpi.ro.topup_adj.')->group(function () {
+        Route::get('/', [RoTopupAdjustmentController::class, 'index'])->name('index');
+
+        // batch
+        Route::post('/batches', [RoTopupAdjustmentController::class, 'storeBatch'])->name('batches.store');
+        Route::get('/batches/{batch}', [RoTopupAdjustmentController::class, 'showBatch'])->name('batches.show');
+
+        // lines
+        Route::post('/batches/{batch}/lines', [RoTopupAdjustmentController::class, 'storeLine'])->name('lines.store');
+        Route::delete('/batches/{batch}/lines/{line}', [RoTopupAdjustmentController::class, 'deleteLine'])->name('lines.delete');
+
+        // approve (KBL only)
+        Route::post('/batches/{batch}/approve', [RoTopupAdjustmentController::class, 'approveBatch'])->name('batches.approve');
+    });
+    
     // -------------------------------
     // RKH / LKH (di dalam auth)
     // -------------------------------

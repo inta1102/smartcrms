@@ -57,13 +57,7 @@ class AuthServiceProvider extends ServiceProvider
 
         Gate::define('viewHtMonitoring', function ($user) {
         $level = strtolower(trim($user->roleValue()));
-        logger()->info('Gate viewHtMonitoring check', [
-            'user_id' => $user->id,
-            'roleValue' => $user->roleValue(),
-            'level' => $level,
-            'level_col' => $user->level ?? null,
-            'level_role_col' => $user->level_role ?? null,
-        ]);
+        
         // sesuaikan role yg boleh akses monitoring HT
         return in_array($level, ['kbl', 'kti', 'KSLU','KSLR','KSFE','KSBE', 'ksr', 'tlr','ao','so','fe','be','tll','ro','kom','dir', 'direksi'], true);
         });
@@ -175,5 +169,9 @@ class AuthServiceProvider extends ServiceProvider
             $role = strtoupper((string)($user->roleValue() ?? ''));
             return in_array($role, ['TLRO', 'KSLR', 'KBL'], true);
         });
+
+        Gate::define('kpi-ro-topup-adj-view', fn($u) => in_array($u->roleValue(), ['TLRO','KSLR','KBL'], true));
+        Gate::define('kpi-ro-topup-adj-create', fn($u) => in_array($u->roleValue(), ['TLRO','KSLR'], true));
+        Gate::define('kpi-ro-topup-adj-approve', fn($u) => $u->roleValue() === 'KBL'); // ✅ hanya KBL
     }
 }

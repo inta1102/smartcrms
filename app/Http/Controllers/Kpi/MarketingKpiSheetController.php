@@ -363,6 +363,9 @@ class MarketingKpiSheetController
                 ->get()
                 ->keyBy(fn($m) => str_pad(trim((string)$m->ao_code), 6, '0', STR_PAD_LEFT));
 
+                logger()->info('ROWS count', ['cnt' => $rows->count()]);
+logger()->info('AO unique', ['cnt' => $rows->pluck('ao_code')->map(fn($x)=>str_pad(trim($x),6,'0',STR_PAD_LEFT))->unique()->count()]);
+
            // =========================
             // MAP -> HITUNG ACH, SCORE, PI
             // =========================
@@ -451,7 +454,9 @@ class MarketingKpiSheetController
 
                 'startYtd' => $startYtdDate,
                 'endYtd'   => $endYtdDate, // pakai label endYtdDate yang kamu hitung (latest position_date kalau realtime)
-            ]);        }
+            ]);  
+      }
+
         // ========= SO =========
         if ($role === 'SO') {
             $weights = [
@@ -612,7 +617,7 @@ class MarketingKpiSheetController
             $svc = app(\App\Services\Kpi\FeKpiMonthlyService::class);
             $res = $svc->buildForPeriod($periodYm, auth()->user());
 
-            logger()->info('FE items count', ['cnt' => count($res['items'] ?? [])]);
+            
             
             return view('kpi.marketing.sheet', [
                 'role'      => $role,
@@ -656,15 +661,7 @@ class MarketingKpiSheetController
             $ksbe = app(KsbeLeadershipIndexService::class)->buildAndStore($periodYm, $me, $ksbe);
             $ksbeAi = app(\App\Services\Kpi\KsbeLeadershipAiEngine::class)->build($ksbe);
 
-            logger()->info('KSBE DEBUG PI_SCOPE', [
-                'pi_scope' => data_get($ksbe,'pi_scope'),
-                'li.pi_scope' => data_get($ksbe,'li.pi_scope'),
-                'recap_target_os' => data_get($ksbe,'recap.target.os'),
-                'recap_target_noa' => data_get($ksbe,'recap.target.noa'),
-                'recap_target_bunga' => data_get($ksbe,'recap.target.bunga'),
-                'recap_target_denda' => data_get($ksbe,'recap.target.denda'),
-                'recap_actual_os' => data_get($ksbe,'recap.actual.os'),
-            ]);
+           
 
             return view('kpi.marketing.sheet', [
                 'role' => 'KSBE',

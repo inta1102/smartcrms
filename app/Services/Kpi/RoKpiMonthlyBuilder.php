@@ -1,4 +1,4 @@
-<?php
+<?php 
 
 namespace App\Services\Kpi;
 
@@ -56,12 +56,69 @@ class RoKpiMonthlyBuilder
         // ---- 4) Pemburukan DPK (kolek 1 -> kolek 2) / total OS akhir + Score
         $dpkByAo = $this->calcPemburukanDpkByAo($periodMonth, $mode, $branchCode, $aoCode);
 
+        $adjRows = DB::table('kpi_ro_topup_adj_lines as l')
+            ->join('kpi_ro_topup_adj_batches as b', 'b.id', '=', 'l.batch_id')
+            ->whereDate('b.period_month', $periodMonth)
+            ->where('b.status', 'approved')
+            ->selectRaw("
+                l.cif,
+                l.source_ao_code,
+                l.target_ao_code,
+                SUM(l.amount_frozen) as amount_frozen,
+                MAX(l.calc_as_of_date) as calc_as_of_date,
+                MAX(l.reason) as reason,
+                MIN(l.batch_id) as batch_id
+            ")
+            ->groupBy('l.cif','l.source_ao_code','l.target_ao_code')
+            ->get();
+
+        $adjIn = [];
+        $adjOut = [];
+
+        foreach ($adjRows as $r) {
+            $srcRaw = trim((string)($r->source_ao_code ?? ''));
+            $tgtRaw = trim((string)($r->target_ao_code ?? ''));
+
+            $src = $srcRaw !== '' ? str_pad($srcRaw, 6, '0', STR_PAD_LEFT) : null;
+            $tgt = $tgtRaw !== '' ? str_pad($tgtRaw, 6, '0', STR_PAD_LEFT) : null;
+
+            $amt = (float)($r->amount_frozen ?? 0);
+
+            // IN → masuk ke target AO
+            if ($tgt && $tgt !== '000000') {
+                $adjIn[$tgt]['sum'] = ($adjIn[$tgt]['sum'] ?? 0) + $amt;
+                $adjIn[$tgt]['rows'][] = [
+                    'cif' => (string)$r->cif,
+                    'amount' => $amt,
+                    'source_ao' => ($src && $src !== '000000') ? $src : null,
+                    'batch_id' => (int)$r->batch_id,
+                    'as_of' => $r->calc_as_of_date,
+                    'reason' => $r->reason,
+                ];
+            }
+
+            // OUT → keluar dari source AO
+            if ($src && $src !== '000000') {
+                $adjOut[$src]['sum'] = ($adjOut[$src]['sum'] ?? 0) + $amt;
+                $adjOut[$src]['rows'][] = [
+                    'cif' => (string)$r->cif,
+                    'amount' => $amt,
+                    'target_ao' => ($tgt && $tgt !== '000000') ? $tgt : null,
+                    'batch_id' => (int)$r->batch_id,
+                    'as_of' => $r->calc_as_of_date,
+                    'reason' => $r->reason,
+                ];
+            }
+        }
+
         // ---- 5) Gabung AO codes (union dari semua komponen)
         $aoCodes = array_unique(array_merge(
             array_keys($topupByAo),
             array_keys($repaymentByAo),
             array_keys($noaByAo),
             array_keys($dpkByAo),
+            array_keys($adjIn),
+            array_keys($adjOut),
         ));
         sort($aoCodes);
 
@@ -94,6 +151,11 @@ class RoKpiMonthlyBuilder
             // ===== default komponen =====
             $topup = $topupByAo[$ao] ?? [
                 'realisasi_topup' => 0.0,
+                'realisasi_topup_base' => 0.0,
+                'topup_adj_in'  => 0.0,
+                'topup_adj_out' => 0.0,
+                'topup_adj_net' => 0.0,
+
                 'target' => $topupTarget,
                 'pct' => 0.0,
                 'score' => 1,
@@ -104,6 +166,39 @@ class RoKpiMonthlyBuilder
                 'topup_concentration_pct' => 0.0,
                 'topup_top3' => [],
             ];
+
+            // ✅ BASE dari service (murni), fallback kalau service lama belum punya base
+            $topupBase = (float)($topup['realisasi_topup_base'] ?? ($topup['realisasi_topup'] ?? 0));
+
+            $adjInSum  = (float)($adjIn[$ao]['sum'] ?? 0);
+            $adjOutSum = (float)($adjOut[$ao]['sum'] ?? 0);
+            $adjNet    = $adjInSum - $adjOutSum;
+
+            // Detail untuk audit / blade
+            $inRows  = $adjIn[$ao]['rows'] ?? [];
+            $outRows = $adjOut[$ao]['rows'] ?? [];
+            $adjJson = (!empty($inRows) || !empty($outRows))
+                ? json_encode(['in' => $inRows, 'out' => $outRows])
+                : null;
+
+            // ✅ logger setelah rows siap
+            if ($ao === '000039') {
+                logger()->info('ADJ 000039', [
+                    'base' => $topupBase,
+                    'in' => $adjInSum,
+                    'out' => $adjOutSum,
+                    'net' => $adjNet,
+                    'in_rows' => $inRows,
+                    'out_rows' => $outRows,
+                ]);
+            }
+
+            // TopUp final dipakai KPI
+            $topupFinal = max($topupBase + $adjNet, 0);
+
+            // Recompute pct & score berdasarkan FINAL
+            $topupPctFinal   = KpiScoreHelper::achievementPct($topupFinal, (float)$topupTarget);
+            $topupScoreFinal = KpiScoreHelper::scoreBand1to6($topupPctFinal);
 
             $repay = $repaymentByAo[$ao] ?? [
                 'rate'  => 0.0,
@@ -132,6 +227,11 @@ class RoKpiMonthlyBuilder
             if (!$hasBaseline) {
                 $topup = [
                     'realisasi_topup' => 0.0,
+                    'realisasi_topup_base' => 0.0,
+                    'topup_adj_in'  => 0.0,
+                    'topup_adj_out' => 0.0,
+                    'topup_adj_net' => 0.0,
+
                     'target' => $topupTarget,
                     'pct' => 0.0,
                     'score' => 1,
@@ -142,6 +242,13 @@ class RoKpiMonthlyBuilder
                     'topup_concentration_pct' => 0.0,
                     'topup_top3' => [],
                 ];
+
+                // IMPORTANT: reset juga base/final agar konsisten
+                $topupBase  = 0.0;
+                $topupFinal = 0.0;
+
+                $topupPctFinal   = 0.0;
+                $topupScoreFinal = 1;
 
                 $dpk = [
                     'pct' => 0.0,
@@ -162,7 +269,7 @@ class RoKpiMonthlyBuilder
             // weighted score sesuai bobot slide
             $totalWeighted =
                 ($repay['score'] * 0.40) +
-                ($topup['score'] * 0.20) +
+                ($topupScoreFinal * 0.20) +
                 ($noa['score']   * 0.10) +
                 ($dpk['score']   * 0.30);
 
@@ -171,20 +278,20 @@ class RoKpiMonthlyBuilder
                 'branch_code'  => $branchCode,
                 'ao_code'      => $ao,
 
-                // TopUp
-                'topup_realisasi' => (float) ($topup['realisasi_topup'] ?? 0),
-                'topup_target'    => (float) ($topup['target'] ?? $topupTarget),
-                'topup_pct'       => (float) ($topup['pct'] ?? 0),
-                'topup_score'     => (int)   ($topup['score'] ?? 1),
+                // TopUp FINAL untuk KPI
+                'topup_realisasi' => $topupFinal,
+                'topup_target'    => (float)$topupTarget,
+                'topup_pct'       => (float)$topupPctFinal,
+                'topup_score'     => (int)$topupScoreFinal,
 
-                // ✅ TopUp detail
-                'topup_cif_count' => (int)   ($topup['topup_cif_count'] ?? 0),
-                'topup_cif_new_count' => (int) ($topup['topup_cif_new_count'] ?? 0),
-                'topup_max_cif_amount' => (float) ($topup['topup_max_cif_amount'] ?? 0),
-                'topup_concentration_pct' => (float) ($topup['topup_concentration_pct'] ?? 0),
-                'topup_top3_json' => !empty($topup['topup_top3'])
-                    ? json_encode($topup['topup_top3'])
-                    : null,
+                // Breakdown (recommended)
+                'topup_realisasi_base' => $topupBase,
+                'topup_adj_in'         => $adjInSum,
+                'topup_adj_out'        => $adjOutSum,
+                'topup_adj_net'        => $adjNet,
+
+                // Optional detail
+                'topup_adj_json'       => $adjJson,
 
                 // Repayment
                 'repayment_rate'  => (float) ($repay['rate'] ?? 0),   // 0..1
@@ -236,6 +343,12 @@ class RoKpiMonthlyBuilder
             $saved++;
         }
 
+        // ✅ logger base yang benar
+        logger()->info('TOPUP BASE 000039', [
+            'base' => $topupByAo['000039']['realisasi_topup_base'] ?? ($topupByAo['000039']['realisasi_topup'] ?? null),
+            'top3' => $topupByAo['000039']['topup_top3'] ?? null,
+        ]);
+
         return [
             'period_month' => $periodMonth,
             'mode' => $mode,
@@ -272,7 +385,7 @@ class RoKpiMonthlyBuilder
         $rows = $base->groupBy('ao_code')->get();
 
         $out = [];
-       foreach ($rows as $r) {
+        foreach ($rows as $r) {
             $total  = (float) ($r->total_os ?? 0);
             $lancar = (float) ($r->os_lancar ?? 0);
 
@@ -389,7 +502,6 @@ class RoKpiMonthlyBuilder
             $noa = (int) ($r->noa_new ?? 0);
 
             // NOTE: target masih hardcoded 2 sesuai versi kamu sebelumnya.
-            // Kalau target NOA RO seharusnya dinamis (misal 4 seperti screenshot), nanti kita pindahkan ke table/setting.
             $target = 2;
 
             $pct = $target > 0 ? ($noa / $target) * 100.0 : 0.0;

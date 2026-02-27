@@ -21,7 +21,7 @@ class RoTopupService
      * - CIF baru (os_awal=0 / tidak ada snapshot) -> TopUp = 0
      * - Existing CIF -> hanya ambil kenaikan di atas OS bulan lalu
      *
-     * Output per AO:
+     * Output per AO (BASE, tanpa adjustment):
      * - realisasi_topup, target, pct, score
      * - topup_cif_count, topup_cif_new_count, topup_max_cif_amount
      * - topup_concentration_pct (top1 cif amount / total)
@@ -80,12 +80,11 @@ class RoTopupService
         /**
          * ============================================
          * 2) Disbursement bulan KPI (per AO + CIF)
-         *    - pakai disb_date sebagai sumber tanggal utama
+         *    - tanggal pakai kolom tanggal yang tersedia
          *    - period hanya sebagai penguat bila ada
          * ============================================
          */
         $disbQ = DB::table('loan_disbursements')
-            ->whereBetween('disb_date', [$periodStart, $periodEnd])
             ->whereNotNull('ao_code')->where('ao_code', '!=', '')
             ->whereNotNull('cif')->where('cif', '!=', '');
 
@@ -96,6 +95,24 @@ class RoTopupService
         if ($this->hasColumn('loan_disbursements', 'period')) {
             // optional penguat (aman)
             $disbQ->whereDate('period', $snapCurr);
+        }
+
+        // pilih kolom tanggal yang ada (biar gak kosong kalau disb_date gak ada)
+        $dateCol = $this->firstExistingColumn('loan_disbursements', [
+            'disb_date',
+            'disbursed_at',
+            'disbursement_date',
+            'tanggal_disbursement',
+            'trx_date',
+            'created_at',
+        ]);
+
+        if ($dateCol) {
+            $disbQ->whereBetween(DB::raw("DATE($dateCol)"), [$periodStart, $periodEnd]);
+        } else {
+            // fallback: kalau gak ada kolom tanggal sama sekali, minimal jangan membuat query error
+            // (hasil bisa overcount lintas bulan; tapi ini lebih baik daripada selalu 0)
+            // kamu boleh ganti jadi abort/log kalau mau strict
         }
 
         if ($aoCode) {
@@ -145,7 +162,7 @@ class RoTopupService
 
         /**
          * ============================================
-         * 4) Aggregate per AO
+         * 4) Aggregate per AO (BASE)
          * ============================================
          */
         $aggRows = DB::query()
@@ -175,7 +192,7 @@ class RoTopupService
 
         $top3Map = [];
         foreach ($topRows as $r) {
-            $ao = (string) $r->ao_code;
+            $ao = str_pad(trim((string)($r->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
             if (!isset($top3Map[$ao])) $top3Map[$ao] = [];
             if (count($top3Map[$ao]) < 3) {
                 $top3Map[$ao][] = [
@@ -187,45 +204,47 @@ class RoTopupService
 
         /**
          * ============================================
-         * 6) Build output
+         * 6) Build output (BASE ONLY, tanpa adj)
          * ============================================
          */
         $out = [];
         foreach ($aggRows as $r) {
-            $ao = (string) $r->ao_code;
+            $ao = str_pad(trim((string)($r->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
 
-            $realisasi = (float) ($r->realisasi_topup ?? 0);
-            $pct       = KpiScoreHelper::achievementPct($realisasi, (float)$targetTopup);
-            $score     = KpiScoreHelper::scoreBand1to6($pct);
+            // ✅ BASE murni dari query agregasi
+            $realisasiBase = (float) ($r->realisasi_topup ?? 0);
 
-            $maxAmt  = (float) ($r->topup_max_cif_amount ?? 0);
-            $concPct = $realisasi > 0 ? round(($maxAmt / $realisasi) * 100.0, 2) : 0.0;
+            $pct   = KpiScoreHelper::achievementPct($realisasiBase, (float) $targetTopup);
+            $score = KpiScoreHelper::scoreBand1to6($pct);
+
+            $maxAmt = (float) ($r->topup_max_cif_amount ?? 0);
+            $top3   = $top3Map[$ao] ?? [];
+
+            $concPct = $realisasiBase > 0 ? round(($maxAmt / $realisasiBase) * 100.0, 2) : 0.0;
 
             $out[$ao] = [
-                'realisasi_topup' => $realisasi,
-                'target' => (float) $targetTopup,
-                'pct' => $pct,
-                'score' => $score,
+                // BASE murni (builder akan apply adj)
+                'realisasi_topup'      => $realisasiBase,
+                'realisasi_topup_base' => $realisasiBase,
 
-                'topup_cif_count' => (int) ($r->topup_cif_count ?? 0),
-                'topup_cif_new_count' => (int) ($r->topup_cif_new_count ?? 0),
-                'topup_max_cif_amount' => $maxAmt,
-                'topup_concentration_pct' => $concPct,
-                'topup_top3' => $top3Map[$ao] ?? [],
+                // service tidak mengurus adj
+                'topup_adj_in'  => 0.0,
+                'topup_adj_out' => 0.0,
+                'topup_adj_net' => 0.0,
+
+                'target' => (float) $targetTopup,
+                'pct'    => (float) $pct,
+                'score'  => (int)   $score,
+
+                'topup_cif_count'         => (int) ($r->topup_cif_count ?? 0),
+                'topup_cif_new_count'     => (int) ($r->topup_cif_new_count ?? 0),
+                'topup_max_cif_amount'    => (float) $maxAmt,
+                'topup_concentration_pct' => (float) $concPct,
+                'topup_top3'              => $top3,
             ] + $meta;
         }
 
         return $out;
-    }
-
-    private function scoreTopupPct(float $pct): int
-    {
-        if ($pct < 25) return 1;
-        if ($pct < 50) return 2;
-        if ($pct < 75) return 3;
-        if ($pct < 100) return 4;
-        if (abs($pct - 100) < 1e-9) return 5;
-        return 6;
     }
 
     /**
@@ -243,5 +262,13 @@ class RoTopupService
         } catch (\Throwable $e) {
             return $cache[$k] = false;
         }
+    }
+
+    private function firstExistingColumn(string $table, array $candidates): ?string
+    {
+        foreach ($candidates as $c) {
+            if ($this->hasColumn($table, $c)) return $c;
+        }
+        return null;
     }
 }

@@ -217,13 +217,7 @@ class KsbeLeadershipIndexService
             'insights'         => $insights,
         ];
 
-        logger()->info('KSBE DEBUG RI/II', [
-            'ri' => $ri,
-            'ii' => $ii,
-            'li_total' => $liTotal,
-            'pi_scope_total' => $piScopeTotal,
-            'si_total' => $si['si_total'] ?? null,
-        ]);
+      
 
         return array_merge($ksbePayload, [
             // ✅ root fields (buat kartu top)

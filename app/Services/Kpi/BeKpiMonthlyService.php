@@ -536,7 +536,7 @@ class BeKpiMonthlyService
             $id = (int)($u->id ?? $u->be_user_id ?? $u->user_id ?? 0);
             if ($id <= 0) {
                 // kalau mau debug:
-                // logger()->warning('BE calculateRealtime: invalid user id', ['u' => (array)$u]);
+               
                 continue;
             }
 

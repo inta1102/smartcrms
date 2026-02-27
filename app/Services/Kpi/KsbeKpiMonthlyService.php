@@ -19,12 +19,7 @@ class KsbeKpiMonthlyService
     public function buildForPeriod(string $periodYm, $authUser): array
     {
         $leader = $authUser;
-        logger()->info('KSBE buildForPeriod START', [
-            'periodYm'   => $periodYm,
-            'me_id'      => $leader?->id,
-            'me_level'   => $leader?->level,
-        ]);
-
+        
         // parse
         try {
             $period = Carbon::createFromFormat('Y-m', $periodYm)->startOfMonth();
@@ -55,13 +50,7 @@ class KsbeKpiMonthlyService
             ->orderBy('name')
             ->get();
 
-        logger()->info('KSBE SCOPE', [
-            'leader_id'    => (int)($authUser?->id ?? 0),
-            'scope_cnt'    => is_array($subIds) ? count($subIds) : 0,
-            'scope_sample' => array_slice($subIds ?? [], 0, 10),
-            'be_users_cnt' => $users->count(),
-        ]);
-
+      
         // ✅ DEFAULT: selalu define stability_meta biar gak "undefined variable"
         $ksbeStabilityMeta = [
             'coverage_pct' => 0,
@@ -94,12 +83,7 @@ class KsbeKpiMonthlyService
             ->get()
             ->keyBy('be_user_id');
 
-        logger()->info('KSBE KPI QUERY RESULT', [
-            'period'        => $periodDate,
-            'be_ids_cnt'    => count($beIds),
-            'monthlies_cnt' => $monthlies->count(),
-        ]);
-
+       
         $targets = KpiBeTarget::query()
             ->where('period', $periodDate)
             ->whereIn('be_user_id', $beIds)
@@ -172,13 +156,7 @@ class KsbeKpiMonthlyService
         // ✅ PI_scope (Opsi C): pakai PI total dari recap agregat
         $piScope = (float) data_get($recap, 'pi.total', 0);
 
-        logger()->info('KSBE DEBUG PI_SCOPE (FROM RECAP)', [
-            'pi_scope' => $piScope,
-            'pi_total' => (float) data_get($recap, 'pi.total', 0),
-            'recap_target_os' => (float) data_get($recap,'target.os',0),
-            'recap_actual_os' => (float) data_get($recap,'actual.os',0),
-        ]);
-
+       
         // ranking bawahan
         $items = $items->sortByDesc(fn($x)=>(float)($x['pi']['total'] ?? 0))->values();
 
@@ -189,11 +167,7 @@ class KsbeKpiMonthlyService
          */
         [$ksbeStability, $ksbeStabilityMeta] = $this->calcKsbeStability($items);
 
-        logger()->info('KSBE DEBUG STABILITY', [
-            'stability' => $ksbeStability,
-            'meta'      => $ksbeStabilityMeta,
-        ]);
-
+      
         return [
             'period' => $period,
             'mode'   => 'ksbe',

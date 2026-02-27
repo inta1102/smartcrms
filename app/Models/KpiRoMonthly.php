@@ -18,7 +18,8 @@ class KpiRoMonthly extends Model
         'dpk_pct','dpk_score','dpk_migrasi_count','dpk_migrasi_os','dpk_total_os_akhir',
         'total_score_weighted',
         'calc_mode','start_snapshot_month','end_snapshot_month','calc_source_position_date',
-        'baseline_ok','baseline_note','locked_at'
+        'baseline_ok','baseline_note','locked_at','topup_realisasi_base','topup_adj_in',
+        'topup_adj_out','topup_adj_net','topup_adj_json'
     ];
 
     protected $casts = [
