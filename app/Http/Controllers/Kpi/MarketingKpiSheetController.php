@@ -9,6 +9,8 @@ use App\Services\Kpi\KpiScoreHelper;
 use App\Services\Kpi\KsbeKpiMonthlyService;
 use App\Services\Kpi\KsbeLeadershipIndexService;
 use Illuminate\Support\Facades\Schema;
+use App\Models\User;
+
 
 class MarketingKpiSheetController
 {
@@ -135,24 +137,35 @@ class MarketingKpiSheetController
         return $role !== '' ? $role : 'LEADER';
     }
 
-    private function scopeAoCodesForLeader($leader, string $periodDate): array
+    
+    public function scopeAoCodesForLeader(\App\Models\User $leader, $asOfDate): array
     {
-        $leaderId   = (int)($leader?->id ?? 0);
-        $leaderRole = $this->leaderRoleValue($leader);
+        $asOf = Carbon::parse($asOfDate)->toDateString();
 
-        if ($leaderId <= 0) return [];
+        // 1) ambil user_id bawahan yang aktif pada tanggal asOf
+        $subUserIds = DB::table('org_assignments')
+            ->where('leader_id', $leader->id)
+            ->where('is_active', 1)
+            ->whereDate('effective_from', '<=', $asOf)
+            ->where(function ($q) use ($asOf) {
+                $q->whereNull('effective_to')
+                ->orWhereDate('effective_to', '>=', $asOf);
+            })
+            ->pluck('user_id')
+            ->unique()
+            ->values()
+            ->all();
 
-        $scopeUserIds = $this->resolveTlScopeUserIds($leaderRole, $leaderId, $periodDate);
-        if (empty($scopeUserIds)) return [];
+        if (empty($subUserIds)) return [];
 
-        // Ambil ao_code RO dalam scope leader
+        // 2) translate user_id -> ao_code dari tabel users
         return DB::table('users')
-            ->whereIn('id', $scopeUserIds)
-            ->whereRaw("UPPER(TRIM(level)) = 'RO'")
+            ->whereIn('id', $subUserIds)
             ->whereNotNull('ao_code')
             ->where('ao_code', '!=', '')
             ->pluck('ao_code')
-            ->map(fn ($x) => (string)$x)
+            ->map(fn($x) => str_pad(trim((string)$x), 6, '0', STR_PAD_LEFT))
+            ->unique()
             ->values()
             ->all();
     }
@@ -215,7 +228,15 @@ class MarketingKpiSheetController
             $leader = auth()->user();
             $leaderRole = $this->leaderRoleValue($leader);
 
-            $scopeAoCodes = $this->scopeAoCodesForLeader($leader, $periodDate);
+            // $scopeAoCodes = $this->scopeAoCodesForLeader($leader, $periodDate);
+            $latestDataDate = DB::table('kpi_os_daily_aos')->max('position_date');
+            $latestDataDate = $latestDataDate ? \Carbon\Carbon::parse($latestDataDate) : now();
+            $periodCarbon = \Carbon\Carbon::parse($periodDate)->startOfMonth();
+            $asOfDate = $mode === 'realtime'
+            ? $latestDataDate->toDateString()
+            : $periodCarbon->copy()->endOfMonth()->toDateString();
+
+            $scopeAoCodes = $this->scopeAoCodesForLeader($leader, $asOfDate);
 
             $isLeader = in_array($leaderRole, ['TLRO','KSLU','KSLR','KSBE','KSFE','KBL','PE','DIR','KOM','DIREKSI'], true);
 
@@ -364,7 +385,7 @@ class MarketingKpiSheetController
                 ->keyBy(fn($m) => str_pad(trim((string)$m->ao_code), 6, '0', STR_PAD_LEFT));
 
                 logger()->info('ROWS count', ['cnt' => $rows->count()]);
-logger()->info('AO unique', ['cnt' => $rows->pluck('ao_code')->map(fn($x)=>str_pad(trim($x),6,'0',STR_PAD_LEFT))->unique()->count()]);
+                logger()->info('AO unique', ['cnt' => $rows->pluck('ao_code')->map(fn($x)=>str_pad(trim($x),6,'0',STR_PAD_LEFT))->unique()->count()]);
 
            // =========================
             // MAP -> HITUNG ACH, SCORE, PI
