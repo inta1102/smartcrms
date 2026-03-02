@@ -358,9 +358,9 @@
   </div>
 
   {{-- TABLES --}}
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+  <div class="grid grid-cols-1 lg:grid-cols-1 gap-4">
 
-    {{-- LEFT: SCOPE LEADERS --}}
+    <!-- {{-- LEFT: SCOPE LEADERS --}}
     <div class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
       <div class="p-4 border-b border-slate-100">
         <div class="flex items-start justify-between gap-3">
@@ -406,12 +406,12 @@
         </tbody>
       </table>
 
-      <!-- <div class="px-4 py-3 text-xs text-slate-500 border-t border-slate-100">
+      <div class="px-4 py-3 text-xs text-slate-500 border-t border-slate-100">
         Tip: tahap berikutnya kita bikin tombol <b>Detail</b> untuk drilldown ke TLUM/KSLR/KSBE/KSFE sheet.
-      </div> -->
-    </div>
+      </div> 
+    </div> -->
 
-    {{-- RIGHT: SOURCE PANEL (Audit) --}}
+    <!-- {{-- RIGHT: SOURCE PANEL (Audit) --}}
     <div class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
       <div class="p-4 border-b border-slate-100">
         <div class="text-lg font-extrabold text-slate-900">Audit & Source</div>
@@ -454,6 +454,181 @@
             Placeholder (sementara 0). Nanti kita sambungkan ke tabel komunitas / activity.
           </div>
         </div>
+      </div>
+    </div> -->
+
+    {{-- =============================
+      KPI SUMMARY TABLE (STAFF -> TL -> KASI)
+      ============================= --}}
+
+    @php
+      $fmt = fn($n, $d=2) => number_format((float)($n ?? 0), $d, ',', '.');
+      $fmtPct = fn($n,$d=2) => $fmt($n,$d).'%';
+    @endphp
+
+    <div class="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div class="px-5 py-4 border-b border-slate-100">
+        <div class="text-sm font-extrabold text-slate-900">Ringkasan KPI (Staff → TL → Kasi)</div>
+        <div class="text-xs text-slate-500">Satu tabel untuk semua level. Klik “Detail” untuk breakdown & audit source.</div>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="min-w-full text-sm">
+          <thead class="bg-slate-50 text-slate-600">
+            <tr class="text-left">
+              <th class="px-4 py-3 font-bold">Level</th>
+              <th class="px-4 py-3 font-bold">Role</th>
+              <th class="px-4 py-3 font-bold">Nama</th>
+              <th class="px-4 py-3 font-bold">Scope</th>
+              <th class="px-4 py-3 font-bold">Period</th>
+              <th class="px-4 py-3 font-bold">Mode</th>
+              <th class="px-4 py-3 font-bold text-right">Score</th>
+              <th class="px-4 py-3 font-bold text-right">Ach%</th>
+              <th class="px-4 py-3 font-bold text-right">Rank</th>
+              <th class="px-4 py-3 font-bold">Risk</th>
+              <th class="px-4 py-3 font-bold text-right">Δ</th>
+              <th class="px-4 py-3 font-bold">Aksi</th>
+            </tr>
+          </thead>
+
+          <tbody class="divide-y divide-slate-100">
+            @foreach(($rows ?? []) as $i => $r)
+              @php
+                $rowId = 'kpi_row_'.$i;
+                $lvl = strtoupper((string)($r['level'] ?? '-'));
+                $role = strtoupper((string)($r['role'] ?? '-'));
+                $risk = strtoupper((string)($r['risk_badge'] ?? ''));
+                $delta = $r['delta_pp'] ?? null;
+
+                $riskCls = match($risk){
+                  'LOW' => 'bg-emerald-100 text-emerald-800 border-emerald-200',
+                  'MED' => 'bg-amber-100 text-amber-800 border-amber-200',
+                  'HIGH'=> 'bg-rose-100 text-rose-800 border-rose-200',
+                  default => 'bg-slate-100 text-slate-700 border-slate-200'
+                };
+
+                $lvlCls = match($lvl){
+                  'STAFF' => 'bg-slate-100 text-slate-700 border-slate-200',
+                  'TL'    => 'bg-indigo-100 text-indigo-800 border-indigo-200',
+                  'KASI'  => 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-200',
+                  default => 'bg-slate-100 text-slate-700 border-slate-200'
+                };
+
+                $dCls = $delta === null ? 'text-slate-400'
+                      : ($delta >= 0 ? 'text-emerald-700' : 'text-rose-700');
+                $dText = $delta === null ? '-' : ($delta >= 0 ? '+'. $fmt($delta,2) : $fmt($delta,2));
+              @endphp
+
+              <tr class="hover:bg-slate-50">
+                <td class="px-4 py-3">
+                  <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold border {{ $lvlCls }}">
+                    {{ $lvl }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 font-semibold text-slate-900">{{ $role }}</td>
+                <td class="px-4 py-3 text-slate-900">
+                  {{ $r['name'] ?? '-' }}
+                  @if(!empty($r['unit']))
+                    <div class="text-[11px] text-slate-500">{{ $r['unit'] }}</div>
+                  @endif
+                </td>
+                <td class="px-4 py-3 text-slate-600">
+                  {{ isset($r['scope_count']) ? (int)$r['scope_count'].' org' : '-' }}
+                </td>
+                <td class="px-4 py-3 text-slate-600">{{ $r['period'] ?? '-' }}</td>
+                <td class="px-4 py-3">
+                  <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold border bg-slate-50 text-slate-700 border-slate-200">
+                    {{ strtoupper($r['mode'] ?? '-') }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-right font-extrabold text-slate-900">{{ $fmt($r['score'] ?? 0, 2) }}</td>
+                <td class="px-4 py-3 text-right text-slate-700">{{ $fmtPct($r['ach'] ?? 0, 2) }}</td>
+                <td class="px-4 py-3 text-right text-slate-600">{{ $r['rank'] ?? '-' }}</td>
+                <td class="px-4 py-3">
+                  <span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold border {{ $riskCls }}">
+                    {{ $risk ?: '-' }}
+                  </span>
+                </td>
+                <td class="px-4 py-3 text-right font-bold {{ $dCls }}">{{ $dText }}</td>
+                <td class="px-4 py-3">
+                  <button
+                    type="button"
+                    class="text-xs font-bold text-indigo-700 hover:underline"
+                    onclick="document.getElementById('{{ $rowId }}').classList.toggle('hidden')"
+                  >
+                    Detail
+                  </button>
+                </td>
+              </tr>
+
+              {{-- Expand Detail --}}
+              <tr id="{{ $rowId }}" class="hidden bg-slate-50">
+                <td colspan="12" class="px-4 py-4">
+                  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+                    {{-- Components --}}
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div class="text-xs font-extrabold text-slate-900 mb-2">Breakdown Komponen</div>
+                      <div class="overflow-x-auto">
+                        <table class="min-w-full text-xs">
+                          <thead class="text-slate-500">
+                            <tr class="text-left">
+                              <th class="py-2 pr-2">Komponen</th>
+                              <th class="py-2 pr-2 text-right">Value</th>
+                              <th class="py-2 pr-2 text-right">Target</th>
+                              <th class="py-2 pr-2 text-right">W</th>
+                              <th class="py-2 pr-2 text-right">Score</th>
+                            </tr>
+                          </thead>
+                          <tbody class="divide-y divide-slate-100">
+                            @foreach(($r['detail']['components'] ?? []) as $c)
+                              <tr>
+                                <td class="py-2 pr-2 font-semibold text-slate-900">{{ $c['label'] ?? '-' }}</td>
+                                <td class="py-2 pr-2 text-right text-slate-700">{{ $fmt($c['val'] ?? 0, 2) }}</td>
+                                <td class="py-2 pr-2 text-right text-slate-600">{{ $fmt($c['target'] ?? 0, 2) }}</td>
+                                <td class="py-2 pr-2 text-right text-slate-600">{{ $fmt($c['w'] ?? 0, 2) }}</td>
+                                <td class="py-2 pr-2 text-right font-bold text-slate-900">{{ $fmt($c['score'] ?? 0, 2) }}</td>
+                              </tr>
+                            @endforeach
+                            @if(empty($r['detail']['components']))
+                              <tr><td colspan="5" class="py-3 text-slate-500">Tidak ada detail komponen.</td></tr>
+                            @endif
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {{-- Audit & Source --}}
+                    <div class="rounded-2xl border border-slate-200 bg-white p-4">
+                      <div class="text-xs font-extrabold text-slate-900 mb-2">Audit & Source</div>
+                      <div class="space-y-2 text-xs text-slate-700">
+                        @foreach(($r['detail']['audit'] ?? []) as $a)
+                          <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                            <div class="font-bold text-slate-900">{{ $a['k'] ?? '-' }}</div>
+                            <div class="text-slate-600">Source: {{ $a['src'] ?? '-' }}</div>
+                            <div class="text-slate-600">Rule: {{ $a['rule'] ?? '-' }}</div>
+                          </div>
+                        @endforeach
+                        @if(empty($r['detail']['audit']))
+                          <div class="text-slate-500">Audit belum tersedia untuk baris ini.</div>
+                        @endif
+                      </div>
+                    </div>
+
+                  </div>
+                </td>
+              </tr>
+            @endforeach
+
+            @if(empty($rows))
+              <tr>
+                <td colspan="12" class="px-4 py-6 text-center text-slate-500">
+                  Data ringkasan belum tersedia.
+                </td>
+              </tr>
+            @endif
+          </tbody>
+        </table>
       </div>
     </div>
 

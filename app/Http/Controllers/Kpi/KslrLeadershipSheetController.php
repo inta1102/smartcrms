@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Kpi;
 
 use App\Http\Controllers\Controller;
 use App\Models\User;
+use App\Models\Kpi\KpiKslrMonthly;
+use App\Services\Kpi\KslrMonthlyBuilder;
 use App\Services\Org\OrgScopeService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -12,8 +14,11 @@ use Illuminate\Support\Facades\Gate;
 
 class KslrLeadershipSheetController extends Controller
 {
-    public function index(Request $request, OrgScopeService $scope)
-    {
+    public function index(
+        Request $request,
+        OrgScopeService $scope,
+        KslrMonthlyBuilder $builder
+    ) {
         $me = $request->user();
         abort_unless($me, 403);
 
@@ -29,6 +34,20 @@ class KslrLeadershipSheetController extends Controller
         $periodLabel = $period->translatedFormat('F Y');
 
         // ==========================================================
+        // MODE (realtime/eom) - HARUS SEBELUM LOAD SNAPSHOT
+        // ==========================================================
+        $nowMonth = now()->startOfMonth();
+        $preferredMode = $period->equalTo($nowMonth) ? 'realtime' : 'eom';
+        $fallbackMode  = $preferredMode === 'realtime' ? 'eom' : 'realtime';
+
+        // override via ?mode=realtime|eom
+        $reqMode = strtolower(trim((string) $request->query('mode', '')));
+        if (in_array($reqMode, ['realtime', 'eom'], true)) {
+            $preferredMode = $reqMode;
+            $fallbackMode  = $preferredMode === 'realtime' ? 'eom' : 'realtime';
+        }
+
+        // ==========================================================
         // 1) SCOPE: Ambil descendant (TLRO/TLSO/SO/RO) dari KSLR
         // ==========================================================
         $descIds = $scope->descendantUserIds((int)$me->id, $periodYmd, 'lending', 3);
@@ -38,7 +57,7 @@ class KslrLeadershipSheetController extends Controller
         // ==========================================================
         $users = User::query()
             ->whereIn('id', $descIds)
-            ->get(['id','name','ao_code','level'])
+            ->get(['id', 'name', 'ao_code', 'level'])
             ->map(function ($u) {
                 $role = $this->resolveRole($u);
 
@@ -60,7 +79,7 @@ class KslrLeadershipSheetController extends Controller
         $roRows = collect();
         if (!empty($roAoCodes)) {
             $roRows = DB::table('kpi_ro_monthly')
-                ->select('ao_code','total_score_weighted','repayment_pct','dpk_pct')
+                ->select('ao_code', 'total_score_weighted', 'repayment_pct', 'dpk_pct')
                 ->whereDate('period_month', $periodDate)
                 ->whereIn('ao_code', $roAoCodes)
                 ->get();
@@ -74,13 +93,13 @@ class KslrLeadershipSheetController extends Controller
 
         if (!empty($soIds)) {
             $soRows = DB::table('kpi_so_monthlies')
-                ->select('user_id','os_disbursement','noa_disbursement','rr_pct','activity_actual','score_total')
+                ->select('user_id', 'os_disbursement', 'noa_disbursement', 'rr_pct', 'activity_actual', 'score_total')
                 ->whereDate('period', $periodDate)
                 ->whereIn('user_id', $soIds)
                 ->get();
 
             $soTargets = DB::table('kpi_so_targets')
-                ->select('user_id','target_os_disbursement','target_noa_disbursement','target_rr','target_activity')
+                ->select('user_id', 'target_os_disbursement', 'target_noa_disbursement', 'target_rr', 'target_activity')
                 ->whereDate('period', $periodDate)
                 ->whereIn('user_id', $soIds)
                 ->get()
@@ -88,52 +107,34 @@ class KslrLeadershipSheetController extends Controller
         }
 
         // ==========================================================
-        // 5) AGREGASI METRIK KSLR
+        // 5) LOAD SNAPSHOT (prefer mode) -> fallback -> build
         // ==========================================================
-        // (1) Achievement KYD (proxy: SUM OS disbursement SO / SUM target_os_disbursement)
-        $sumOsAct  = (float) $soRows->sum('os_disbursement');
-        $sumOsTgt  = (float) $soTargets->sum('target_os_disbursement');
-        $kydAchPct = $sumOsTgt > 0 ? ($sumOsAct / $sumOsTgt) * 100 : 0;
+        $row = KpiKslrMonthly::query()
+            ->forKslr($me->id)
+            ->forPeriod($periodDate)
+            ->forMode($preferredMode)
+            ->first();
 
-        // (2) Migrasi DPK (proxy: AVG dpk_pct RO scope)
-        $dpkMigPct = $roRows->count() ? (float) $roRows->avg('dpk_pct') : 0;
+        if (!$row && in_array($fallbackMode, ['realtime', 'eom'], true) && $fallbackMode !== $preferredMode) {
+            $row = KpiKslrMonthly::query()
+                ->forKslr($me->id)
+                ->forPeriod($periodDate)
+                ->forMode($fallbackMode)
+                ->first();
+        }
 
-        // (3) Repayment Rate (proxy: AVG repayment_pct RO scope)
-        $rrPct = $roRows->count() ? (float) $roRows->avg('repayment_pct') : 0;
-
-        // (4) Handling Komunitas (proxy: SUM activity_actual SO / SUM target_activity)
-        $sumActAct    = (float) $soRows->sum('activity_actual');
-        $sumActTgt    = (float) $soTargets->sum('target_activity');
-        $communityPct = $sumActTgt > 0 ? ($sumActAct / $sumActTgt) * 100 : 0;
-
-        // scoring 1..6 sesuai guide
-        $scoreKyd = $this->scoreKyd($kydAchPct);
-        $scoreDpk = $this->scoreMigrasiDpk($dpkMigPct);
-        $scoreRr  = $this->scoreRr($rrPct);
-        $scoreCom = $this->scoreCommunity($sumActAct); // guide: pakai count, bukan %
-
-        // bobot guide
-        $wKyd = 0.50;
-        $wDpk = 0.15;
-        $wRr  = 0.25;
-        $wCom = 0.10;
-
-        $total = ($scoreKyd*$wKyd) + ($scoreDpk*$wDpk) + ($scoreRr*$wRr) + ($scoreCom*$wCom);
+        if (!$row) {
+            $row = $builder->build(
+                $me->id,
+                $periodDate,
+                $preferredMode,
+                $scope
+            );
+        }
 
         // ==========================================================
         // 6) TL SCOPE + KPI TLRO MONTHLY (Stage 1: list TL + nilai KPI)
         // ==========================================================
-        $nowMonth = now()->startOfMonth();
-        $preferredMode = $period->equalTo($nowMonth) ? 'realtime' : 'eom';
-        $fallbackMode  = $preferredMode === 'realtime' ? 'eom' : 'realtime';
-
-        // override via ?mode=realtime|eom
-        $reqMode = strtolower(trim((string) $request->query('mode', '')));
-        if (in_array($reqMode, ['realtime', 'eom'], true)) {
-            $preferredMode = $reqMode;
-            $fallbackMode  = $preferredMode === 'realtime' ? 'eom' : 'realtime';
-        }
-
         $kpiTlMap = collect();
         if (!empty($tlIds)) {
             $rows = DB::table('kpi_tlro_monthlies')
@@ -156,8 +157,6 @@ class KslrLeadershipSheetController extends Controller
                     'name' => $u->name,
                     'role' => $u->role,
 
-                    // ✅ Pastikan route name ini sesuai routes kamu
-                    // kalau routes kamu pakai name('tlro.sheet') ya ganti ke 'tlro.sheet'
                     'href' => route('kpi.tlro.sheet', [
                         'user'   => $u->id,
                         'period' => $periodYm,
@@ -186,7 +185,7 @@ class KslrLeadershipSheetController extends Controller
 
                 return (object)[
                     'user_id'  => (int)$r->user_id,
-                    'name'     => $u?->name ?? ('SO#'.$r->user_id),
+                    'name'     => $u?->name ?? ('SO#' . $r->user_id),
                     'os'       => (float)$r->os_disbursement,
                     'rr'       => (float)$r->rr_pct,
                     'activity' => (int)$r->activity_actual,
@@ -201,39 +200,62 @@ class KslrLeadershipSheetController extends Controller
             'periodYmd' => $periodDate,
             'periodLabel' => $periodLabel,
 
-            'kydAchPct' => $kydAchPct,
-            'dpkMigPct' => $dpkMigPct,
-            'rrPct' => $rrPct,
-            'communityPct' => $communityPct,
+            // dari snapshot kpi_kslr_monthlies
+            'kydAchPct'     => (float)($row->kyd_ach_pct ?? 0),
+            'dpkMigPct'     => (float)($row->dpk_mig_pct ?? 0),
+            'rrPct'         => (float)($row->rr_pct ?? 0),
+            'communityPct'  => (float)($row->community_pct ?? 0),
 
-            'scoreKyd' => $scoreKyd,
-            'scoreDpk' => $scoreDpk,
-            'scoreRr'  => $scoreRr,
-            'scoreCom' => $scoreCom,
-            'totalScoreWeighted' => $total,
+            'scoreKyd' => (float)($row->score_kyd ?? 0),
+            'scoreDpk' => (float)($row->score_dpk ?? 0),
+            'scoreRr'  => (float)($row->score_rr ?? 0),
+            'scoreCom' => (float)($row->score_com ?? 0),
 
-            'tlRows' => $tlRows,
-            'soRank' => $soRank,
+            'totalScoreWeighted' => (float)($row->total_score_weighted ?? 0),
 
-            'meta' => [
-                'desc_count' => count($descIds),
-                'tl_count' => count($tlIds),
-                'so_count' => count($soIds),
-                'ro_count' => count($roAoCodes),
-                'mode' => $preferredMode,
-            ],
+            'tlRows' => $tlRows ?? [],
+            'soRank' => $soRank ?? [],
+
+            // meta snapshot
+            'meta' => is_string($row->meta ?? null) ? json_decode($row->meta, true) : ($row->meta ?? []),
         ]);
     }
 
-    public function recalc(Request $request)
-    {
-        // tahap 1: recalc = reload
+    public function recalc(
+        Request $request,
+        OrgScopeService $scope,
+        KslrMonthlyBuilder $builder
+    ) {
+        $me = $request->user();
+        abort_unless($me, 403);
+
+        Gate::authorize('kpi-kslr-view');
+
         $period = trim((string)$request->input('period', ''));
+        $mode   = strtolower(trim((string)$request->input('mode', 'realtime')));
+
+        if ($mode !== 'realtime' && $mode !== 'eom') $mode = 'realtime';
+
+        // support: '2026-02' atau '2026-02-01'
+        try {
+            $periodDate = preg_match('/^\d{4}-\d{2}$/', $period)
+                ? Carbon::createFromFormat('Y-m', $period)->startOfMonth()->toDateString()
+                : Carbon::parse($period)->startOfMonth()->toDateString();
+        } catch (\Throwable $e) {
+            $periodDate = now()->startOfMonth()->toDateString();
+        }
+
+        $builder->build(
+            $me->id,
+            $periodDate,
+            $mode,
+            $scope
+        );
 
         return redirect()->route('kpi.kslr.sheet', [
-            'period' => $period,
-            'mode'   => $request->input('mode', null),
-        ])->with('status', 'Recalc KSLR sukses (reload).');
+            'period' => substr($periodDate, 0, 7),
+            'mode'   => $mode,
+        ])->with('status', 'Recalc KSLR berhasil.');
     }
 
     private function resolvePeriodYmd(Request $request): string
@@ -252,13 +274,13 @@ class KslrLeadershipSheetController extends Controller
 
     private function resolveRole($u): string
     {
-        // aman untuk: enum / string / null
-        $raw = method_exists($u, 'roleValue') ? ($u->roleValue() ?? null) : null;
-        if ($raw === null) $raw = $u->level ?? '';
+        $raw = $u->level ?? null;
 
-        if ($raw instanceof \BackedEnum) $raw = $raw->value;
+        if ($raw instanceof \BackedEnum) {
+            $raw = $raw->value;
+        }
 
-        return strtoupper(trim((string)$raw));
+        return strtoupper(trim((string)($raw ?? '')));
     }
 
     // ===== scoring sesuai tabel guide =====

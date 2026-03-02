@@ -26,6 +26,10 @@ use App\Services\Restructure\RestructureDashboardService;
 use App\Services\Ews\EwsMacetService;
 use App\Services\Crms\ApprovalBadgeService;
 
+use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
+
+
 class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
@@ -221,6 +225,14 @@ class AppServiceProvider extends ServiceProvider
 
             $view->with('macetWarnMeta', $macetMeta);
         });
+
+        View::composer(['partials.sidebar', 'layouts.app'], function ($view) {
+            $latest = DB::table('loan_accounts')->max('position_date');
+            $latest = $latest ? Carbon::parse($latest)->toDateString() : null;
+
+            $view->with('latestPositionDate', $latest);
+        });
+    
     }
 
     /**

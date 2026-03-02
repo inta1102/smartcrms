@@ -181,18 +181,7 @@ class RoKpiMonthlyBuilder
                 ? json_encode(['in' => $inRows, 'out' => $outRows])
                 : null;
 
-            // ✅ logger setelah rows siap
-            if ($ao === '000039') {
-                logger()->info('ADJ 000039', [
-                    'base' => $topupBase,
-                    'in' => $adjInSum,
-                    'out' => $adjOutSum,
-                    'net' => $adjNet,
-                    'in_rows' => $inRows,
-                    'out_rows' => $outRows,
-                ]);
-            }
-
+          
             // TopUp final dipakai KPI
             $topupFinal = max($topupBase + $adjNet, 0);
 
@@ -314,7 +303,7 @@ class RoKpiMonthlyBuilder
 
                 'dpk_migrasi_count' => (int)   ($dpk['migrasi_count'] ?? 0),
                 'dpk_migrasi_os'    => (float) ($dpk['migrasi_os'] ?? 0),
-                'dpk_total_os_akhir'=> (float) ($dpk['total_os_akhir'] ?? 0),
+                'dpk_total_os_akhir'=> (float) ($dpk['baseline_os'] ?? 0),
 
                 'total_score_weighted' => (float) round($totalWeighted, 2),
 
@@ -343,11 +332,7 @@ class RoKpiMonthlyBuilder
             $saved++;
         }
 
-        // ✅ logger base yang benar
-        logger()->info('TOPUP BASE 000039', [
-            'base' => $topupByAo['000039']['realisasi_topup_base'] ?? ($topupByAo['000039']['realisasi_topup'] ?? null),
-            'top3' => $topupByAo['000039']['topup_top3'] ?? null,
-        ]);
+      
 
         return [
             'period_month' => $periodMonth,
@@ -522,6 +507,32 @@ class RoKpiMonthlyBuilder
         $period   = Carbon::parse($periodMonth)->startOfMonth();
         $snapPrev = $period->copy()->subMonth()->toDateString();
 
+        // =========================
+        // (NEW) Denominator %DPK: TOTAL OS SNAPSHOT PREV (baseline)
+        // - ini yang dipakai untuk pembagi prosentase (agar tidak bias OS akhir)
+        // - detail migrasi tetap pakai query asli kamu
+        // =========================
+        $prevTotalQ = DB::table('loan_account_snapshots_monthly')
+            ->select([
+                'ao_code',
+                DB::raw('SUM(COALESCE(outstanding,0)) as total_os_prev'),
+            ])
+            ->whereDate('snapshot_month', $snapPrev)
+            ->whereNotNull('ao_code')->where('ao_code','!=','')
+            ->whereNotNull('account_no')->where('account_no','!=','');
+
+        if ($branchCode) $prevTotalQ->where('branch_code', $branchCode);
+        if ($aoCode)     $prevTotalQ->where('ao_code', $aoCode);
+
+        $prevTotalMap = $prevTotalQ
+            ->groupBy('ao_code')
+            ->pluck('total_os_prev', 'ao_code')
+            ->map(fn($v) => (float)$v)
+            ->toArray();
+
+        // =========================
+        // START SET (baseline cohort) = snapshot prev
+        // =========================
         $startQ = DB::table('loan_account_snapshots_monthly')
             ->select([
                 'account_no',
@@ -532,12 +543,15 @@ class RoKpiMonthlyBuilder
             ->whereNotNull('account_no')->where('account_no','!=','')
             ->where(function ($q) {
                 $q->where('ft_pokok', 1)
-                  ->orWhere('ft_bunga', 1);
+                ->orWhere('ft_bunga', 1);
             });
 
         if ($branchCode) $startQ->where('branch_code', $branchCode);
         if ($aoCode)     $startQ->where('ao_code', $aoCode);
 
+        // =========================
+        // END SET
+        // =========================
         [$endTable, $endDateField, $endDateValue] = $this->resolveEndSet($periodMonth, $mode, $branchCode);
         if (!$endTable) return [];
 
@@ -557,6 +571,9 @@ class RoKpiMonthlyBuilder
         if ($branchCode && $this->hasColumn($endTable,'branch_code')) $endQ->where('branch_code', $branchCode);
         if ($aoCode) $endQ->where('ao_code', $aoCode);
 
+        // =========================
+        // AGG
+        // =========================
         $rows = DB::query()
             ->fromSub($endQ, 'e')
             ->leftJoinSub($startQ, 's', function ($join) {
@@ -601,20 +618,32 @@ class RoKpiMonthlyBuilder
             ->groupBy('e.ao_code')
             ->get();
 
+        // =========================
+        // OUTPUT
+        // =========================
         $out = [];
         foreach ($rows as $r) {
-            $total  = (float) ($r->total_os_akhir ?? 0);
+            $ao     = (string)($r->ao_code ?? '');
+            $totalAkhir = (float) ($r->total_os_akhir ?? 0);           // tetap simpan seperti asli
             $migOs  = (float) ($r->os_migrasi_lt_ke_dpk ?? 0);
             $migCnt = (int)   ($r->migrasi_cnt ?? 0);
 
-            $pct = $total > 0 ? ($migOs / $total) * 100.0 : 0.0;
+            // ✅ FIX DI SINI SAJA:
+            // Denominator % = total OS snapshot prev (baseline), fallback ke total_os_akhir kalau tidak ketemu
+            $denomPrev = (float)($prevTotalMap[$ao] ?? 0);
+            $denom = $denomPrev > 0 ? $denomPrev : $totalAkhir;
 
-            $out[(string)$r->ao_code] = [
+            $pct = $denom > 0 ? ($migOs / $denom) * 100.0 : 0.0;
+
+            $out[$ao] = [
                 'pct' => $pct,
                 'score' => $this->scoreDpkPct($pct),
                 'migrasi_count' => $migCnt,
                 'migrasi_os'    => $migOs,
-                'total_os_akhir'=> $total,
+                'total_os_akhir'=> $totalAkhir,
+
+                // tambahan audit (aman, kalau kamu tidak mau, boleh hapus)
+                'total_os_prev' => $denomPrev,
             ];
         }
 

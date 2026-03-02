@@ -9,7 +9,6 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
-
 class TlroLeadershipSheetController extends Controller
 {
     public function index(Request $request, TlroLeadershipBuilder $builder)
@@ -17,24 +16,24 @@ class TlroLeadershipSheetController extends Controller
         $me = auth()->user();
         abort_unless($me, 403);
 
-        $userId = $request->query('user') ?? auth()->id();
-        $period = $request->query('period') ?? now()->format('Y-m-01');
-
-        $periodDate = \Carbon\Carbon::parse($period)->startOfMonth()->toDateString();
-
-        $user = \App\Models\User::findOrFail($userId);
-        
-        $role = strtoupper($me->roleValue());
-        abort_unless(in_array($role, ['TLRO','KSLR','KBL','ADMIN','SUPERADMIN'], true), 403);
+        $role = strtoupper((string) $me->roleValue());
+        abort_unless(in_array($role, ['TLRO', 'KSLR', 'KBL', 'ADMIN', 'SUPERADMIN'], true), 403);
 
         // =====================================================
-        // 1) Period (startOfMonth)
+        // 1) Period normalizer (support: YYYY-MM / YYYY-MM-DD)
         // =====================================================
-        $periodQ = trim((string)$request->query('period', now()->startOfMonth()->toDateString()));
-        $period  = Carbon::parse($periodQ)->startOfMonth();
+        $rawPeriod = trim((string) $request->query('period', ''));
+        if ($rawPeriod === '') {
+            $period = now()->startOfMonth();
+        } elseif (preg_match('/^\d{4}-\d{2}$/', $rawPeriod)) {
+            $period = Carbon::createFromFormat('Y-m', $rawPeriod)->startOfMonth();
+        } else {
+            $period = Carbon::parse($rawPeriod)->startOfMonth();
+        }
+        $periodYmd = $period->toDateString(); // "YYYY-MM-01"
 
         // =====================================================
-        // 2) View-as TLRO (untuk KSLR/KBL/ADMIN)
+        // 2) View-as TLRO (untuk KSLR/KBL/ADMIN/SUPERADMIN)
         // =====================================================
         $tlroIdQ = (int) $request->query('tlro_id', 0);
         $subjectUser = $me;
@@ -42,32 +41,37 @@ class TlroLeadershipSheetController extends Controller
         if ($role !== 'TLRO' && $tlroIdQ > 0) {
 
             $subjectUser = User::query()->whereKey($tlroIdQ)->firstOrFail();
-            abort_unless(strtoupper($subjectUser->roleValue()) === 'TLRO', 403);
+            abort_unless(strtoupper((string) $subjectUser->roleValue()) === 'TLRO', 403);
 
             // KSLR hanya boleh TLRO dalam scope
             if ($role === 'KSLR') {
                 $isInScope = DB::table('org_assignments')
-                    ->where('leader_id', (int)$me->id)
-                    ->where('user_id', (int)$subjectUser->id)
-                    ->where('active', 1)
+                    ->where('leader_id', (int) $me->id)
+                    ->where('user_id', (int) $subjectUser->id)
+                    ->where('is_active', 1)
                     ->exists();
 
                 abort_unless($isInScope, 403);
             }
-
-            // (opsional) KBL scope nanti kita bahas belakangan
         }
 
         // =====================================================
         // 3) Build KPI TLRO (row leadership)
         // =====================================================
-        $row = $builder->build((int)$subjectUser->id, $period->toDateString());
+        $row = $builder->build((int) $subjectUser->id, $periodYmd);
 
         // =====================================================
-        // 4) Breakdown RO scope (berdasarkan org_assignments TLRO -> RO)
+        // 4) Breakdown RO scope (org_assignments TLRO -> RO)
+        //    ✅ filter active + effective range by period
         // =====================================================
         $roIds = DB::table('org_assignments')
-            ->where('leader_id', (int)$subjectUser->id)
+            ->where('leader_id', (int) $subjectUser->id)
+            ->where('is_active', 1)
+            ->whereDate('effective_from', '<=', $periodYmd)
+            ->where(function ($q) use ($periodYmd) {
+                $q->whereNull('effective_to')
+                  ->orWhereDate('effective_to', '>=', $periodYmd);
+            })
             ->pluck('user_id')
             ->toArray();
 
@@ -80,117 +84,143 @@ class TlroLeadershipSheetController extends Controller
                 ->whereIn('id', $roIds)
                 ->whereNotNull('ao_code')
                 ->pluck('ao_code')
-                ->map(fn($v) => str_pad(trim((string)$v), 6, '0', STR_PAD_LEFT))
+                ->map(fn($v) => str_pad(trim((string) $v), 6, '0', STR_PAD_LEFT))
                 ->filter(fn($v) => $v !== '' && $v !== '000000')
                 ->unique()
                 ->values()
                 ->toArray();
+            
+            logger()->info('TLRO aoCodes debug', [
+            'aoCodesCount' => count($aoCodes),
+            'aoCodes' => $aoCodes,
+            ]);
 
             if (!empty($aoCodes)) {
 
-                $roRows = collect();
+                $start = $period->copy()->startOfMonth()->toDateString();
+                $end   = $period->copy()->endOfMonth()->toDateString();
 
-                if (!empty($roIds)) {
+                // Subquery: tanggal daily terakhir per AO dalam bulan tsb
+                $latestDaily = DB::table('kpi_os_daily_aos')
+                    ->selectRaw("LPAD(TRIM(ao_code),6,'0') as ao_code6, MAX(position_date) as max_date")
+                    ->whereBetween('position_date', [$start, $end])
+                    ->groupBy('ao_code6');
 
-                    // 1) AO scope TLRO dari table users
-                    $aoCodes = DB::table('users')
-                        ->whereIn('id', $roIds)
-                        ->whereNotNull('ao_code')
-                        ->pluck('ao_code')
-                        ->map(fn($v) => str_pad(trim((string)$v), 6, '0', STR_PAD_LEFT))
-                        ->filter(fn($v) => $v !== '' && $v !== '000000')
-                        ->unique()
-                        ->values()
-                        ->toArray();
+                // 1) scopeUsers: hanya RO dalam scope TLRO
+                $scopeUsers = DB::table('users')
+                    ->whereIn('id', $roIds)
+                    ->whereNotNull('ao_code')
+                    ->selectRaw("
+                        id as ro_user_id,
+                        name as ro_name,
+                        LPAD(TRIM(ao_code),6,'0') as ao_code6
+                    ");
 
-                    if (!empty($aoCodes)) {
+                // 2) Subquery: tanggal daily terakhir per AO dalam bulan tsb
+                $latestDaily = DB::table('kpi_os_daily_aos')
+                    ->selectRaw("LPAD(TRIM(ao_code),6,'0') as ao_code6, MAX(position_date) as max_date")
+                    ->whereBetween('position_date', [$start, $end])
+                    ->groupBy('ao_code6');
 
-                        $start = $period->copy()->startOfMonth()->toDateString();
-                        $end   = $period->copy()->endOfMonth()->toDateString();
+                // 3) Query KPI RO monthly + join scopeUsers + join daily OS
+                $cntRealtime = DB::table('kpi_ro_monthly')
+                ->whereDate('period_month', $periodYmd)
+                ->where('calc_mode', 'realtime')
+                ->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $aoCodes)
+                ->count();
 
-                        // 2) Subquery: tanggal daily terakhir per AO dalam bulan tsb
-                        $latestDaily = DB::table('kpi_os_daily_aos')
-                            ->selectRaw("LPAD(TRIM(ao_code),6,'0') as ao_code6, MAX(position_date) as max_date")
-                            ->whereBetween('position_date', [$start, $end])
-                            ->groupBy('ao_code6');
+                $cntEom = DB::table('kpi_ro_monthly')
+                ->whereDate('period_month', $periodYmd)
+                ->where('calc_mode', 'eom')
+                ->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $aoCodes)
+                ->count();
 
-                        // 3) Query KPI RO monthly + join daily OS
-                        $roRows = DB::table('kpi_ro_monthly as r')
-                            // join user utk ambil nama RO + user_id
-                            ->leftJoin('users as u', DB::raw("LPAD(TRIM(u.ao_code),6,'0')"), '=', DB::raw("LPAD(TRIM(r.ao_code),6,'0')"))
+                logger()->info('TLRO kpi_ro_monthly counts', [
+                'period' => $periodYmd,
+                'realtime' => $cntRealtime,
+                'eom' => $cntEom,
+                'aoCodes' => $aoCodes,
+                ]);
 
-                            // join latest daily date per AO
-                            ->leftJoinSub($latestDaily, 'ld', function ($j) {
-                                $j->on(DB::raw("LPAD(TRIM(r.ao_code),6,'0')"), '=', 'ld.ao_code6');
-                            })
+                $roRows = DB::table('kpi_ro_monthly as r')
 
-                            // join row daily-nya (yang max_date)
-                            ->leftJoin('kpi_os_daily_aos as kd', function ($j) {
-                                $j->on(DB::raw("LPAD(TRIM(kd.ao_code),6,'0')"), '=', DB::raw("LPAD(TRIM(r.ao_code),6,'0')"))
-                                ->on('kd.position_date', '=', 'ld.max_date');
-                            })
+                    // ✅ join hanya ke users scope (bukan users global)
+                    ->joinSub($scopeUsers, 'su', function ($j) {
+                        $j->on(DB::raw("LPAD(TRIM(r.ao_code),6,'0')"), '=', 'su.ao_code6');
+                    })
 
-                            ->whereDate('r.period_month', $row->period)
-                            ->where('r.calc_mode', $row->calc_mode)
-                            ->whereIn(DB::raw("LPAD(TRIM(r.ao_code),6,'0')"), $aoCodes)
+                    // join latest daily date per AO
+                    ->leftJoinSub($latestDaily, 'ld', function ($j) {
+                        $j->on(DB::raw("LPAD(TRIM(r.ao_code),6,'0')"), '=', 'ld.ao_code6');
+                    })
 
-                            ->select([
-                                DB::raw("LPAD(TRIM(r.ao_code),6,'0') as ao_code"),
-                                'u.id as ro_user_id',
-                                'u.name as ro_name',
+                    // join row daily-nya (yang max_date)
+                    ->leftJoin('kpi_os_daily_aos as kd', function ($j) {
+                        $j->on(DB::raw("LPAD(TRIM(kd.ao_code),6,'0')"), '=', DB::raw("LPAD(TRIM(r.ao_code),6,'0')"))
+                        ->on('kd.position_date', '=', 'ld.max_date');
+                    })
 
-                                // OS ambil dari daily snapshot terakhir dalam bulan tsb
-                                DB::raw("COALESCE(kd.os_total, 0) as os_total"),
+                    ->whereDate('r.period_month', $periodYmd)
+                    ->where(function ($q) use ($row) {
+                        $q->where('r.calc_mode', $row->calc_mode);
 
-                                // RR% dari KPI RO monthly
-                                DB::raw("COALESCE(r.repayment_pct, 0) as rr_pct"),
+                        // fallback untuk realtime: kalau RO belum terbentuk realtime, pakai eom
+                        if (($row->calc_mode ?? '') === 'realtime') {
+                            $q->orWhere('r.calc_mode', 'eom');
+                        }
+                    })
+                    ->whereIn(DB::raw("LPAD(TRIM(r.ao_code),6,'0')"), $aoCodes)
 
-                                // LT% dari daily snapshot (os_lt / os_total)
-                                DB::raw("CASE WHEN COALESCE(kd.os_total,0) > 0
-                                        THEN (COALESCE(kd.os_lt,0) / kd.os_total) * 100
-                                        ELSE 0 END as lt_pct"),
+                    ->select([
+                        DB::raw("LPAD(TRIM(r.ao_code),6,'0') as ao_code"),
 
-                                // DPK% ambil dari KPI RO monthly (konsisten scoring)
-                                DB::raw("COALESCE(r.dpk_pct, 0) as dpk_pct"),
+                        // dari scopeUsers
+                        'su.ro_user_id',
+                        'su.ro_name',
 
-                                // Score
-                                DB::raw("COALESCE(r.total_score_weighted, 0) as total_score_weighted"),
+                        // OS dari daily snapshot terakhir dalam bulan tsb
+                        DB::raw("COALESCE(kd.os_total, 0) as os_total"),
 
-                                // Risk belum ada → amanin dulu
-                               DB::raw("
-                                    CASE
-                                        WHEN COALESCE(r.dpk_pct,0) >= 5 OR
-                                            (CASE WHEN COALESCE(kd.os_total,0) > 0 THEN (COALESCE(kd.os_lt,0)/kd.os_total)*100 ELSE 0 END) >= 35
-                                        THEN 6
+                        // RR% dari KPI RO monthly
+                        DB::raw("COALESCE(r.repayment_pct, 0) as rr_pct"),
 
-                                        WHEN COALESCE(r.dpk_pct,0) >= 3 OR
-                                            (CASE WHEN COALESCE(kd.os_total,0) > 0 THEN (COALESCE(kd.os_lt,0)/kd.os_total)*100 ELSE 0 END) >= 30
-                                        THEN 5
+                        // LT% dari daily snapshot (os_lt / os_total)
+                        DB::raw("CASE WHEN COALESCE(kd.os_total,0) > 0
+                                THEN (COALESCE(kd.os_lt,0) / kd.os_total) * 100
+                                ELSE 0 END as lt_pct"),
 
-                                        WHEN COALESCE(r.dpk_pct,0) >= 2 OR
-                                            (CASE WHEN COALESCE(kd.os_total,0) > 0 THEN (COALESCE(kd.os_lt,0)/kd.os_total)*100 ELSE 0 END) >= 25
-                                        THEN 4
+                        // DPK% dari KPI RO monthly
+                        DB::raw("COALESCE(r.dpk_pct, 0) as dpk_pct"),
 
-                                        WHEN COALESCE(r.dpk_pct,0) >= 1 OR
-                                            (CASE WHEN COALESCE(kd.os_total,0) > 0 THEN (COALESCE(kd.os_lt,0)/kd.os_total)*100 ELSE 0 END) >= 20
-                                        THEN 3
+                        // Score
+                        DB::raw("COALESCE(r.total_score_weighted, 0) as total_score_weighted"),
 
-                                        WHEN COALESCE(r.dpk_pct,0) >= 0.5 OR
-                                            (CASE WHEN COALESCE(kd.os_total,0) > 0 THEN (COALESCE(kd.os_lt,0)/kd.os_total)*100 ELSE 0 END) >= 10
-                                        THEN 2
+                        // Risk (heuristic)
+                        DB::raw("
+                            CASE
+                                WHEN COALESCE(r.dpk_pct,0) >= 5 OR
+                                    (CASE WHEN COALESCE(kd.os_total,0) > 0 THEN (COALESCE(kd.os_lt,0)/kd.os_total)*100 ELSE 0 END) >= 35
+                                THEN 6
+                                WHEN COALESCE(r.dpk_pct,0) >= 3 OR
+                                    (CASE WHEN COALESCE(kd.os_total,0) > 0 THEN (COALESCE(kd.os_lt,0)/kd.os_total)*100 ELSE 0 END) >= 30
+                                THEN 5
+                                WHEN COALESCE(r.dpk_pct,0) >= 2 OR
+                                    (CASE WHEN COALESCE(kd.os_total,0) > 0 THEN (COALESCE(kd.os_lt,0)/kd.os_total)*100 ELSE 0 END) >= 25
+                                THEN 4
+                                WHEN COALESCE(r.dpk_pct,0) >= 1 OR
+                                    (CASE WHEN COALESCE(kd.os_total,0) > 0 THEN (COALESCE(kd.os_lt,0)/kd.os_total)*100 ELSE 0 END) >= 20
+                                THEN 3
+                                WHEN COALESCE(r.dpk_pct,0) >= 0.5 OR
+                                    (CASE WHEN COALESCE(kd.os_total,0) > 0 THEN (COALESCE(kd.os_lt,0)/kd.os_total)*100 ELSE 0 END) >= 10
+                                THEN 2
+                                ELSE 1
+                            END as risk_index
+                        "),
 
-                                        ELSE 1
-                                    END
-                                    as risk_index
-                                    "),
-
-                                // optional debug
-                                'ld.max_date as daily_date',
-                            ])
-                            ->orderByDesc('total_score_weighted')
-                            ->get();
-                    }
-                }
+                        'ld.max_date as daily_date',
+                    ])
+                    ->orderByDesc('total_score_weighted')
+                    ->get();
             }
         }
 
@@ -200,23 +230,36 @@ class TlroLeadershipSheetController extends Controller
         [$aiTitle, $aiBullets, $aiActions] = $this->buildAiNarrative($row, $roRows);
 
         $periodLabel = $period->translatedFormat('F Y');
-        $modeLabel   = $row->calc_mode === 'realtime'
+        $modeLabel   = ($row->calc_mode ?? '') === 'realtime'
             ? 'Realtime (bulan berjalan)'
             : 'Freeze / EOM';
 
-        $fmt2 = fn($v) => number_format((float)($v ?? 0), 2, ',', '.');
+        $fmt2 = fn($v) => number_format((float) ($v ?? 0), 2, ',', '.');
 
+        logger()->info('TLRO sheet debug', [
+        'rawPeriod' => $rawPeriod,
+        'periodYmd' => $periodYmd,
+        'subjectUserId' => (int)$subjectUser->id,
+        'roIdsCount' => count($roIds),
+        'row_period' => $row->period ?? null,
+        'row_calc_mode' => $row->calc_mode ?? null,
+        ]);
         return view('kpi.tlro.sheet', [
             'viewerUser'  => $me,
             'subjectUser' => $subjectUser,
-            'period'      => $period->toDateString(),
+
+            // pastikan Blade dapat period Y-m-d
+            'period'      => $periodYmd,
             'periodLabel' => $periodLabel,
             'modeLabel'   => $modeLabel,
+
             'row'         => $row,
             'roRows'      => $roRows,
+
             'aiTitle'     => $aiTitle,
             'aiBullets'   => $aiBullets,
             'aiActions'   => $aiActions,
+
             'fmt2'        => $fmt2,
 
             // supaya tombol recalc bisa tetap view-as
@@ -229,11 +272,21 @@ class TlroLeadershipSheetController extends Controller
         $me = auth()->user();
         abort_unless($me, 403);
 
-        $role = strtoupper($me->roleValue());
-        abort_unless(in_array($role, ['TLRO','KSLR','KBL','ADMIN','SUPERADMIN'], true), 403);
+        $role = strtoupper((string) $me->roleValue());
+        abort_unless(in_array($role, ['TLRO', 'KSLR', 'KBL', 'ADMIN', 'SUPERADMIN'], true), 403);
 
-        $periodQ = trim((string)$request->input('period', now()->startOfMonth()->toDateString()));
-        $period  = Carbon::parse($periodQ)->startOfMonth();
+        // =====================================================
+        // Period normalizer (support: YYYY-MM / YYYY-MM-DD)
+        // =====================================================
+        $rawPeriod = trim((string) $request->input('period', ''));
+        if ($rawPeriod === '') {
+            $period = now()->startOfMonth();
+        } elseif (preg_match('/^\d{4}-\d{2}$/', $rawPeriod)) {
+            $period = Carbon::createFromFormat('Y-m', $rawPeriod)->startOfMonth();
+        } else {
+            $period = Carbon::parse($rawPeriod)->startOfMonth();
+        }
+        $periodYmd = $period->toDateString();
 
         // view-as (optional)
         $tlroIdQ = (int) $request->input('tlro_id', 0);
@@ -242,24 +295,25 @@ class TlroLeadershipSheetController extends Controller
         if ($role !== 'TLRO' && $tlroIdQ > 0) {
 
             $subjectUser = User::query()->whereKey($tlroIdQ)->firstOrFail();
-            abort_unless(strtoupper($subjectUser->roleValue()) === 'TLRO', 403);
+            abort_unless(strtoupper((string) $subjectUser->roleValue()) === 'TLRO', 403);
 
             if ($role === 'KSLR') {
                 $isInScope = DB::table('org_assignments')
-                    ->where('leader_id', (int)$me->id)
-                    ->where('user_id', (int)$subjectUser->id)
-                    ->where('active', 1)
+                    ->where('leader_id', (int) $me->id)
+                    ->where('user_id', (int) $subjectUser->id)
+                    ->where('is_active', 1)
                     ->exists();
 
                 abort_unless($isInScope, 403);
             }
         }
 
-        $builder->build((int)$subjectUser->id, $period->toDateString());
+        $builder->build((int) $subjectUser->id, $periodYmd);
 
         return redirect()
             ->route('kpi.tlro.sheet', [
-                'period'  => $period->toDateString(),
+                // pakai format yang dipahami input type month via Blade (dia format Y-m)
+                'period'  => $periodYmd,
                 'tlro_id' => $tlroIdQ ?: null,
             ])
             ->with('success', 'TLRO Leadership Index berhasil direcalc.');
@@ -270,19 +324,19 @@ class TlroLeadershipSheetController extends Controller
     // =========================================================
     private function buildAiNarrative($row, $roRows): array
     {
-        $li   = (float)($row->leadership_index ?? 0);
-        $pi   = (float)($row->pi_scope ?? 0);
-        $stab = (float)($row->stability_index ?? 0);
-        $risk = (float)($row->risk_index ?? 0);
-        $imp  = (float)($row->improvement_index ?? 0);
+        $li   = (float) ($row->leadership_index ?? 0);
+        $pi   = (float) ($row->pi_scope ?? 0);
+        $stab = (float) ($row->stability_index ?? 0);
+        $risk = (float) ($row->risk_index ?? 0);
+        $imp  = (float) ($row->improvement_index ?? 0);
 
-        $status = strtoupper((string)($row->status_label ?? ''));
+        $status = strtoupper((string) ($row->status_label ?? ''));
 
         $title = match (true) {
-            $status === 'AMAN'   => 'Tim RO stabil dan terkendali. Pertahankan disiplin kolektibilitas.',
-            $status === 'WASPADA'=> 'Perlu penguatan monitoring migrasi LT/DPK.',
-            $status === 'KRITIS' => 'Risiko kolektibilitas meningkat. Intervensi bottom RO segera.',
-            default              => 'Ringkasan kepemimpinan TLRO.',
+            $status === 'AMAN'    => 'Tim RO stabil dan terkendali. Pertahankan disiplin kolektibilitas.',
+            $status === 'WASPADA' => 'Perlu penguatan monitoring migrasi LT/DPK.',
+            $status === 'KRITIS'  => 'Risiko kolektibilitas meningkat. Intervensi bottom RO segera.',
+            default               => 'Ringkasan kepemimpinan TLRO.',
         };
 
         $bullets = [
@@ -292,13 +346,13 @@ class TlroLeadershipSheetController extends Controller
         ];
 
         if ($roRows instanceof \Illuminate\Support\Collection && $roRows->count() > 0) {
-            $sorted = $roRows->sortByDesc(fn($r) => (float)($r->total_score_weighted ?? 0))->values();
+            $sorted = $roRows->sortByDesc(fn($r) => (float) ($r->total_score_weighted ?? 0))->values();
             $top = $sorted->first();
             $bot = $sorted->last();
 
-            $bullets[] = "Top RO: {$top->ro_name} (Score " . (float)$top->total_score_weighted . ")";
+            $bullets[] = "Top RO: {$top->ro_name} (Score " . (float) $top->total_score_weighted . ")";
             if ($sorted->count() > 1) {
-                $bullets[] = "Bottom RO: {$bot->ro_name} (Score " . (float)$bot->total_score_weighted . ")";
+                $bullets[] = "Bottom RO: {$bot->ro_name} (Score " . (float) $bot->total_score_weighted . ")";
             }
         } else {
             $bullets[] = "Belum ada data RO scope atau KPI RO belum terbentuk pada periode ini.";
@@ -307,7 +361,7 @@ class TlroLeadershipSheetController extends Controller
         $actions = [];
 
         if ($roRows instanceof \Illuminate\Support\Collection && $roRows->count() > 1) {
-            $sorted = $roRows->sortBy(fn($r) => (float)($r->total_score_weighted ?? 0))->values();
+            $sorted = $roRows->sortBy(fn($r) => (float) ($r->total_score_weighted ?? 0))->values();
             $bot = $sorted->first();
             $actions[] = "Coaching RO terbawah: {$bot->ro_name} — review pipeline & kolektibilitas.";
         } elseif ($roRows instanceof \Illuminate\Support\Collection && $roRows->count() === 1) {

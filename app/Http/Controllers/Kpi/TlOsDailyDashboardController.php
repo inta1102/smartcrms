@@ -582,6 +582,7 @@ class TlOsDailyDashboardController extends Controller
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereDate('la.position_date', $latestPosDate)
             ->when(!empty($aoCodes), fn ($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
+            ->where('la.outstanding', '>', 0)
             ->where('m.ft_pokok', 0)
             ->where('m.ft_bunga', 0)
             ->where(function ($q) {

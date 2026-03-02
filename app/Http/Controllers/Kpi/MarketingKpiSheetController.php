@@ -196,16 +196,10 @@ class MarketingKpiSheetController
             $startYtd = $start->toDateString();
             $endYtd   = $end->toDateString();
         }
-
-        logger()->info('[KPI RO Sheet] period debug', [
-        'query_period' => request()->query('period'),
-        'periodYm' => $periodYm ?? null,
-        'periodYmd' => $periodYmd ?? null,
-        'period' => isset($period) ? $period->toDateString() : null,
-        ]);
-        // ==========================================================
+        
+        // ========================================================== 
         // RO (auto mode: bulan ini realtime, bulan lalu ke bawah EOM)
-        // + AKUMULASI (YTD s/d bulan terpilih)
+        // + AKUMULASI (YTD s/d bulan terpilih) untuk TopUp/NOA/RR targets
         // ==========================================================
         if ($role === 'RO') {
 
@@ -218,18 +212,16 @@ class MarketingKpiSheetController
                 'dpk'       => 0.30,
             ];
 
-            $leader = auth()->user();
+            $leader     = auth()->user();
             $leaderRole = $this->leaderRoleValue($leader);
 
             // $scopeAoCodes = $this->scopeAoCodesForLeader($leader, $periodDate);
             $latestDataDate = DB::table('kpi_os_daily_aos')->max('position_date');
             $latestDataDate = $latestDataDate ? \Carbon\Carbon::parse($latestDataDate) : now();
-            $periodCarbon = \Carbon\Carbon::parse($periodDate)->startOfMonth();
-            $asOfDate = $mode === 'realtime'
-            ? $latestDataDate->toDateString()
-            : $periodCarbon->copy()->endOfMonth()->toDateString();
-
-            $scopeUserIds = $this->scopeUserIdsForLeader($leader, $asOfDate);
+            $periodCarbon   = \Carbon\Carbon::parse($periodDate)->startOfMonth();
+            $asOfDate       = $mode === 'realtime'
+                ? $latestDataDate->toDateString()
+                : $periodCarbon->copy()->endOfMonth()->toDateString();
 
             $isLeader = in_array($leaderRole, ['TLRO','KSLU','KSLR','KSBE','KSFE','KBL','PE','DIR','KOM','DIREKSI'], true);
 
@@ -252,10 +244,6 @@ class MarketingKpiSheetController
             $endYtdDate   = $endMonth->copy()->endOfMonth()->toDateString(); // default EOM label
 
             if ($endMonthMode === 'realtime') {
-
-                // default: pakai sumber yang kamu anggap paling valid
-                // opsi A: KPI harian (kalau tabel ini memang update tiap hari)
-                // $latestPos = DB::table('kpi_os_daily_aos')->max('position_date');
 
                 // opsi B: loan_accounts (sesuai statement kamu)
                 $latestPos = DB::table('loan_accounts')->max('position_date');
@@ -286,12 +274,160 @@ class MarketingKpiSheetController
                 }
             }
 
-            // if ($isLeader && !empty($scopeAoCodes)) {
-            //     $usersQ->whereIn('u.ao_code', array_values($scopeAoCodes));
-            // }
+            $startMonth = $startMonth->copy()->startOfMonth();
+            $endMonth   = $endMonth->copy()->startOfMonth();
+
+            
+            // =========================
+            $dpkPrevSnap = $endMonth->copy()->subMonth()->startOfMonth()->toDateString();
+            $dpkCurSnap  = $endMonth->copy()->startOfMonth()->toDateString();
 
             // =========================
-            // SUBQUERY KPI RANGE (aggregate per AO)
+            // OS CUR (FT buckets) -> L0/L1/L2 untuk RR
+            // L0: ft_pokok=0 AND ft_bunga=0
+            // L1: max(ft_pokok,ft_bunga)=1
+            // L2: max(ft_pokok,ft_bunga)=2
+            // RR = OS_L0 / OS_Total
+            // =========================
+            if ($mode === 'realtime') {
+
+                $osAgg = DB::table('loan_accounts as cur')
+                    ->whereDate('cur.position_date', $latestPosLoan)
+                    ->whereNotNull('cur.ao_code')->where('cur.ao_code','!=','')
+                    ->selectRaw("
+                        cur.ao_code as ao_code,
+
+                        -- total OS kelolaan RO (semua akun)
+                        SUM(COALESCE(cur.outstanding,0)) as os_total_kelolaan,
+
+                        -- bucket FT
+                        SUM(
+                        CASE
+                            WHEN COALESCE(cur.ft_pokok,0) = 0 AND COALESCE(cur.ft_bunga,0) = 0
+                            THEN COALESCE(cur.outstanding,0) ELSE 0
+                        END
+                        ) as os_l0,
+
+                        SUM(
+                        CASE
+                            WHEN GREATEST(COALESCE(cur.ft_pokok,0), COALESCE(cur.ft_bunga,0)) = 1
+                            THEN COALESCE(cur.outstanding,0) ELSE 0
+                        END
+                        ) as os_l1,
+
+                        SUM(
+                        CASE
+                            WHEN GREATEST(COALESCE(cur.ft_pokok,0), COALESCE(cur.ft_bunga,0)) = 2
+                            THEN COALESCE(cur.outstanding,0) ELSE 0
+                        END
+                        ) as os_l2,
+
+                        -- opsional untuk audit (biar kelihatan kalau ada FT>=3)
+                        SUM(
+                        CASE
+                            WHEN GREATEST(COALESCE(cur.ft_pokok,0), COALESCE(cur.ft_bunga,0)) >= 3
+                            THEN COALESCE(cur.outstanding,0) ELSE 0
+                        END
+                        ) as os_ft3plus
+                    ")
+                    ->groupBy('cur.ao_code');
+
+            } else {
+                $osAgg = DB::table('loan_account_snapshots_monthly as cur')
+                ->whereDate('cur.snapshot_month', $dpkCurSnap)
+                ->whereNotNull('cur.ao_code')->where('cur.ao_code','!=','')
+                ->selectRaw("
+                    cur.ao_code as ao_code,
+
+                    SUM(COALESCE(cur.outstanding,0)) as os_total_kelolaan,
+
+                    SUM(
+                    CASE
+                        WHEN COALESCE(cur.ft_pokok,0) = 0 AND COALESCE(cur.ft_bunga,0) = 0
+                        THEN COALESCE(cur.outstanding,0) ELSE 0
+                    END
+                    ) as os_l0,
+
+                    SUM(
+                    CASE
+                        WHEN GREATEST(COALESCE(cur.ft_pokok,0), COALESCE(cur.ft_bunga,0)) = 1
+                        THEN COALESCE(cur.outstanding,0) ELSE 0
+                    END
+                    ) as os_l1,
+
+                    SUM(
+                    CASE
+                        WHEN GREATEST(COALESCE(cur.ft_pokok,0), COALESCE(cur.ft_bunga,0)) = 2
+                        THEN COALESCE(cur.outstanding,0) ELSE 0
+                    END
+                    ) as os_l2,
+
+                    SUM(
+                    CASE
+                        WHEN GREATEST(COALESCE(cur.ft_pokok,0), COALESCE(cur.ft_bunga,0)) >= 3
+                        THEN COALESCE(cur.outstanding,0) ELSE 0
+                    END
+                    ) as os_ft3plus
+                ")
+                ->groupBy('cur.ao_code');
+            }
+
+            $latestPosLoan = DB::table('loan_accounts')->max('position_date');
+            $latestPosLoan = $latestPosLoan ? \Carbon\Carbon::parse($latestPosLoan)->toDateString() : now()->toDateString();
+
+            // =========================
+            // DPK pemburukan (PER BULAN):
+            // migrasi kolek 1 -> kolek 2
+            // numerator = OS prev (konsisten migrasi)
+            // denominator = os_total_kelolaan (dari osAgg)
+            // =========================
+            if ($mode === 'realtime') {
+
+                $dpkAgg = DB::table('loan_account_snapshots_monthly as prev')
+                    ->join('loan_accounts as cur', function ($j) use ($latestPosLoan) {
+                        $j->on('cur.account_no','=','prev.account_no')
+                        ->whereDate('cur.position_date', $latestPosLoan);
+                    })
+                    ->whereDate('prev.snapshot_month', $dpkPrevSnap)
+                    ->whereNotNull('prev.ao_code')->where('prev.ao_code','!=','')
+                    ->selectRaw("
+                        prev.ao_code as ao_code,
+                        SUM(
+                        CASE WHEN prev.kolek = 1 AND cur.kolek = 2
+                        THEN COALESCE(prev.outstanding,0) ELSE 0 END
+                        ) as dpk_migrasi_os,
+                        SUM(
+                        CASE WHEN prev.kolek = 1 AND cur.kolek = 2
+                        THEN 1 ELSE 0 END
+                        ) as dpk_migrasi_count
+                    ")
+                    ->groupBy('prev.ao_code');
+
+            } else {
+
+                $dpkAgg = DB::table('loan_account_snapshots_monthly as prev')
+                    ->join('loan_account_snapshots_monthly as cur', function ($j) use ($dpkCurSnap) {
+                        $j->on('cur.account_no','=','prev.account_no')
+                        ->whereDate('cur.snapshot_month', $dpkCurSnap);
+                    })
+                    ->whereDate('prev.snapshot_month', $dpkPrevSnap)
+                    ->whereNotNull('prev.ao_code')->where('prev.ao_code','!=','')
+                    ->selectRaw("
+                        prev.ao_code as ao_code,
+                        SUM(
+                        CASE WHEN prev.kolek = 1 AND cur.kolek = 2
+                        THEN COALESCE(prev.outstanding,0) ELSE 0 END
+                        ) as dpk_migrasi_os,
+                        SUM(
+                        CASE WHEN prev.kolek = 1 AND cur.kolek = 2
+                        THEN 1 ELSE 0 END
+                        ) as dpk_migrasi_count
+                    ")
+                    ->groupBy('prev.ao_code');
+            }
+
+            // =========================
+            // SUBQUERY KPI RANGE (aggregate per AO) (NON-DPK)
             // - month < endMonth => eom
             // - month = endMonth => endMonthMode (realtime jika bulan ini, else eom)
             // =========================
@@ -310,14 +446,9 @@ class MarketingKpiSheetController
                 ->selectRaw("
                     k.ao_code,
 
-                    -- akumulasi (YTD)
+                    -- akumulasi (YTD) utk TopUp/NOA/RR komponen
                     SUM(COALESCE(k.topup_realisasi,0)) as topup_realisasi,
                     SUM(COALESCE(k.noa_realisasi,0)) as noa_realisasi,
-
-                    -- DPK komponen
-                    SUM(COALESCE(k.dpk_migrasi_count,0)) as dpk_migrasi_count,
-                    SUM(COALESCE(k.dpk_migrasi_os,0)) as dpk_migrasi_os,
-                    SUM(COALESCE(k.dpk_total_os_akhir,0)) as dpk_total_os_akhir,
 
                     -- RR komponen (lebih valid untuk akumulasi)
                     SUM(COALESCE(k.repayment_total_os,0))  as repayment_total_os,
@@ -351,21 +482,15 @@ class MarketingKpiSheetController
                 ->get()
                 ->keyBy('ao_code');
 
-            $scopeUserIds = $this->scopeUserIdsForLeader($leader, $asOfDate);
-
-            logger()->info('[KPI RO Sheet] scope debug', [
-            'leader_id' => $leader->id,
-            'leader_role' => $leaderRole,
-            'isLeader' => $isLeader,
-            'mode' => $mode,
-            'asOfDate' => $asOfDate,
-            'scopeUserIds_cnt' => count($scopeUserIds),
-            'scopeUserIds_sample' => array_slice($scopeUserIds, 0, 10),
-            ]);
-
             $rows = $usersQ
                 ->leftJoinSub($kpiAgg, 'ka', function ($j) {
                     $j->on('ka.ao_code', '=', 'u.ao_code');
+                })
+                ->leftJoinSub($dpkAgg, 'dpk', function ($j) {
+                    $j->on('dpk.ao_code', '=', 'u.ao_code');
+                })
+                ->leftJoinSub($osAgg, 'os', function ($j) {
+                    $j->on('os.ao_code', '=', 'u.ao_code');
                 })
                 ->selectRaw("
                     u.id as user_id, u.name, u.ao_code, u.level,
@@ -373,10 +498,17 @@ class MarketingKpiSheetController
                     COALESCE(ka.topup_realisasi,0) as topup_realisasi,
                     COALESCE(ka.noa_realisasi,0) as noa_realisasi,
 
-                    COALESCE(ka.dpk_migrasi_count,0) as dpk_migrasi_count,
-                    COALESCE(ka.dpk_migrasi_os,0) as dpk_migrasi_os,
-                    COALESCE(ka.dpk_total_os_akhir,0) as dpk_total_os_akhir,
+                    COALESCE(dpk.dpk_migrasi_count,0) as dpk_migrasi_count,
+                    COALESCE(dpk.dpk_migrasi_os,0) as dpk_migrasi_os,
 
+                    -- OS portfolio (CUR) berbasis FT sebagai sumber RR + denominator DPK
+                    COALESCE(os.os_total_kelolaan,0) as os_total_kelolaan,
+                    COALESCE(os.os_l0,0) as os_l0,
+                    COALESCE(os.os_l1,0) as os_l1,
+                    COALESCE(os.os_l2,0) as os_l2,
+                    COALESCE(os.os_ft3plus,0) as os_ft3plus,
+
+                    -- (opsional) legacy RR (jangan dipakai untuk RR utama lagi)
                     COALESCE(ka.repayment_total_os,0) as repayment_total_os,
                     COALESCE(ka.repayment_os_lancar,0) as repayment_os_lancar,
 
@@ -388,7 +520,7 @@ class MarketingKpiSheetController
                 ")
                 ->orderBy('u.name')
                 ->get();
-
+                
             $periodDate = $periodDate ?? ($periodYmd ?? null);
             if (!$periodDate) {
                 $raw = trim((string)request('period', ''));
@@ -402,10 +534,7 @@ class MarketingKpiSheetController
                 ->get()
                 ->keyBy(fn($m) => str_pad(trim((string)$m->ao_code), 6, '0', STR_PAD_LEFT));
 
-                logger()->info('ROWS count', ['cnt' => $rows->count()]);
-                logger()->info('AO unique', ['cnt' => $rows->pluck('ao_code')->map(fn($x)=>str_pad(trim($x),6,'0',STR_PAD_LEFT))->unique()->count()]);
-
-           // =========================
+            // =========================
             // MAP -> HITUNG ACH, SCORE, PI
             // =========================
             $items = $rows->map(function ($r) use ($weights, $targetMap, $manualNoaMap) {
@@ -420,10 +549,14 @@ class MarketingKpiSheetController
                 $targetTopup = (float)($tg->target_topup_acc ?? 0);
                 $targetNoa   = (int)($tg->target_noa_acc ?? 0);
 
-                // RR actual
-                $totalOs  = (float)($r->repayment_total_os ?? 0);
-                $osLancar = (float)($r->repayment_os_lancar ?? 0);
-                $rrActual = $totalOs > 0 ? round(($osLancar / $totalOs) * 100.0, 2) : 0.0;
+                // =========================
+                // OS portfolio (CUR) -> sumber RR + denominator DPK
+                // RR = OS_L0 / OS_TOTAL
+                // =========================
+                $osTotal = (float)($r->os_total_kelolaan ?? 0);
+                $osL0    = (float)($r->os_l0 ?? 0);
+
+                $rrActual = $osTotal > 0 ? round(($osL0 / $osTotal) * 100.0, 2) : 0.0;
                 $scoreRr  = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6ByActualRr($rrActual);
 
                 // TopUp vs target
@@ -434,13 +567,16 @@ class MarketingKpiSheetController
                 // NOA manual vs target
                 $manual  = $manualNoaMap->get($ao);
                 $noaReal = (int)($manual->noa_pengembangan ?? 0);
-                $achNoa   = \App\Services\Kpi\KpiScoreHelper::achievementPct((float)$noaReal, (float)$targetNoa);
+                $achNoa  = \App\Services\Kpi\KpiScoreHelper::achievementPct((float)$noaReal, (float)$targetNoa);
                 $scoreNoa = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6($achNoa);
 
-                // DPK actual reverse
+                // =========================
+                // DPK (PER BULAN) versi user:
+                // pemburukan = migrasi kolek 1 -> 2
+                // dpk% = migrasi_os / os_total_kelolaan
+                // =========================
                 $sumMigrasiOs = (float)($r->dpk_migrasi_os ?? 0);
-                $sumOsAkhir   = (float)($r->dpk_total_os_akhir ?? 0);
-                $dpkActual    = $sumOsAkhir > 0 ? round(($sumMigrasiOs / $sumOsAkhir) * 100.0, 2) : 0.0;
+                $dpkActual    = $osTotal > 0 ? round(($sumMigrasiOs / $osTotal) * 100.0, 2) : 0.0;
                 $scoreDpk     = \App\Services\Kpi\KpiScoreHelper::scoreBand1to6ByActualDpkReverse($dpkActual);
 
                 // PI
@@ -450,29 +586,78 @@ class MarketingKpiSheetController
                 $piDpk   = round($scoreDpk   * $weights['dpk'], 2);
                 $piTotal = round($piRepay + $piTopup + $piNoa + $piDpk, 2);
 
+                // debug aman
+                logger()->info('[DPK DEBUG]', [
+                    'ao'       => $ao,
+                    'mig_os'   => $sumMigrasiOs,
+                    'mig_cnt'  => (int)($r->dpk_migrasi_count ?? 0),
+                    'total_os' => $osTotal,
+                    'pct'      => $dpkActual,
+                    'os_l0'    => $osL0,
+                    'rr_pct'   => $rrActual,
+                ]);
+
+                if ($ao === '000030') {
+                    logger()->info('[DPK CHECK MAP]', [
+                        'ao'                        => $ao,
+                        'sumMigrasiOs_used_for_pct' => $sumMigrasiOs,
+                        'osTotal_used_for_pct'      => $osTotal,
+                        'dpkActual_pct'             => $dpkActual,
+                        'row_dpk_migrasi_os_raw'    => $r->dpk_migrasi_os ?? null,
+                        'row_os_total_raw'          => $r->os_total_kelolaan ?? null,
+                        'row_os_l0_raw'             => $r->os_l0 ?? null,
+                    ]);
+                }
+
+                if ($ao === '000030') {
+                    logger()->info('[CHECK FT RR]', [
+                        'ao' => $ao,
+                        'os_total' => $osTotal,
+                        'os_l0' => (float)($r->os_l0 ?? 0),
+                        'os_l1' => (float)($r->os_l1 ?? 0),
+                        'os_l2' => (float)($r->os_l2 ?? 0),
+                        'os_ft3plus' => (float)($r->os_ft3plus ?? 0),
+                        'rr_pct' => $rrActual,
+                        'dpk_mig_os' => $sumMigrasiOs,
+                        'dpk_pct' => $dpkActual,
+                    ]);
+                }
+
                 return (object) array_merge((array)$r, [
                     'ao_code' => $ao,
 
-                    'repayment_pct_display' => $rrActual,
-                    'dpk_pct_display'       => $dpkActual,
+                    // display
+                    'repayment_pct_display' => $rrActual,   // RR sesuai user
+                    'dpk_pct_display'       => $dpkActual,  // DPK sesuai user
 
+                    // detail DPK di UI
+                    'dpk_migrasi_os'    => $sumMigrasiOs,
+                    'dpk_migrasi_count' => (int)($r->dpk_migrasi_count ?? 0),
+                    'os_total_kelolaan' => $osTotal, // denom yang benar
+                    'os_l0'             => $osL0,    // biar transparan RR
+
+                    // NOA manual
                     'noa_is_manual'    => (bool)$manual,
                     'noa_manual_notes' => $manual->notes ?? null,
                     'noa_realisasi'    => $noaReal,
 
+                    // targets
                     'target_topup' => $targetTopup,
                     'target_noa'   => $targetNoa,
 
+                    // achievement
                     'ach_rr'    => $rrActual,
                     'ach_dpk'   => $dpkActual,
                     'ach_topup' => $achTopup,
                     'ach_noa'   => $achNoa,
 
+                    // scores
                     'repayment_score' => $scoreRr,
                     'topup_score'     => $scoreTopup,
                     'noa_score'       => $scoreNoa,
                     'dpk_score'       => $scoreDpk,
 
+                    // PI
                     'pi_repayment' => $piRepay,
                     'pi_topup'     => $piTopup,
                     'pi_noa'       => $piNoa,
@@ -481,6 +666,7 @@ class MarketingKpiSheetController
                 ]);
             });
 
+ 
             // penting: tetap kirim items ke view
             return view('kpi.marketing.sheet', [
                 'role'     => $role,
@@ -492,9 +678,9 @@ class MarketingKpiSheetController
                 'tlRecap'  => $tlRecap ?? null,
 
                 'startYtd' => $startYtdDate,
-                'endYtd'   => $endYtdDate, // pakai label endYtdDate yang kamu hitung (latest position_date kalau realtime)
-            ]);  
-      }
+                'endYtd'   => $endYtdDate,
+            ]);
+        }
 
         // ========= SO =========
         if ($role === 'SO') {

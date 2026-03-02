@@ -806,6 +806,7 @@ class RoOsDailyDashboardController extends Controller
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
             ->whereDate('la.position_date', $latestPosDate)
+            ->where('la.outstanding', '>', 0)
             ->where(function ($q) {
                 $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
             })
@@ -915,6 +916,7 @@ class RoOsDailyDashboardController extends Controller
                 ->whereDate('snapshot_month', $prevSnapMonth)
                 ->whereRaw("LPAD(TRIM(ao_code),6,'0') = ?", [$ao])
                 ->whereRaw("COALESCE(ft_pokok,0)=0 AND COALESCE(ft_bunga,0)=0")
+                ->where('outstanding', '>', 0)
                 ->count();
 
             $debugLaLatestAo = DB::table('loan_accounts')
@@ -1028,6 +1030,7 @@ class RoOsDailyDashboardController extends Controller
             ])
             ->whereDate('la.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
+            ->where('la.outstanding', '>', 0)
             ->whereNotNull('la.installment_day')
             ->where('la.installment_day', '>=', 1)
             ->where('la.installment_day', '<=', 31)
@@ -1079,18 +1082,13 @@ class RoOsDailyDashboardController extends Controller
             ])
             ->whereDate('la.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
+            ->where('la.outstanding', '>', 0)
             ->where('la.outstanding', '>=', 500000000)
             ->orderByDesc('la.outstanding')
             ->limit(200)
             ->get();
 
-        // =============================
-        // Inject visit meta ke tabel-tabel
-        // =============================
-        // $dueThisMonth = $attachVisitMeta($dueThisMonth);
-        // $ltEom        = $attachVisitMeta($ltEom);
-        // $jtAngsuran   = $attachVisitMeta($jtAngsuran);
-        // $osBig        = $attachVisitMeta($osBig);
+        
 
         // =============================
         // Insight text (upgrade + bounce + EOM->DPK)

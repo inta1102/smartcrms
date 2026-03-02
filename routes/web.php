@@ -116,6 +116,7 @@ use App\Http\Controllers\Kpi\TlroLeadershipSheetController;
 use App\Http\Controllers\Kpi\KblLeadershipSheetController;
 use App\Http\Controllers\Kpi\RoManualNoaController;
 use App\Http\Controllers\Kpi\RoTopupAdjustmentController;
+use App\Http\Controllers\Kpi\KpiSummaryController;
 
 /**
  * =======================================================
@@ -878,9 +879,20 @@ Route::middleware('auth')->group(function () {
         Route::post('/batches/{batch}/approve', [RoTopupAdjustmentController::class, 'approveBatch'])->name('batches.approve');
     });
     
+   
+
     // -------------------------------
+    // Dashboard Summary
+    // -------------------------------
+
+    Route::get('/kpi/summary', [KpiSummaryController::class, 'index'])
+      ->name('kpi.summary.index');
+      // ->middleware('can:viewDashboard');
+
+       // -------------------------------
     // RKH / LKH (di dalam auth)
     // -------------------------------
+
     Route::get('/rkh/{rkh}/lkh-recap', [LkhRecapController::class, 'show'])
         ->name('lkh.recap.show');
 

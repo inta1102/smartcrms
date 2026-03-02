@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\ImportLog;
+use App\Models\LoanAccountSnapshotMonthly;
 use Carbon\Carbon;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -24,9 +25,23 @@ class RunMonthlyLoanSnapshot implements ShouldQueue
         $monthStart = $d->copy()->startOfMonth()->toDateString();
         $monthEnd   = $d->copy()->endOfMonth()->toDateString();
 
-        // ✅ Rule closing realistis: import sukses terakhir di bulan tsb
+        // ✅ 1) Guard: snapshot bulanan hanya saat EOM
+        if ($d->toDateString() !== $monthEnd) {
+            ImportLog::create([
+                'module'        => 'loan_snapshot_monthly',
+                'position_date' => $d->toDateString(),
+                'run_type'      => 'import',
+                'file_name'     => null,
+                'status'        => 'success',
+                'message'       => "Snapshot SKIP (bukan EOM). this={$d->toDateString()} eom={$monthEnd}",
+                'imported_by'   => null,
+            ]);
+            return;
+        }
+
+        // ✅ 2) Optional: pastikan memang import closing terakhir (kalau kamu tetap mau rule ini)
         $maxSuccessPos = ImportLog::query()
-            ->where('module', 'loans')
+            ->where('module', 'loans') // ⚠️ pastikan sama dengan module import kamu
             ->where('status', 'success')
             ->whereDate('position_date', '>=', $monthStart)
             ->whereDate('position_date', '<=', $monthEnd)
@@ -37,16 +52,22 @@ class RunMonthlyLoanSnapshot implements ShouldQueue
             ImportLog::create([
                 'module'        => 'loan_snapshot_monthly',
                 'position_date' => $d->toDateString(),
-                'run_type'      => 'import',   // enum hanya import|reimport
+                'run_type'      => 'import',
                 'file_name'     => null,
-                'status'        => 'success',  // ⬅️ tetap success
-                'message'       => "Snapshot SKIP (bukan closing bulan). max_success={$maxSuccessPos}, this={$d->toDateString()}",
+                'status'        => 'success',
+                'message'       => "Snapshot SKIP (bukan closing terakhir). max_success={$maxSuccessPos}, this={$d->toDateString()}",
                 'imported_by'   => null,
             ]);
             return;
         }
 
         try {
+            // ✅ 3) Clean refresh agar snapshot_month cuma 1 source_position_date
+            // Kalau kamu setuju snapshot EOM harus “1 versi resmi”
+            LoanAccountSnapshotMonthly::query()
+                ->where('snapshot_month', $monthStart)
+                ->delete();
+
             $exitCode = Artisan::call('crms:snapshot-loan-monthly', [
                 '--month'         => $d->format('Y-m'),
                 '--position_date' => $d->toDateString(),
@@ -57,7 +78,7 @@ class RunMonthlyLoanSnapshot implements ShouldQueue
             ImportLog::create([
                 'module'        => 'loan_snapshot_monthly',
                 'position_date' => $d->toDateString(),
-                'run_type'      => 'auto',
+                'run_type'      => 'import', // ✅ jangan 'auto' kalau enum tidak mendukung
                 'file_name'     => null,
                 'status'        => $exitCode === 0 ? 'success' : 'failed',
                 'message'       => $exitCode === 0
@@ -65,6 +86,10 @@ class RunMonthlyLoanSnapshot implements ShouldQueue
                     : "Snapshot gagal: exitCode={$exitCode} | {$output}",
                 'imported_by'   => null,
             ]);
+
+            if ($exitCode !== 0) {
+                throw new \RuntimeException("Snapshot command exitCode={$exitCode}. {$output}");
+            }
 
         } catch (\Throwable $e) {
             Log::error('[SNAPSHOT] monthly snapshot failed', [
@@ -84,7 +109,7 @@ class RunMonthlyLoanSnapshot implements ShouldQueue
                 'imported_by'   => null,
             ]);
 
-            throw $e; // biar masuk failed_jobs juga (opsional)
+            throw $e;
         }
     }
 }

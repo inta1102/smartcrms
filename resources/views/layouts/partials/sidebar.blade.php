@@ -624,7 +624,7 @@
                 'icon'   => '📊',
                 'href'   => \Illuminate\Support\Facades\Route::has('kpi.tlro.sheet') ? route('kpi.tlro.sheet') : null,
                 'active' => request()->routeIs('kpi.tlro.sheet*'),
-                'show' => $u && in_array($u->roleValue(), ['TLRO','KBL'], true),
+                'show' => $u && in_array($u->roleValue(), ['TLRO'], true),
                 
             ],
 
@@ -633,7 +633,7 @@
                 'icon'   => '📊',
                 'href'   => \Illuminate\Support\Facades\Route::has('kpi.tlfe.sheet') ? route('kpi.tlfe.sheet') : null,
                 'active' => request()->routeIs('kpi.tlfe.sheet*'),
-                'show' => $u && in_array($u->roleValue(), ['TLFE','KBL'], true),
+                'show' => $u && in_array($u->roleValue(), ['TLFE'], true),
                 
             ],
 
@@ -642,7 +642,7 @@
                 'icon'   => '📊',
                 'href'   => \Illuminate\Support\Facades\Route::has('kpi.tlbe.sheet') ? route('kpi.tlbe.sheet') : null,
                 'active' => request()->routeIs('kpi.ksbe.sheet*'),
-                'show' => $u && in_array($u->roleValue(), ['TLBE','KBL'], true),
+                'show' => $u && in_array($u->roleValue(), ['TLBE'], true),
                 
             ],
 
@@ -651,7 +651,7 @@
                 'icon'   => '📊',
                 'href'   => \Illuminate\Support\Facades\Route::has('kpi.ksfe.sheet') ? route('kpi.ksfe.sheet') : null,
                 'active' => request()->routeIs('kpi.ksfe.sheet*'),
-                'show' => $u && in_array($u->roleValue(), ['KSFE','KBL'], true),
+                'show' => $u && in_array($u->roleValue(), ['KSFE'], true),
                 
             ],
 
@@ -660,7 +660,7 @@
                 'icon'   => '📊',
                 'href'   => \Illuminate\Support\Facades\Route::has('kpi.kslr.sheet') ? route('kpi.kslr.sheet') : null,
                 'active' => request()->routeIs('kpi.kslr.sheet*'),
-                'show' => $u && in_array($u->roleValue(), ['KSLR','KBL'], true),
+                'show' => $u && in_array($u->roleValue(), ['KSLR'], true),
                 
             ],
 
@@ -673,7 +673,7 @@
                 'active' => request()->routeIs('kpi.marketing.sheet.ksbe'),
                 'show'   => $u && in_array(
                     strtoupper((string)($u->level instanceof \BackedEnum ? $u->level->value : (string)$u->level)),
-                    ['KSBE','KBL'],
+                    ['KSBE'],
                     true
                 ),
             ],
@@ -766,9 +766,13 @@
             <div class="text-sm font-bold text-slate-900">Menu</div>
             <div class="text-xs text-slate-500">Navigasi utama</div>
             {{-- <div class="mt-1 text-[11px] text-slate-400">role: "{{ $roleValue }}"</div> --}}
-           <div class="mt-1 text-[11px] text-slate-400">
-                roleValue: {{ $u?->roleValue() }} |
-                <!-- isBE: {{ $isBE ? 'YES' : 'NO' }} -->
+            <div class="mt-1 text-[11px] text-slate-400">
+                roleValue: {{ $u?->roleValue() }}
+                @if(!empty($latestPositionDate))
+                    | pos: {{ \Carbon\Carbon::parse($latestPositionDate)->format('d M Y') }}
+                @else
+                    | pos: -
+                @endif
             </div>
 
         </div>

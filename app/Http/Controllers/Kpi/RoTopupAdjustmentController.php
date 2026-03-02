@@ -76,10 +76,9 @@ class RoTopupAdjustmentController extends Controller
             ];
         })->values()->all();
 
-        logger()->info('[TOPUP-ADJ] cifOptions sample', ['sample' => $cifOptions[0] ?? null]);
+      
         $found = collect($cifOptions)->filter(fn($x) => !empty($x['customer_name']))->count();
-        logger()->info('[TOPUP-ADJ] cifOptions name found', ['found' => $found, 'total' => count($cifOptions)]);
-
+       
         // list batches bulan tsb
         $batches = KpiRoTopupAdjBatch::query()
             ->whereDate('period_month', $periodMonth)
@@ -108,22 +107,7 @@ class RoTopupAdjustmentController extends Controller
             ->values()
             ->all();
         
-            logger()->info('[TOPUP-ADJ] before return', [
-            'cifOptions_is_set' => isset($cifOptions),
-            'cifOptions_count'  => is_array($cifOptions ?? null) ? count($cifOptions) : -1,
-            'view'              => 'kpi.ro.topup_adj.index',
-            ]);
-
-            logger()->info('[TOPUP-ADJ] return payload', [
-            'cifOptions_count' => is_array($data['cifOptions'] ?? null) ? count($data['cifOptions']) : -1
-            ]);
-
-            logger()->info('[TOPUP-ADJ] final cifOptions for view', [
-                'isset' => isset($cifOptions),
-                'type'  => gettype($cifOptions ?? null),
-                'count' => is_array($cifOptions ?? null) ? count($cifOptions) : -1,
-            ]);
- 
+           
         return view('kpi.ro.topup_adj.index', [
             'period'        => $period,
             'periodMonth'   => $periodMonth,
