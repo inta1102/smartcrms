@@ -6,6 +6,11 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
+use App\Models\User;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
+
+
 class ShmCheckRequest extends Model
 {
     protected $table = 'shm_check_requests';
@@ -77,12 +82,81 @@ class ShmCheckRequest extends Model
     }
 
 
-    public function scopeVisibleFor($q, $user)
-    {
-        $rv = strtoupper(trim($user->roleValue() ?? ''));
-        if (in_array($rv, ['KSA','KBO','SAD'], true)) return $q;
+    // App\Models\ShmCheckRequest.php
 
+    public function scopeVisibleFor(Builder $q, User $user): Builder
+    {
+        $rv = strtoupper(trim($user->roleValue() ?? $user->level ?? ''));
+
+        // =========================
+        // 1) SAD / KSA / KBO
+        // =========================
+        if (in_array($rv, ['KSA', 'KBO', 'SAD'], true)) {
+
+            // Kalau mau per-cabang (umum)
+            // return $q->where('branch_code', $user->branch_code);
+
+            // Kalau SAD/KSA boleh lihat semua cabang (opsi)
+            return $q;
+        }
+
+        // =========================
+        // 2) Leadership (TL/KSLR/KBL)
+        // =========================
+        if (in_array($rv, ['KSLR','KBL','TLRO','TLSO','TLUM','TLFE','TLBE','KSBE','KSFE'], true)) {
+
+            $ids = $this->resolveSubordinateUserIds($user);
+
+            // fail-safe: kalau belum ada mapping org_assignments, minimal lihat miliknya sendiri
+            if (empty($ids)) {
+                return $q->where('requested_by', $user->id);
+            }
+
+            // pemohon bawahan + dirinya (kadang leader juga bisa bikin request)
+            $ids[] = $user->id;
+            $ids = array_values(array_unique($ids));
+
+            return $q->whereIn('requested_by', $ids);
+        }
+
+        // =========================
+        // 3) Default: pemohon
+        // =========================
         return $q->where('requested_by', $user->id);
+    }
+
+    /**
+     * Multi-level subordinate resolution via org_assignments.
+     * Asumsi tabel: org_assignments(leader_id, user_id, is_active, effective_from/effective_to optional)
+     */
+    protected function resolveSubordinateUserIds(User $leader): array
+    {
+        // ambil subordinates level-1
+        $seen = [];
+        $queue = DB::table('org_assignments')
+            ->where('leader_id', $leader->id)
+            ->where('is_active', 1)
+            ->pluck('user_id')
+            ->toArray();
+
+        while (!empty($queue)) {
+            $uid = array_shift($queue);
+            if (isset($seen[$uid])) continue;
+            $seen[$uid] = true;
+
+            // ambil anak dari anak (recursive BFS)
+            $children = DB::table('org_assignments')
+                ->where('leader_id', $uid)
+                ->where('is_active', 1)
+                ->pluck('user_id')
+                ->toArray();
+
+            foreach ($children as $c) {
+                if (!isset($seen[$c])) $queue[] = $c;
+            }
+        }
+
+        return array_keys($seen);
     }
 
     public const NOTARIES = [
@@ -91,4 +165,25 @@ class ShmCheckRequest extends Model
         'Ricky',
     ];
 
+    // App\Models\ShmCheckRequest.php
+
+    public function getProgressLabelAttribute(): string
+    {
+        $s = (string)($this->status ?? '');
+
+        // revisi prioritas
+        if ($s === self::STATUS_REVISION_REQUESTED) return 'Revisi diminta (menunggu approval SAD/KSA)';
+        if ($s === self::STATUS_REVISION_APPROVED)  return 'Revisi disetujui (menunggu upload AO)';
+
+        if ($this->closed_at || $s === self::STATUS_CLOSED) return 'Closed (selesai)';
+        if ($this->result_uploaded_at) return 'Hasil diupload (menunggu closing)';
+        if ($this->sent_to_bpn_at) return 'Proses BPN (menunggu hasil)';
+        if ($this->handed_to_sad_at) return 'Berkas fisik diserahkan ke KSA/KBO';
+        if ($this->signed_uploaded_at) return 'Signed diupload (menunggu serah fisik)';
+        if ($this->sp_sk_uploaded_at) return 'SP/SK diupload (menunggu tanda tangan debitur)';
+        if ($this->sent_to_notary_at) return 'Ke Notaris (menunggu SP/SK)';
+        if ($this->submitted_at) return 'Submitted (menunggu diproses SAD/KSA)';
+
+        return 'Draft/Unknown';
+    }
 }

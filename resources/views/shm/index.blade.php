@@ -24,6 +24,38 @@
         \App\Models\ShmCheckRequest::STATUS_SENT_TO_NOTARY => 0,
         \App\Models\ShmCheckRequest::STATUS_SENT_TO_BPN => 0,
     ];
+
+    // =========================
+    // UI helpers (badge status + progress)
+    // =========================
+    $statusBadgeClass = function ($status) {
+        $s = strtoupper(trim((string) $status));
+
+        return match ($s) {
+            \App\Models\ShmCheckRequest::STATUS_SUBMITTED => 'bg-blue-50 text-blue-700 border-blue-200',
+            \App\Models\ShmCheckRequest::STATUS_SENT_TO_NOTARY => 'bg-purple-50 text-purple-700 border-purple-200',
+            \App\Models\ShmCheckRequest::STATUS_WAITING_SP_SK => 'bg-amber-50 text-amber-800 border-amber-200',
+            \App\Models\ShmCheckRequest::STATUS_SP_SK_UPLOADED => 'bg-amber-50 text-amber-800 border-amber-200',
+            \App\Models\ShmCheckRequest::STATUS_SIGNED_UPLOADED => 'bg-indigo-50 text-indigo-700 border-indigo-200',
+            \App\Models\ShmCheckRequest::STATUS_HANDED_TO_SAD => 'bg-slate-50 text-slate-700 border-slate-200',
+            \App\Models\ShmCheckRequest::STATUS_SENT_TO_BPN => 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200',
+            \App\Models\ShmCheckRequest::STATUS_RESULT_UPLOADED => 'bg-emerald-50 text-emerald-700 border-emerald-200',
+            \App\Models\ShmCheckRequest::STATUS_CLOSED => 'bg-emerald-50 text-emerald-700 border-emerald-200',
+            \App\Models\ShmCheckRequest::STATUS_REJECTED => 'bg-rose-50 text-rose-700 border-rose-200',
+            \App\Models\ShmCheckRequest::STATUS_REVISION_REQUESTED => 'bg-amber-50 text-amber-800 border-amber-200',
+            \App\Models\ShmCheckRequest::STATUS_REVISION_APPROVED => 'bg-blue-50 text-blue-700 border-blue-200',
+            default => 'bg-slate-50 text-slate-700 border-slate-200',
+        };
+    };
+
+    $progressText = function ($row) {
+        // accessor: getProgressLabelAttribute()
+        $p = $row->progress_label ?? null;
+        if (is_string($p) && trim($p) !== '') return $p;
+
+        // fallback: status (aman kalau accessor belum ada)
+        return strtoupper((string)($row->status ?? '-'));
+    };
 @endphp
 
 <div class="mx-auto max-w-6xl px-4 py-6">
@@ -90,7 +122,7 @@
                                     @endphp
 
                                     <a href="{{ route('shm.index', $params) }}"
-                                        class="inline-flex min-w-[120px] items-center justify-between gap-2 rounded-full border px-3 py-2 text-xs font-semibold {{ $chipClass }}">
+                                       class="inline-flex min-w-[120px] items-center justify-between gap-2 rounded-full border px-3 py-2 text-xs font-semibold {{ $chipClass }}">
                                         <span class="max-w-[90px] truncate">{{ $label }}</span>
 
                                         <span class="inline-flex min-w-[1.5rem] items-center justify-center rounded-full px-2 py-0.5 text-[11px] font-bold {{ $badgeClass }}">
@@ -110,6 +142,7 @@
                         @endif
                     </div>
                 @endif
+
                 <div class="flex gap-2 sm:justify-end">
                     <button type="submit"
                             class="w-1/2 sm:w-auto rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
@@ -117,7 +150,7 @@
                     </button>
 
                     <a href="{{ route('shm.index') }}"
-                    class="w-1/2 sm:w-auto rounded-xl border border-slate-200 bg-white px-4 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                       class="w-1/2 sm:w-auto rounded-xl border border-slate-200 bg-white px-4 py-2 text-center text-sm font-semibold text-slate-700 hover:bg-slate-50">
                         Reset
                     </a>
                 </div>
@@ -130,6 +163,10 @@
     ========================= --}}
     <div class="mt-4 space-y-3 md:hidden">
         @forelse($rows as $row)
+            @php
+                $badge = $statusBadgeClass($row->status);
+            @endphp
+
             <div class="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
                 <div class="flex items-start justify-between gap-3">
                     <div class="min-w-0">
@@ -141,9 +178,17 @@
                         </div>
                     </div>
 
-                    <span class="shrink-0 inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">
+                    <span class="shrink-0 inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold {{ $badge }}">
                         {{ $row->status }}
                     </span>
+                </div>
+
+                {{-- Progress --}}
+                <div class="mt-3 rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
+                    <div class="text-[11px] font-semibold text-slate-600">Posisi / Progress</div>
+                    <div class="mt-0.5 text-xs font-semibold text-slate-900">
+                        {{ $progressText($row) }}
+                    </div>
                 </div>
 
                 <div class="mt-3 grid grid-cols-2 gap-2 text-xs">
@@ -201,6 +246,7 @@
                         <th class="px-4 py-3">No Sertifikat</th>
                         <th class="px-4 py-3">Notaris</th>
                         <th class="px-4 py-3">Status</th>
+                        <th class="px-4 py-3">Posisi / Progress</th>
                         <th class="px-4 py-3">Dibuat</th>
                         <th class="px-4 py-3 text-right">Aksi</th>
                     </tr>
@@ -208,6 +254,10 @@
 
                 <tbody class="divide-y divide-slate-100">
                     @forelse($rows as $row)
+                        @php
+                            $badge = $statusBadgeClass($row->status);
+                        @endphp
+
                         <tr class="text-sm text-slate-700 hover:bg-slate-50">
                             <td class="px-4 py-3 whitespace-nowrap">
                                 <div class="font-semibold text-slate-900">{{ $row->request_no }}</div>
@@ -222,10 +272,16 @@
                             <td class="px-4 py-3 whitespace-nowrap">{{ $row->certificate_no ?? '-' }}</td>
                             <td class="px-4 py-3">{{ $row->notary_name ?? '-' }}</td>
 
-                            <td class="px-4 py-3">
-                                <span class="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                            <td class="px-4 py-3 whitespace-nowrap">
+                                <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold {{ $badge }}">
                                     {{ $row->status }}
                                 </span>
+                            </td>
+
+                            <td class="px-4 py-3">
+                                <div class="text-xs font-semibold text-slate-900">
+                                    {{ $progressText($row) }}
+                                </div>
                             </td>
 
                             <td class="px-4 py-3 whitespace-nowrap text-xs text-slate-600">
@@ -241,7 +297,7 @@
                         </tr>
                     @empty
                         <tr>
-                            <td colspan="7" class="px-4 py-10 text-center text-sm text-slate-500">
+                            <td colspan="8" class="px-4 py-10 text-center text-sm text-slate-500">
                                 Belum ada data pengajuan.
                             </td>
                         </tr>

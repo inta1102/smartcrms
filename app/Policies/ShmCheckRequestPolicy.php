@@ -23,23 +23,17 @@ class ShmCheckRequestPolicy
 
         return in_array($rv, [
             'AO','RO','SO','BE','FE',
-            'KSA','KBO','SAD','TLRO','TLSO','TLAO','TLBE','TLFE','TLUM',
+            'KSA','KBO','SAD','TLRO','TLSO','TLAO','TLBE','TLFE','TLUM','KSLR','KSBE','KSFE',
         ], true);
     }
 
     public function view(User $user, ShmCheckRequest $req): bool
     {
-        $rv = $this->rv($user);
-
-        // admin scope
-        if (in_array($rv, ['KSA','KBO','SAD','TLRO','TLSO','TLAO','TLBE','TLFE','TLUM'], true)) return true;
-
-        // pemohon hanya miliknya sendiri
-        if (in_array($rv, ['AO','RO','SO','BE','FE'], true)) {
-            return (int) $req->requested_by === (int) $user->id;
-        }
-
-        return false;
+        // gunakan scope yang sama agar konsisten
+        return ShmCheckRequest::query()
+            ->whereKey($req->id)
+            ->visibleFor($user)
+            ->exists();
     }
 
     public function create(User $user): bool
