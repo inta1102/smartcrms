@@ -289,6 +289,11 @@ class MarketingKpiSheetController
             // L2: max(ft_pokok,ft_bunga)=2
             // RR = OS_L0 / OS_Total
             // =========================
+            $latestPosLoan = DB::table('loan_accounts')->max('position_date');
+            $latestPosLoan = $latestPosLoan
+                ? \Carbon\Carbon::parse($latestPosLoan)->toDateString()
+                : now()->toDateString();
+                
             if ($mode === 'realtime') {
 
                 $osAgg = DB::table('loan_accounts as cur')
