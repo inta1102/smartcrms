@@ -162,5 +162,15 @@ class AuthServiceProvider extends ServiceProvider
         Gate::define('recalcMarketingKpi', function ($user) {
             return in_array($user->roleValue(), ['KBL','ADMIN','SUPERADMIN'], true);
         });
+
+        Gate::define('monitoring-ht-view', function ($user) {
+            return in_array($user->roleValue(), [
+                'KBL',
+                'KSLR',
+                'BE',
+                'FE',
+                
+            ], true);
+        });
     }
 }

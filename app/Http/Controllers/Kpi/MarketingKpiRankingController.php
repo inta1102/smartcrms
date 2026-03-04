@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use App\Services\Kpi\MarketingKpiMonthlyService;
 
+
 class MarketingKpiRankingController extends Controller
 {
     public function goto(Request $request)
@@ -421,17 +422,48 @@ class MarketingKpiRankingController extends Controller
 
         $period = Carbon::createFromFormat('Y-m', $data['period'])->startOfMonth();
 
-        $aos = User::query()
-            ->whereNotNull('ao_code')
-            ->where('ao_code', '!=', '')
-            ->whereIn('level', ['AO', 'RO', 'SO', 'FE', 'BE'])
-            ->get(['id', 'ao_code', 'name', 'level']);
+        DB::transaction(function () use ($svc, $period) {
 
-        foreach ($aos as $ao) {
-            $svc->recalcForUserAndPeriod((int) $ao->id, $period);
-        }
+            // =========================================
+            // 1) STAFF dulu (fondasi)
+            // =========================================
+            $staffUsers = User::query()
+                ->whereIn('level', ['AO','RO','SO','FE','BE'])
+                ->whereNotNull('ao_code')
+                ->where('ao_code', '!=', '')
+                ->orderBy('level')
+                ->orderBy('id')
+                ->get(['id','level','ao_code','name']);
 
-        return back()->with('status', 'Recalc KPI Marketing berhasil.');
+            foreach ($staffUsers as $u) {
+                $svc->recalcAnyUserAndPeriod((int)$u->id, $period);
+            }
+
+            // =========================================
+            // 2) LEADERSHIP (urutan penting)
+            // TL -> KASI -> KABAG
+            // =========================================
+            $leaderRolesOrdered = [
+                // TL
+                'TLRO','TLUM','TLFE','TLBE','TLSO',
+                // KASI
+                'KSLR','KSFE','KSBE','KSLU','KSLM','KSLK','KSLP','KSLN',
+                // KABAG
+                'KBL','KBO','KBU','KBP','KBN',
+            ];
+
+            $leaders = User::query()
+                ->whereIn('level', $leaderRolesOrdered)
+                ->orderByRaw("FIELD(level,'" . implode("','", $leaderRolesOrdered) . "')")
+                ->orderBy('id')
+                ->get(['id','level','name']);
+
+            foreach ($leaders as $u) {
+                $svc->recalcAnyUserAndPeriod((int)$u->id, $period);
+            }
+        });
+
+        return back()->with('status', 'Recalc KPI Marketing (ALL ROLE) berhasil.');
     }
 
     private function resolveRoMode(Carbon $period): string

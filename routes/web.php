@@ -377,7 +377,7 @@ Route::middleware('auth')->group(function () {
     });
 
     // Monitoring HT (auth + gate)
-    Route::middleware(['can:viewHtMonitoring'])
+    Route::middleware(['can:monitoring-ht-view'])
         ->prefix('monitoring/ht')
         ->name('monitoring.ht.')
         ->group(function () {
@@ -1090,3 +1090,6 @@ Route::post('/cases/{case}/sync-legacy-sp', [NplCaseController::class, 'syncLega
 
 Route::post('/cases/{case}/legal/start', [LegalEscalationController::class, 'start'])
     ->name('cases.legal.start');
+
+Route::get('/kpi/export/all', [\App\Http\Controllers\Kpi\KpiExportController::class, 'exportAll'])
+    ->name('kpi.export.all');

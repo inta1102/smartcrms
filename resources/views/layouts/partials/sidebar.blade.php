@@ -192,7 +192,7 @@
     }
 
     // ====== Monitoring HT gate ======
-    $canViewHtMonitoring = $u ? Gate::allows('viewHtMonitoring') : false;
+    $canViewHtMonitoring = $u ? Gate::allows('monitoring-ht-view') : false;
 
     // ✅ 1 pintu supervisi
     $supervisionHomeUrl = $routeIfExists('supervision.home') ?? '#';

@@ -7,6 +7,8 @@ use App\Models\MarketingKpiTarget;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+
 
 class MarketingKpiMonthlyService
 {
@@ -135,6 +137,161 @@ class MarketingKpiMonthlyService
 
             return $m;
         });
+    }
+
+    public function recalcAnyUserAndPeriod(int $userId, string|Carbon $period): void
+    {
+        $period = Carbon::parse($period)->startOfMonth();
+
+        $user = User::query()->findOrFail($userId);
+
+        // Di project kamu: role kadang di level, kadang di role/roleValue
+        $role = $this->roleValueFromUser($user);
+
+        
+        // =========================
+        // STAFF: AO/RO/SO/FE/BE
+        // =========================
+        if (in_array($role, ['AO','RO','SO','FE','BE'], true)) {
+            // method lama kamu tetap dipakai (return MarketingKpiMonthly)
+            $this->recalcForUserAndPeriod($userId, $period);
+            return;
+        }
+
+        // =========================
+        // LEADERSHIP (TL / KASI / KABAG)
+        // =========================
+        
+
+        $builderClass = $this->resolveLeadershipBuilderClass($role);
+        if ($builderClass) {
+            $this->runLeadershipBuilderIfAny($builderClass, $user, $period);
+        }
+        return;
+
+        // Default: no-op (biar aman)
+    }
+    
+    private function roleValueFromUser(User $user): string
+    {
+        // kandidat field yang mungkin dipakai di projectmu
+        $candidates = [
+            // $user->role_value ?? null,
+            $user->roleValue() ?? null, // kalau method ada
+            // $user->role ?? null,
+            $user->level ?? null,
+        ];
+
+        foreach ($candidates as $v) {
+            if ($v === null) continue;
+
+            // PHP backed enum: punya ->value
+            if (is_object($v) && property_exists($v, 'value')) {
+                $s = (string) $v->value;
+                if ($s !== '') return strtoupper($s);
+            }
+
+            // UnitEnum (enum biasa) punya name
+            if ($v instanceof \UnitEnum) {
+                $s = (string) $v->name;
+                if ($s !== '') return strtoupper($s);
+            }
+
+            // string biasa
+            if (is_string($v)) {
+                $s = trim($v);
+                if ($s !== '') return strtoupper($s);
+            }
+        }
+
+        return '';
+    }
+
+    private function resolveLeadershipBuilderClass(string $role): ?string
+    {
+        $role = strtoupper($role);
+
+        // ===== TL family =====
+        $tlMap = [
+            'TLRO' => \App\Services\Kpi\TlroLeadershipBuilder::class,
+            'TLUM' => \App\Services\Kpi\TlumMarketingMonthlyBuilder::class,
+            'TLFE' => \App\Services\Kpi\TlfeLeadershipBuilder::class,
+            'TLBE' => \App\Services\Kpi\TlBeMonthlyService::class,
+            // 'TLSO' => \App\Services\Kpi\Leadership\TlsoMarketingMonthlyBuilder::class,
+            // tambahin kalau ada lagi
+        ];
+
+        // ===== KASI family (KS*) =====
+        $ksMap = [
+            'KSLR' => \App\Services\Kpi\KslrMonthlyBuilder::class,
+            'KSFE' => \App\Services\Kpi\KsfeLeadershipBuilder::class,
+            'KSBE' => \App\Services\Kpi\KsbeKpiMonthlyService::class,
+            // 'KSLU' => \App\Services\Kpi\Leadership\KsluMarketingMonthlyBuilder::class,
+            // 'KSSO' => \App\Services\Kpi\Leadership\KssoMarketingMonthlyBuilder::class,
+            // tambahin kalau ada lagi
+        ];
+
+        // ===== KABAG family =====
+        $kabagMap = [
+            'KBL'  => \App\Services\Kpi\KblMonthlyBuilder::class,
+            // contoh kalau ada: 'KBO' => ..., dst
+        ];
+
+        if (isset($tlMap[$role])) return $tlMap[$role];
+        if (isset($ksMap[$role])) return $ksMap[$role];
+        if (isset($kabagMap[$role])) return $kabagMap[$role];
+
+        return null; // unknown role -> no builder
+    }
+
+    
+    private function runLeadershipBuilderIfAny(string $builderClass, User $user, Carbon $period): void
+    {
+        if (!class_exists($builderClass)) {
+            Log::warning('KPI Recalc builder class not found', [
+                'builder_class' => $builderClass,
+                'user_id' => $user->id,
+                'role' => $this->roleValueFromUser($user),
+            ]);
+            return;
+        }
+
+        $builder = app($builderClass);
+
+        $calls = [
+            // method => args
+            ['buildForLeader', [$user, $period]],
+            ['buildForLeader', [$user->id, $period]],
+            ['build',          [$user, $period]],
+            ['build',          [$user->id, $period]],
+            ['recalcForLeader',[$user, $period]],
+            ['recalcForLeader',[$user->id, $period]],
+            ['recalcAnyUserAndPeriod', [$user->id, $period]],
+            ['recalcForUserAndPeriod', [$user->id, $period]],
+            ['handle',         [$user, $period]],
+            ['handle',         [$user->id, $period]],
+        ];
+
+        foreach ($calls as [$method, $args]) {
+            if (method_exists($builder, $method)) {
+                Log::info('KPI Recalc builder call', [
+                    'builder_class' => $builderClass,
+                    'method' => $method,
+                    'user_id' => $user->id,
+                    'role' => $this->roleValueFromUser($user),
+                    'period' => $period->toDateString(),
+                ]);
+
+                $builder->{$method}(...$args);
+                return;
+            }
+        }
+
+        Log::warning('KPI Recalc builder has no compatible method', [
+            'builder_class' => $builderClass,
+            'user_id' => $user->id,
+            'role' => $this->roleValueFromUser($user),
+        ]);
     }
 
     /**

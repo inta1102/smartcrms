@@ -13,17 +13,33 @@ class TlfeLeadershipBuilder
         return DB::transaction(function () use ($tlfeId, $periodYmd) {
 
             $period = Carbon::parse($periodYmd)->startOfMonth();
-            $mode   = $this->resolveMode($period);
 
             /*
             |--------------------------------------------------------------------------
-            | 1. Ambil FE Scope (org_assignments)
+            | 1. Ambil FE Scope (org_assignments) - pakai overlap effective date
             |--------------------------------------------------------------------------
             */
-            $feIds = DB::table('org_assignments')
-                ->where('leader_id', $tlfeId)
-                ->pluck('user_id')
+            $periodStart = $period->copy()->startOfMonth()->toDateString();
+            $periodEnd   = $period->copy()->endOfMonth()->toDateString();
+
+            $feIds = DB::table('org_assignments as oa')
+                ->join('users as u', 'u.id', '=', 'oa.user_id')
+                ->where('oa.leader_id', $tlfeId)
+                ->whereRaw("UPPER(TRIM(u.level)) = 'FE'")
+                // overlap rule: assignment berlaku pada bulan tsb
+                ->whereDate('oa.effective_from', '<=', $periodEnd)
+                ->where(function ($q) use ($periodStart) {
+                    $q->whereNull('oa.effective_to')
+                      ->orWhereDate('oa.effective_to', '>=', $periodStart);
+                })
+                ->pluck('oa.user_id')
+                ->map(fn($x) => (int)$x)
+                ->unique()
+                ->values()
                 ->toArray();
+
+            // resolve mode harus setelah punya scope (biar bisa cek data per FE)
+            $mode = $this->resolveMode($period, $feIds);
 
             if (empty($feIds)) {
                 return $this->storeEmpty($tlfeId, $period, $mode);
@@ -31,14 +47,29 @@ class TlfeLeadershipBuilder
 
             /*
             |--------------------------------------------------------------------------
-            | 2. Ambil KPI FE
+            | 2. Ambil KPI FE (sesuai mode) + fallback mode kalau kosong
             |--------------------------------------------------------------------------
             */
             $feRows = DB::table('kpi_fe_monthlies')
-                ->whereDate('period', $period)
+                ->whereDate('period', $period->toDateString())
                 ->where('calc_mode', $mode)
-                ->whereIn('fe_user_id', $feIds)   // ✅ FIX
+                ->whereIn('fe_user_id', $feIds) // ✅ kolom kamu: fe_user_id
                 ->get();
+
+            if ($feRows->isEmpty()) {
+                $fallbackMode = $mode === 'eom' ? 'realtime' : 'eom';
+
+                $feRows2 = DB::table('kpi_fe_monthlies')
+                    ->whereDate('period', $period->toDateString())
+                    ->where('calc_mode', $fallbackMode)
+                    ->whereIn('fe_user_id', $feIds)
+                    ->get();
+
+                if ($feRows2->isNotEmpty()) {
+                    $mode = $fallbackMode;
+                    $feRows = $feRows2;
+                }
+            }
 
             if ($feRows->isEmpty()) {
                 return $this->storeEmpty($tlfeId, $period, $mode);
@@ -51,24 +82,26 @@ class TlfeLeadershipBuilder
             | 3. PI Scope
             |--------------------------------------------------------------------------
             */
-            $piScope = round($feRows->avg('total_score_weighted'), 2);
+            $piScope = round((float)$feRows->avg('total_score_weighted'), 2);
 
             /*
             |--------------------------------------------------------------------------
             | 4. Stability
             |--------------------------------------------------------------------------
             */
-            $pis      = $feRows->pluck('total_score_weighted');
-            $minPi    = $pis->min();
-            $maxPi    = $pis->max();
+            $pis      = $feRows->pluck('total_score_weighted')->map(fn($v) => (float)$v);
+            $minPi    = (float)$pis->min();
+            $maxPi    = (float)$pis->max();
             $spread   = $maxPi - $minPi;
             $bottom   = $minPi;
 
-            $coverage = $pis->filter(fn($v) => $v >= 3)->count() / $feCount * 100;
+            $coverage = $feCount > 0
+                ? ($pis->filter(fn($v) => (float)$v >= 3)->count() / $feCount * 100)
+                : 0;
 
-            $spreadScore   = $this->scoreSpread($spread);
-            $bottomScore   = $this->scoreBottom($bottom);
-            $coverageScore = $this->scoreCoverage($coverage);
+            $spreadScore   = $this->scoreSpread((float)$spread);
+            $bottomScore   = $this->scoreBottom((float)$bottom);
+            $coverageScore = $this->scoreCoverage((float)$coverage);
 
             $stabilityIndex = round(
                 0.4 * $spreadScore +
@@ -82,15 +115,23 @@ class TlfeLeadershipBuilder
             | 5. Risk Index (pakai actual migrasi jika ada)
             |--------------------------------------------------------------------------
             */
-            $riskIndex = null;
+            $avgMigrasi = null;
+            $riskIndex  = null;
 
-            if ($feRows->first()->migrasi_npl_actual_pct ?? false) {
-                $avgMigrasi = $feRows->avg('migrasi_npl_actual_pct');
-                $riskIndex  = $this->scoreRisk($avgMigrasi);
+            // pakai avg migrasi kalau field ada dan minimal ada 1 value non-null
+            $hasMigrasi = $feRows->contains(function ($r) {
+                return isset($r->migrasi_npl_actual_pct) && $r->migrasi_npl_actual_pct !== null;
+            });
+
+            if ($hasMigrasi) {
+                $avgMigrasi = (float)$feRows
+                    ->filter(fn($r) => isset($r->migrasi_npl_actual_pct) && $r->migrasi_npl_actual_pct !== null)
+                    ->avg('migrasi_npl_actual_pct');
+
+                $riskIndex = $this->scoreRisk((float)$avgMigrasi);
             } else {
                 // fallback proxy pakai PI scope
-                $riskIndex = round($piScope, 2);
-                $avgMigrasi = null;
+                $riskIndex = round((float)$piScope, 2);
             }
 
             /*
@@ -99,19 +140,20 @@ class TlfeLeadershipBuilder
             |--------------------------------------------------------------------------
             */
             $prevPeriod = $period->copy()->subMonth();
-            $prevMode   = $this->resolveMode($prevPeriod);
+
+            // prevMode: pakai smart resolve berbasis scope juga (biar konsisten)
+            $prevMode = $this->resolveMode($prevPeriod, $feIds);
 
             $prev = DB::table('kpi_tlfe_monthlies')
-                ->whereDate('period', $prevPeriod)
+                ->whereDate('period', $prevPeriod->toDateString())
                 ->where('tlfe_id', $tlfeId)
                 ->where('calc_mode', $prevMode)
                 ->first();
 
             $improvementIndex = 3.00; // netral
-
             if ($prev) {
-                $delta = $piScope - $prev->pi_scope;
-                $improvementIndex = $this->scoreImprovement($delta);
+                $delta = (float)$piScope - (float)($prev->pi_scope ?? 0);
+                $improvementIndex = $this->scoreImprovement((float)$delta);
             }
 
             /*
@@ -120,14 +162,14 @@ class TlfeLeadershipBuilder
             |--------------------------------------------------------------------------
             */
             $leadershipIndex = round(
-                0.40 * $piScope +
-                0.25 * $stabilityIndex +
-                0.20 * $riskIndex +
-                0.15 * $improvementIndex,
+                0.40 * (float)$piScope +
+                0.25 * (float)$stabilityIndex +
+                0.20 * (float)$riskIndex +
+                0.15 * (float)$improvementIndex,
                 2
             );
 
-            $status = $this->resolveStatus($leadershipIndex);
+            $status = $this->resolveStatus((float)$leadershipIndex);
 
             /*
             |--------------------------------------------------------------------------
@@ -136,7 +178,7 @@ class TlfeLeadershipBuilder
             */
             return KpiTlfeMonthly::updateOrCreate(
                 [
-                    'period'    => $period,
+                    'period'    => $period->toDateString(),
                     'tlfe_id'   => $tlfeId,
                     'calc_mode' => $mode,
                 ],
@@ -149,10 +191,13 @@ class TlfeLeadershipBuilder
                     'leadership_index'  => $leadershipIndex,
                     'status_label'      => $status,
                     'meta' => [
-                        'spread'        => $spread,
-                        'bottom'        => $bottom,
-                        'coverage_pct'  => round($coverage,2),
-                        'avg_migrasi'   => $avgMigrasi ?? null,
+                        'spread'        => round((float)$spread, 4),
+                        'bottom'        => round((float)$bottom, 4),
+                        'coverage_pct'  => round((float)$coverage, 2),
+                        'avg_migrasi'   => $avgMigrasi,
+                        'scope_fe_ids'  => $feIds, // opsional: bantu audit
+                        'period_start'  => $periodStart,
+                        'period_end'    => $periodEnd,
                     ],
                 ]
             );
@@ -165,10 +210,33 @@ class TlfeLeadershipBuilder
     |--------------------------------------------------------------------------
     */
 
-    private function resolveMode(Carbon $period): string
+    private function resolveMode(Carbon $period, array $feIds = []): string
     {
-        $now = now()->startOfMonth();
-        return $period->equalTo($now) ? 'realtime' : 'eom';
+        $currentMonth = now()->startOfMonth();
+
+        // bulan berjalan => realtime
+        if ($period->equalTo($currentMonth)) return 'realtime';
+
+        // cek EOM dulu (kalau ada, pakai EOM)
+        $hasEom = DB::table('kpi_fe_monthlies')
+            ->whereDate('period', $period->toDateString())
+            ->when(!empty($feIds), fn($q) => $q->whereIn('fe_user_id', $feIds)) // ✅ kolom kamu: fe_user_id
+            ->where('calc_mode', 'eom')
+            ->exists();
+
+        if ($hasEom) return 'eom';
+
+        // kalau EOM belum ada tapi realtime ada => pakai realtime
+        $hasRealtime = DB::table('kpi_fe_monthlies')
+            ->whereDate('period', $period->toDateString())
+            ->when(!empty($feIds), fn($q) => $q->whereIn('fe_user_id', $feIds))
+            ->where('calc_mode', 'realtime')
+            ->exists();
+
+        if ($hasRealtime) return 'realtime';
+
+        // fallback default
+        return 'eom';
     }
 
     private function scoreSpread(float $spread): int
@@ -245,7 +313,7 @@ class TlfeLeadershipBuilder
     {
         return KpiTlfeMonthly::updateOrCreate(
             [
-                'period'    => $period,
+                'period'    => $period->toDateString(),
                 'tlfe_id'   => $tlfeId,
                 'calc_mode' => $mode,
             ],

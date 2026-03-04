@@ -21,7 +21,7 @@ class HtMonitoringController extends Controller
      */
     private function authorizeMonitoring(): void
     {
-        Gate::authorize('viewHtMonitoring'); // ✅ cocok dengan middleware can:viewHtMonitoring
+        \Illuminate\Support\Facades\Gate::authorize('monitoring-ht-view'); // ✅ cocok dengan middleware can:viewHtMonitoring
     }
 
 

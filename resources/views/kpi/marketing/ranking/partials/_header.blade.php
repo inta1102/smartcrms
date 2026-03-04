@@ -72,8 +72,14 @@
             @csrf
             <input type="hidden" name="period" value="{{ $period->format('Y-m') }}">
             <button class="w-full md:w-auto rounded-xl bg-amber-600 px-4 py-2 text-white text-sm font-semibold hover:bg-amber-700">
-                🔄 Recalc All AO
+                🔄 Hitung Semua KPI
             </button>
         </form>
+
+        <a href="{{ route('kpi.summary.index', ['period' => $period->format('Y-m')]) }}"
+            onclick="return confirm('Tampilkan KPI semua AO untuk periode ini?')"
+            class="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-4 py-2 text-white text-sm font-semibold hover:bg-rose-700">
+            🏆 Semua KPI
+        </a>
     @endcan
 </div>

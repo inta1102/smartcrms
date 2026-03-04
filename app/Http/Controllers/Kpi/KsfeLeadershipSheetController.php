@@ -37,6 +37,8 @@ class KsfeLeadershipSheetController extends Controller
         //   * bulan lampau => endOfMonth(period)
         //   * bulan berjalan => last position date (loan_accounts / fallback kpi_os_daily_aos) capped <= endOfMonth(period)
         // =====================================================
+
+        $targetKsfeId = (int) $request->query('ksfe_id', 0);
         $startYtd = $period->copy()->startOfYear()->toDateString();
 
         $monthEnd = $period->copy()->endOfMonth()->toDateString();
@@ -63,11 +65,36 @@ class KsfeLeadershipSheetController extends Controller
         
         // ===== Auto-build (optional): build saat page dibuka supaya selalu ada data =====
         // Kalau kamu mau "hemat", kamu bisa matiin dan hanya pakai tombol recalc.
-        $row = $builder->build((int)$me->id, $period->toDateString());
+        // =====================
+        // Resolve "subject KSFE"
+        // =====================
+        $subjectKsfeId = 0;
+
+        // kalau login KSFE → subject dirinya sendiri
+        if ($role === 'KSFE') {
+            $subjectKsfeId = (int) $me->id;
+        } else {
+            // login KBL/ADMIN → boleh lihat banyak KSFE
+            // kalau param ksfe_id valid → pakai itu
+            if ($targetKsfeId > 0) {
+                $subjectKsfeId = $targetKsfeId;
+            } else {
+                // default: KSFE pertama (berdasarkan nama)
+                $subjectKsfeId = (int) DB::table('users')
+                    ->whereRaw("UPPER(TRIM(level))='KSFE'")
+                    ->orderBy('name')
+                    ->value('id');
+            }
+        }
+
+        abort_unless($subjectKsfeId > 0, 404);
+
+        // ✅ auto-build untuk subject ksfe yg benar
+        $row = $builder->build($subjectKsfeId, $period->toDateString());
 
         // ===== Ambil list TLFE scope untuk breakdown =====
         $tlfeIds = DB::table('org_assignments')
-            ->where('leader_id', (int)$me->id)
+            ->where('leader_id', (int)$subjectKsfeId)
             ->pluck('user_id')
             ->toArray();
 
@@ -141,13 +168,27 @@ class KsfeLeadershipSheetController extends Controller
         $me = auth()->user();
         abort_unless($me, 403);
 
+        $role = strtoupper($me->roleValue());
+        $can = in_array($role, ['KSFE', 'KBL', 'ADMIN', 'SUPERADMIN'], true)
+            || (method_exists($me, 'hasRole') && ($me->hasRole('KSFE') || $me->hasRole('KBL') || $me->hasRole('ADMIN')));
+
+        abort_unless($can, 403);
+
         $periodQ = trim((string)$request->input('period', now()->startOfMonth()->toDateString()));
         $period  = Carbon::parse($periodQ)->startOfMonth();
 
-        $builder->build((int)$me->id, $period->toDateString());
+        $targetKsfeId = (int) $request->input('ksfe_id', 0);
+
+        $subjectKsfeId = ($role === 'KSFE')
+            ? (int) $me->id
+            : ($targetKsfeId > 0 ? $targetKsfeId : 0);
+
+        abort_unless($subjectKsfeId > 0, 422);
+
+        $builder->build($subjectKsfeId, $period->toDateString());
 
         return redirect()
-            ->route('kpi.ksfe.sheet', ['period' => $period->toDateString()])
+            ->route('kpi.ksfe.sheet', ['period' => $period->toDateString(), 'ksfe_id' => $subjectKsfeId])
             ->with('success', 'KSFE Leadership Index berhasil direcalc.');
     }
 

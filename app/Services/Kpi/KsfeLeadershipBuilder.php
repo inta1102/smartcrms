@@ -13,58 +13,88 @@ class KsfeLeadershipBuilder
         return DB::transaction(function () use ($ksfeId, $periodYmd) {
 
             $period = Carbon::parse($periodYmd)->startOfMonth();
-            $mode   = $this->resolveMode($period);
+            $monthStart = $period->copy()->startOfMonth()->toDateString();
+            $monthEnd   = $period->copy()->endOfMonth()->toDateString();
 
             /*
             |--------------------------------------------------------------------------
-            | 1) Scope TLFE bawah KSFE
+            | 1) Scope TLFE bawah KSFE (WITH effective range)
             |--------------------------------------------------------------------------
             */
             $tlfeIds = DB::table('org_assignments')
                 ->where('leader_id', $ksfeId)
+                ->where('is_active', 1)
+                ->whereDate('effective_from', '<=', $monthEnd)
+                ->where(function ($w) use ($monthStart) {
+                    $w->whereNull('effective_to')
+                      ->orWhereDate('effective_to', '>=', $monthStart);
+                })
                 ->pluck('user_id')
+                ->map(fn ($x) => (int) $x)
                 ->toArray();
 
+            // kalau scope kosong, simpan empty (NO_DATA)
             if (empty($tlfeIds)) {
-                return $this->storeEmpty($ksfeId, $period, $mode);
+                $mode = $this->resolveMode($period, []);
+                return $this->storeEmpty($ksfeId, $period, $mode, 0, [
+                    'reason' => 'no_tlfe_scope',
+                ]);
             }
 
             /*
             |--------------------------------------------------------------------------
-            | 2) Ambil KPI TLFE monthly (sesuai mode)
+            | 2) Resolve mode (berdasarkan ketersediaan KPI TLFE untuk scope ini)
             |--------------------------------------------------------------------------
             */
-            $tlRows = DB::table('kpi_tlfe_monthlies')
-                ->whereDate('period', $period)
-                ->where('calc_mode', $mode)
-                ->whereIn('tlfe_id', $tlfeIds)
-                ->get();
+            $mode = $this->resolveMode($period, $tlfeIds);
+
+            /*
+            |--------------------------------------------------------------------------
+            | 3) Ambil KPI TLFE monthly (sesuai mode)
+            |    + fallback kalau mode pilihan tidak ada datanya
+            |--------------------------------------------------------------------------
+            */
+            $tlRows = $this->fetchTlfeRows($period, $mode, $tlfeIds);
 
             if ($tlRows->isEmpty()) {
-                return $this->storeEmpty($ksfeId, $period, $mode);
+                $fallbackMode = $mode === 'eom' ? 'realtime' : 'eom';
+                $fallbackRows = $this->fetchTlfeRows($period, $fallbackMode, $tlfeIds);
+
+                if ($fallbackRows->isNotEmpty()) {
+                    $mode   = $fallbackMode;
+                    $tlRows = $fallbackRows;
+                }
+            }
+
+            // kalau tetap kosong, jangan bikin tlfe_count = 0 (scope ada!)
+            if ($tlRows->isEmpty()) {
+                return $this->storeEmpty($ksfeId, $period, $mode, count($tlfeIds), [
+                    'reason' => 'no_tlfe_kpi_rows',
+                    'mode'   => $mode,
+                ]);
             }
 
             $tlCount = $tlRows->count();
 
             /*
             |--------------------------------------------------------------------------
-            | 3) PI_scope KSFE (avg LI TLFE)
+            | 4) PI_scope KSFE (avg LI TLFE)
             |--------------------------------------------------------------------------
             */
-            $piScope = round($tlRows->avg('leadership_index'), 2);
+            $piScope = round((float) $tlRows->avg('leadership_index'), 2);
 
             /*
             |--------------------------------------------------------------------------
-            | 4) Risk index (avg risk TLFE)
+            | 5) Risk index (avg risk TLFE) - fallback ke piScope kalau null semua
             |--------------------------------------------------------------------------
             */
-            $riskIndex = $tlRows->contains(fn($r) => !is_null($r->risk_index))
-                ? round($tlRows->avg('risk_index'), 2)
+            $riskIndex = $tlRows->contains(fn ($r) => !is_null($r->risk_index))
+                ? round((float) $tlRows->avg('risk_index'), 2)
                 : round($piScope, 2);
 
             /*
             |--------------------------------------------------------------------------
-            | 5) Stability antar TLFE
+            | 6) Stability antar TLFE
             |    - jika < 2 TLFE: NETRAL agar tidak bias "sempurna"
             |--------------------------------------------------------------------------
             */
@@ -78,18 +108,18 @@ class KsfeLeadershipBuilder
                     'reason' => 'TLFE count < 2, stability dibuat netral agar tidak bias',
                 ];
             } else {
-                $lis    = $tlRows->pluck('leadership_index');
+                $lis    = $tlRows->pluck('leadership_index')->map(fn($v) => (float)$v);
                 $minLi  = (float) $lis->min();
                 $maxLi  = (float) $lis->max();
                 $spread = $maxLi - $minLi;
                 $bottom = $minLi;
 
                 // coverage TLFE "cukup": LI >= 3.5 (bisa kamu ubah)
-                $coveragePct = $lis->filter(fn($v) => (float)$v >= 3.5)->count() / $tlCount * 100;
+                $coveragePct = $lis->filter(fn ($v) => (float)$v >= 3.5)->count() / $tlCount * 100;
 
-                $spreadScore   = $this->scoreSpread($spread);
-                $bottomScore   = $this->scoreBottom($bottom);
-                $coverageScore = $this->scoreCoverage($coveragePct);
+                $spreadScore   = $this->scoreSpread((float)$spread);
+                $bottomScore   = $this->scoreBottom((float)$bottom);
+                $coverageScore = $this->scoreCoverage((float)$coveragePct);
 
                 $stabilityIndex = round(
                     0.4 * $spreadScore +
@@ -99,9 +129,9 @@ class KsfeLeadershipBuilder
                 );
 
                 $stabilityMeta = [
-                    'spread'       => round($spread, 4),
-                    'bottom'       => round($bottom, 4),
-                    'coverage_pct' => round($coveragePct, 2),
+                    'spread'       => round((float)$spread, 4),
+                    'bottom'       => round((float)$bottom, 4),
+                    'coverage_pct' => round((float)$coveragePct, 2),
                     'spread_score' => $spreadScore,
                     'bottom_score' => $bottomScore,
                     'cov_score'    => $coverageScore,
@@ -110,61 +140,69 @@ class KsfeLeadershipBuilder
 
             /*
             |--------------------------------------------------------------------------
-            | 6) Improvement (MoM delta PI_scope)
+            | 7) Improvement (MoM delta PI_scope)
             |--------------------------------------------------------------------------
             */
-            $prevPeriod = $period->copy()->subMonth();
-            $prevMode   = $this->resolveMode($prevPeriod);
+            $prevPeriod = $period->copy()->subMonth()->startOfMonth();
+            $prevMode   = $this->resolveMode($prevPeriod, $tlfeIds);
 
+            // cari prev row: mode yang dipilih, kalau tidak ada coba mode lain
             $prev = DB::table('kpi_ksfe_monthlies')
                 ->whereDate('period', $prevPeriod)
                 ->where('ksfe_id', $ksfeId)
                 ->where('calc_mode', $prevMode)
                 ->first();
 
-            $improvementIndex = 3.00; // netral
+            if (!$prev) {
+                $prevAltMode = $prevMode === 'eom' ? 'realtime' : 'eom';
+                $prev = DB::table('kpi_ksfe_monthlies')
+                    ->whereDate('period', $prevPeriod)
+                    ->where('ksfe_id', $ksfeId)
+                    ->where('calc_mode', $prevAltMode)
+                    ->first();
+                if ($prev) {
+                    $prevMode = $prevAltMode;
+                }
+            }
 
+            $improvementIndex = 3.00; // netral
             if ($prev) {
-                $delta = $piScope - (float)$prev->pi_scope;
-                $improvementIndex = $this->scoreImprovement($delta);
+                $delta = $piScope - (float) ($prev->pi_scope ?? 0);
+                $improvementIndex = $this->scoreImprovement((float)$delta);
             }
 
             /*
             |--------------------------------------------------------------------------
-            | 7) Leadership Index KSFE (bobot bisa kamu adjust)
-            |--------------------------------------------------------------------------
-            | Default saya:
-            | - PI_scope: 0.35
-            | - Stability: 0.25
-            | - Risk: 0.25
-            | - Improvement: 0.15
+            | 8) Leadership Index KSFE (bobot bisa kamu adjust)
             |--------------------------------------------------------------------------
             */
             $leadershipIndex = round(
                 0.35 * $piScope +
-                0.25 * (float)$stabilityIndex +
-                0.25 * (float)$riskIndex +
-                0.15 * (float)$improvementIndex,
+                0.25 * (float) $stabilityIndex +
+                0.25 * (float) $riskIndex +
+                0.15 * (float) $improvementIndex,
                 2
             );
 
-            $status = $this->resolveStatus($leadershipIndex);
+            $status = $this->resolveStatus((float)$leadershipIndex);
 
             /*
             |--------------------------------------------------------------------------
-            | 8) Meta audit (penting utk AI engine)
+            | 9) Meta audit
             |--------------------------------------------------------------------------
             */
             $meta = array_merge([
                 'pi_scope_basis'    => 'avg_tlfe_leadership_index',
-                'tlfe_count'        => $tlCount,
+                'tlfe_scope_count'  => count($tlfeIds),
+                'tlfe_rows_count'   => $tlCount,
                 'avg_tlfe_risk'     => $riskIndex,
                 'improve_prev_mode' => $prevMode,
+                'mode_used'         => $mode,
             ], $stabilityMeta);
 
             /*
             |--------------------------------------------------------------------------
-            | 9) Upsert
+            | 10) Upsert
             |--------------------------------------------------------------------------
             */
             return KpiKsfeMonthly::updateOrCreate(
@@ -189,14 +227,49 @@ class KsfeLeadershipBuilder
 
     /*
     |--------------------------------------------------------------------------
-    | Helpers
+    | Fetch TLFE rows helper
     |--------------------------------------------------------------------------
     */
-
-    private function resolveMode(Carbon $period): string
+    private function fetchTlfeRows(Carbon $period, string $mode, array $tlfeIds)
     {
-        $now = now()->startOfMonth();
-        return $period->equalTo($now) ? 'realtime' : 'eom';
+        return DB::table('kpi_tlfe_monthlies')
+            ->whereDate('period', $period)
+            ->where('calc_mode', $mode)
+            ->whereIn('tlfe_id', $tlfeIds)
+            ->get();
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Mode resolver (scope-aware)
+    |--------------------------------------------------------------------------
+    */
+    private function resolveMode(Carbon $period, array $tlfeIds = []): string
+    {
+        $currentMonth = now()->startOfMonth();
+
+        // bulan berjalan → realtime
+        if ($period->equalTo($currentMonth)) {
+            return 'realtime';
+        }
+
+        // prefer eom jika ada utk scope ini
+        $hasEom = DB::table('kpi_tlfe_monthlies')
+            ->whereDate('period', $period)
+            ->when(!empty($tlfeIds), fn ($q) => $q->whereIn('tlfe_id', $tlfeIds))
+            ->where('calc_mode', 'eom')
+            ->exists();
+
+        if ($hasEom) return 'eom';
+
+        // fallback realtime jika ada utk scope ini
+        $hasRealtime = DB::table('kpi_tlfe_monthlies')
+            ->whereDate('period', $period)
+            ->when(!empty($tlfeIds), fn ($q) => $q->whereIn('tlfe_id', $tlfeIds))
+            ->where('calc_mode', 'realtime')
+            ->exists();
+
+        return $hasRealtime ? 'realtime' : 'eom';
     }
 
     // Spread scoring (pakai gap antar TLFE LI)
@@ -260,8 +333,13 @@ class KsfeLeadershipBuilder
         };
     }
 
-    private function storeEmpty(int $ksfeId, Carbon $period, string $mode): KpiKsfeMonthly
-    {
+    private function storeEmpty(
+        int $ksfeId,
+        Carbon $period,
+        string $mode,
+        int $tlfeScopeCount = 0,
+        array $meta = []
+    ): KpiKsfeMonthly {
         return KpiKsfeMonthly::updateOrCreate(
             [
                 'period'    => $period,
@@ -269,14 +347,15 @@ class KsfeLeadershipBuilder
                 'calc_mode' => $mode,
             ],
             [
-                'tlfe_count'        => 0,
+                // ✅ penting: kalau scope ada tapi KPI TLFE belum kebentuk, jangan 0 biar UI tidak misleading
+                'tlfe_count'        => (int) $tlfeScopeCount,
                 'pi_scope'          => 0,
                 'stability_index'   => null,
                 'risk_index'        => null,
                 'improvement_index' => null,
                 'leadership_index'  => 0,
                 'status_label'      => 'NO_DATA',
-                'meta'              => null,
+                'meta'              => !empty($meta) ? $meta : null,
             ]
         );
     }
