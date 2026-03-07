@@ -108,12 +108,17 @@ class KpiRecalcController extends Controller
 
         [$periodYm, $periodYmd] = $this->parsePeriod($request);
 
+        // 1) build monthly rows dulu (ngisi kpi_fe_monthlies)
+        $builder = app(\App\Services\Kpi\FeKpiMonthlyBuilder::class);
+        $builder->build($periodYmd, null, auth()->id());
+
+        // 2) baru ambil data untuk tampilan sheet (YTD / recap)
         $svc = app(\App\Services\Kpi\FeKpiMonthlyService::class);
         $svc->buildForPeriod($periodYm, auth()->user());
 
         return redirect()
             ->route('kpi.marketing.sheet', [
-                'role'   => 'FE',
+                'role' => 'FE',
                 'period' => $periodYm,
             ])
             ->with('success', "Recalc FE untuk periode {$periodYm} berhasil.");

@@ -79,6 +79,8 @@ use App\Http\Controllers\Kpi\SoCommunityInputController;
 use App\Http\Controllers\Kpi\KpiTargetRouterController;
 use App\Http\Controllers\Kpi\TlOsDailyDashboardController;
 use App\Http\Controllers\Kpi\RoOsDailyDashboardController;
+
+use App\Http\Controllers\Kpi\FeOsDailyDashboardController;
 use App\Http\Controllers\Kpi\RoKpiController;
 use App\Http\Controllers\Kpi\KpiRoTargetController;
 
@@ -117,6 +119,7 @@ use App\Http\Controllers\Kpi\KblLeadershipSheetController;
 use App\Http\Controllers\Kpi\RoManualNoaController;
 use App\Http\Controllers\Kpi\RoTopupAdjustmentController;
 use App\Http\Controllers\Kpi\KpiSummaryController;
+use App\Http\Controllers\Kpi\TlfeOsDailyDashboardController;
 
 /**
  * =======================================================
@@ -627,6 +630,9 @@ Route::middleware('auth')->group(function () {
             Route::get('/{feUserId}', [KpiFeController::class, 'show'])
                 ->whereNumber('feUserId')
                 ->name('show');
+
+            Route::get('/os-daily', [FeOsDailyDashboardController::class, 'index'])
+                ->name('os-daily');
         });
 
         // =======================================================
@@ -677,8 +683,8 @@ Route::middleware('auth')->group(function () {
         Route::get('/tlfe/sheet', [TlfeLeadershipSheetController::class, 'index'])
             ->name('tlfe.sheet');
 
-        // Route::get('tlfe/sheet', function () {
-        //     dd('HIT ROUTE TLFE');
+        Route::get('/tlfe/os-daily', [TlfeOsDailyDashboardController::class, 'index'])
+                ->name('tlfe.os-daily');
         // });
         Route::post('/tlfe/sheet/recalc', [TlfeLeadershipSheetController::class, 'recalc'])
             ->name('tlfe.sheet.recalc');
@@ -813,9 +819,6 @@ Route::middleware('auth')->group(function () {
 
             Route::get('/ranking', [MarketingKpiRankingController::class, 'index'])
                 ->name('ranking.index');
-
-            Route::post('/ranking/recalc', [MarketingKpiRankingController::class, 'recalcAll'])
-                ->name('ranking.recalc');
 
             Route::get('/sheet', [MarketingKpiSheetController::class, 'index'])
                 ->name('sheet');
@@ -1093,3 +1096,21 @@ Route::post('/cases/{case}/legal/start', [LegalEscalationController::class, 'sta
 
 Route::get('/kpi/export/all', [\App\Http\Controllers\Kpi\KpiExportController::class, 'exportAll'])
     ->name('kpi.export.all');
+
+Route::middleware(['auth', 'can:recalcMarketingKpi'])->group(function () {
+
+    // Route::get('/kpi/marketing/ranking/recalc', function () {
+    //     return redirect()->route('kpi.summary.index');
+    // })->name('kpi.marketing.ranking.recalc.form');
+    Route::get('/kpi/marketing/ranking/recalc', function () {
+        \Log::info('HIT RECALC GET ROUTE NO MIDDLEWARE', [
+            'user_id' => auth()->id(),
+            'role' => auth()->user()?->roleValue(),
+        ]);
+        return redirect()->route('kpi.summary.index');
+    })->middleware(['auth']);
+
+    Route::post('/kpi/marketing/ranking/recalc', [\App\Http\Controllers\Kpi\MarketingKpiRankingController::class, 'recalcAll'])
+        ->name('kpi.marketing.ranking.recalc');
+});
+

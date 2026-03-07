@@ -8,6 +8,8 @@ use App\Services\Org\OrgVisibilityService;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use App\Models\User;
+use App\Models\KpiKsbeMonthly;
 
 class KsbeKpiMonthlyService
 {
@@ -16,8 +18,9 @@ class KsbeKpiMonthlyService
         private readonly OrgVisibilityService $org,
     ) {}
 
-    public function buildForPeriod(string $periodYm, $authUser): array
+    public function buildForPeriod(int $userId, string $periodYm): array
     {
+        $authUser = User::findOrFail($userId);
         $leader = $authUser;
         
         // parse
@@ -445,5 +448,58 @@ class KsbeKpiMonthlyService
         // Kita pilih A paling cepat:
 
         return app(BeKpiMonthlyService::class)->calculateRealtimePublic($periodYm, $users, $targetsByUserId);
+    }
+
+    
+    public function buildAndStore(int $userId, string $periodYm): KpiKsbeMonthly
+    {
+        $data = $this->buildForPeriod($userId, $periodYm);
+
+        $period = $data['period'] instanceof Carbon
+            ? $data['period']->copy()->startOfMonth()
+            : Carbon::createFromFormat('Y-m', $periodYm)->startOfMonth();
+
+        $calcMode = $period->equalTo(now()->startOfMonth()) ? 'realtime' : 'eom';
+
+        $leaderId = (int) data_get($data, 'leader.id', $userId);
+        $items    = collect($data['items'] ?? []);
+        $recap    = $data['recap'] ?? $this->emptyRecap();
+
+        $piScope        = (float) data_get($data, 'pi_scope', 0);
+        $stabilityIndex = (float) data_get($data, 'stability', 0);
+
+        // sementara leadership_index bisa pakai PI scope dulu
+        // nanti kalau kamu punya rumus leadership KSBE sendiri, tinggal ganti di sini
+        $leadershipIndex = round($piScope, 2);
+
+        $statusLabel = match (true) {
+            $leadershipIndex >= 5 => 'EXCELLENT',
+            $leadershipIndex >= 4 => 'GOOD',
+            $leadershipIndex >= 3 => 'FAIR',
+            $leadershipIndex >= 2 => 'LOW',
+            default => 'POOR',
+        };
+
+        return KpiKsbeMonthly::updateOrCreate(
+            [
+                'period'    => $period->toDateString(),
+                'ksbe_user_id'   => $leaderId,
+                // 'calc_mode' => $calcMode,
+            ],
+            [
+                'be_count'          => $items->count(),
+                'pi_scope'          => $piScope,
+                'stability_index'   => $stabilityIndex,
+                'leadership_index'  => $leadershipIndex,
+                'status_label'      => $statusLabel,
+                'meta'              => [
+                    'leader'         => data_get($data, 'leader'),
+                    'recap'          => $recap,
+                    'stability_meta' => data_get($data, 'stability_meta', []),
+                    'be_codes'       => $items->pluck('code')->values()->all(),
+                    'mode_used'      => $calcMode,
+                ],
+            ]
+        );
     }
 }

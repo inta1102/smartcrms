@@ -160,7 +160,13 @@ class AuthServiceProvider extends ServiceProvider
         );
 
         Gate::define('recalcMarketingKpi', function ($user) {
-            return in_array($user->roleValue(), ['KBL','ADMIN','SUPERADMIN'], true);
+            $rv = $user->roleValue();
+
+            $role = $rv instanceof \BackedEnum
+                ? strtoupper((string) $rv->value)
+                : strtoupper((string) $rv);
+
+            return in_array($role, ['KBL','ADMIN','SUPERADMIN'], true);
         });
 
         Gate::define('monitoring-ht-view', function ($user) {
@@ -170,6 +176,20 @@ class AuthServiceProvider extends ServiceProvider
                 'BE',
                 'FE',
                 
+            ], true);
+        });
+
+        Gate::define('kpi-marketing-ranking-view', fn($user) => in_array($user->roleValue(), ['KBL','ADMIN','SUPERADMIN'], true));
+
+        Gate::define('kpi-summary-view', function ($user) {
+            $role = $user?->roleValue(); // "KBL", "KSLR", dst
+
+            return in_array($role, [
+                'KBL',
+                'KSLR','KSFE','KSBE',
+                'TLRO','TLFE','TLBE','TLUM','TLSO',
+                // kalau mau super:
+                'ADMIN','SUPERADMIN',
             ], true);
         });
     }

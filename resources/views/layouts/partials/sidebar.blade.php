@@ -311,6 +311,10 @@
         $dashboardRouteName = 'kpi.ro.os-daily';
     } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['TLRO'])) {
         $dashboardRouteName = 'kpi.tl.os-daily';
+    } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['FE'])) {
+        $dashboardRouteName = 'kpi.fe.os-daily';
+    } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['TLFE'])) {
+        $dashboardRouteName = 'kpi.tlfe.os-daily';
     }
 
     $badge = (int) $badgeApprovalTarget;
@@ -326,6 +330,17 @@
         : ($roleValue === 'TLRO');
 
     $canRkh = ($u && ($isRO || $isTLRO));
+
+     // ====== Role checks utk RKH FE (enum-first, fallback string) ======
+    $isFE = ($roleEnum instanceof UserRole)
+        ? ($roleEnum === UserRole::FE)
+        : ($roleValue === 'FE');
+
+    $isTLFE = ($roleEnum instanceof UserRole)
+        ? ($roleEnum === UserRole::TLFE)
+        : ($roleValue === 'TLFE');
+
+    $canRkhFE = ($u && ($isFE || $isTLFE));
 
     // active checker
     $isRkhActive = $is('rkh.*') || $is('lkh.*') || $is('lkh.recap.*');
@@ -362,20 +377,15 @@
                 'show'   => $canRkh,
             ],
             
-            // [
-            //    'label'  => 'Kinerja RO',
-            //    'icon'   => '📅',
-            //    'href'   => route('kpi.tl.os-daily'),
-            //    'active' => $isRkhActive,
-            //    'show'   => $u && $u->hasAnyRole(['TLRO']),
-            // ],
-            //[
-            //    'label'  => 'Kinerja RO',
-            //    'icon'   => '📅',
-            //    'href'   => route('kpi.ro.os-daily'),
-            //    'active' => $isRkhActive,
-            //    'show'   => $u && $u->hasAnyRole(['RO']),
-            //],
+           // ✅ RKH FE (FE/TLFE)
+            [
+                'label'  => 'RKH FE',
+                'icon'   => '📅',
+                'href'   => route('rkh.index'),
+                'active' => $isRkhActive,
+                'show'   => $canRkhFE,
+            ],
+            
 
             [
                 'label'  => 'NPL Cases',

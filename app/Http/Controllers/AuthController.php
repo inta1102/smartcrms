@@ -55,6 +55,9 @@ class AuthController extends Controller
                 'executive.targets.index',
                 'cases.index',
                 'kpi.tl.os-daily',
+                'kpi.tlfe.os-daily',
+                'kpi.fe.os-daily',
+                'kpi.ro.os-daily',
             ], true)) {
                 return redirect()->route($routeName);
             }
@@ -101,8 +104,18 @@ class AuthController extends Controller
             return 'kpi.ro.os-daily';
         }
 
+        // ✅ TLFE landing ke dashboard TL FE
+        if (method_exists($user, 'hasRole') && $user->hasRole('TLFE')) {
+            return 'kpi.tlfe.os-daily';
+        }
+
+        // ✅ FE landing ke dashboard FE
+        if (method_exists($user, 'hasRole') && $user->hasRole('FE')) {
+            return 'kpi.fe.os-daily';
+        }
+
         // 4) AO/SO/SA/FE => Cases
-        if ((method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['AO', 'SO', 'SA', 'FE'])) || in_array($role, ['AO','SO','SA','FE'], true)) {
+        if ((method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['AO', 'SO', 'SA'])) || in_array($role, ['AO','SO','SA','FE'], true)) {
             return 'cases.index';
         }
 

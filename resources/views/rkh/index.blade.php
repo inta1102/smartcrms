@@ -1,16 +1,64 @@
 @extends('layouts.app')
+@php
+    $role = strtoupper((string)($role ?? auth()->user()?->level ?? ''));
 
-@section('title', $role === 'TLRO' ? 'RKH - Monitoring TLRO' : 'RKH RO')
+    $isLeader = in_array($role, ['TLRO', 'TLFE', 'TLUM', 'TLSO', 'TLBE', 'KSLR', 'KSFE', 'KSLU', 'KSBE', 'KBL'], true);
+    $isStaff  = !$isLeader;
+
+    $roleLabelMap = [
+        'RO'   => 'RO',
+        'FE'   => 'FE',
+        'AO'   => 'AO',
+        'SO'   => 'SO',
+        'BE'   => 'BE',
+        'TLRO' => 'TLRO',
+        'TLFE' => 'TLFE',
+        'TLUM' => 'TLUM',
+        'TLSO' => 'TLSO',
+        'TLBE' => 'TLBE',
+        'KSLR' => 'KSLR',
+        'KSFE' => 'KSFE',
+        'KSLU' => 'KSLU',
+        'KSBE' => 'KSBE',
+        'KBL'  => 'KBL',
+    ];
+
+    $roleLabel = $roleLabelMap[$role] ?? $role;
+
+    $pageTitle = $isLeader ? "RKH - Monitoring {$roleLabel}" : "RKH {$roleLabel}";
+    $heroTitle = $isLeader ? "RKH {$roleLabel}" : "RKH {$roleLabel}";
+    $heroDesc  = $isLeader
+        ? "Monitoring RKH scope bawahan."
+        : "Rencana kerja harian kamu.";
+
+    // Label bawahan untuk filter/kolom
+    $childLabelMap = [
+        'TLRO' => 'RO',
+        'TLFE' => 'FE',
+        'TLUM' => 'AO/SO',
+        'TLSO' => 'SO',
+        'TLBE' => 'BE',
+        'KSLR' => 'TL/RO',
+        'KSFE' => 'TL/FE',
+        'KSLU' => 'TL/AO/SO',
+        'KSBE' => 'TL/BE',
+        'KBL'  => 'Unit',
+    ];
+
+    $childLabel = $childLabelMap[$role] ?? 'Staff';
+@endphp
+
+@section('title', $pageTitle)
 
 @section('content')
 <div class="max-w-6xl mx-auto p-4 space-y-4">
 
   <div class="rounded-2xl border bg-white p-4">
     <div class="text-2xl font-black text-slate-900">
-      {{ $role === 'TLRO' ? 'RKH TLRO' : 'RKH RO' }}
+      {{ $heroTitle }}
     </div>
     <div class="text-sm text-slate-600 mt-1">
-      {{ $role === 'TLRO' ? 'Monitoring RKH scope RO bawahan.' : 'Rencana kerja harian kamu.' }}
+      {{ $heroDesc }}
     </div>
 
     {{-- FILTER --}}
@@ -34,14 +82,14 @@
         </select>
       </div>
 
-      @if($role === 'TLRO')
+      @if($isLeader)
         <div>
-          <label class="text-xs text-slate-500">RO</label>
-          <select name="ro_id" class="border rounded-lg px-3 py-2 text-sm">
-            <option value="">Semua RO</option>
-            @foreach($ros as $ro)
-              <option value="{{ $ro->id }}" @selected((string)$roId === (string)$ro->id)>
-                {{ $ro->name }}
+          <label class="text-xs text-slate-500">{{ $childLabel }}</label>
+          <select name="staff_id" class="border rounded-lg px-3 py-2 text-sm">
+            <option value="">Semua {{ $childLabel }}</option>
+            @foreach(($staffs ?? []) as $staff)
+              <option value="{{ $staff->id }}" @selected((string)($staffId ?? '') === (string)$staff->id)>
+                {{ $staff->name }}
               </option>
             @endforeach
           </select>
@@ -65,9 +113,9 @@
         <thead class="bg-slate-50 text-slate-600">
           <tr class="border-b">
             <th class="text-left px-4 py-3">Tanggal</th>
-            @if($role === 'TLRO')
-              <th class="text-left px-4 py-3">RO</th>
-            @endif
+              @if($isLeader)
+                <th class="text-left px-4 py-3">{{ $childLabel }}</th>
+              @endif
             <th class="text-right px-4 py-3">Total Jam</th>
             <th class="text-center px-4 py-3">Items</th>
             <th class="text-center px-4 py-3">Status</th>
@@ -81,8 +129,10 @@
                 {{ \Carbon\Carbon::parse($r->tanggal)->format('d-m-Y') }}
               </td>
 
-              @if($role === 'TLRO')
-                <td class="px-4 py-3">{{ $r->ro_name }}</td>
+              @if($isLeader)
+                <td class="px-4 py-3">
+                  {{ $r->staff_name ?? $r->ro_name ?? $r->fe_name ?? '-' }}
+                </td>
               @endif
 
               <td class="px-4 py-3 text-right">{{ number_format((float)$r->total_jam, 2) }}</td>

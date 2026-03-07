@@ -20,18 +20,13 @@ use App\Enums\UserRole;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Schema;
 
-
 class RkhController extends Controller
 {
-
-    
     private function roleValue($user): string
     {
-        // 1) kalau ada method role() (punyamu), pakai itu
         if (method_exists($user, 'role')) {
-            $r = $user->role(); // ?UserRole
+            $r = $user->role();
             if ($r instanceof UserRole) {
-                // backed enum string: value = "TLRO", "RO", dst
                 return strtoupper(trim((string)$r->value));
             }
             if (is_string($r) && $r !== '') {
@@ -39,7 +34,6 @@ class RkhController extends Controller
             }
         }
 
-        // 2) fallback: baca attribute level langsung (bisa enum / string)
         $lvl = $user->getAttribute('level');
 
         if ($lvl instanceof UserRole) {
@@ -53,31 +47,80 @@ class RkhController extends Controller
         return 'RO';
     }
 
+    /**
+     * Role leader yang saat ini dipakai untuk RKH monitoring / approval langsung.
+     * Fokus dulu ke yang sedang aktif di project: TLRO & TLFE.
+     */
+    private function isReviewerLeaderRole(string $role): bool
+    {
+        return in_array(strtoupper(trim($role)), [
+            'TLRO',
+            'TLFE',
+        ], true);
+    }
+
+    /**
+     * Mapping bawahan per role leader.
+     * - TLRO monitor RO
+     * - TLFE monitor FE
+     */
+    private function childRoleForLeader(string $leaderRole): ?string
+    {
+        $leaderRole = strtoupper(trim($leaderRole));
+
+        return match ($leaderRole) {
+            'TLRO' => 'RO',
+            'TLFE' => 'FE',
+            default => null,
+        };
+    }
+
+    /**
+     * Ambil subordinate aktif untuk leader, optional difilter sesuai role bawahan.
+     */
+    private function activeSubordinateUserIds($leader, ?string $childRole = null): array
+    {
+        $today = now()->toDateString();
+
+        $q = OrgAssignment::query()
+            ->from('org_assignments as oa')
+            ->join('users as u', 'u.id', '=', 'oa.user_id')
+            ->where('oa.leader_id', (int)$leader->id)
+            ->where('oa.is_active', 1)
+            ->whereDate('oa.effective_from', '<=', $today)
+            ->where(function ($w) use ($today) {
+                $w->whereNull('oa.effective_to')
+                  ->orWhereDate('oa.effective_to', '>=', $today);
+            });
+
+        if ($childRole) {
+            $q->whereRaw("UPPER(TRIM(COALESCE(u.level,''))) = ?", [strtoupper($childRole)]);
+        }
+
+        return $q->pluck('oa.user_id')
+            ->map(fn ($x) => (int)$x)
+            ->unique()
+            ->values()
+            ->all();
+    }
+
     public function index(Request $request)
     {
         $me = $request->user();
         abort_unless($me, 403);
 
-        $role = $this->roleValue($me);
+        $role = strtoupper((string)$this->roleValue($me));
+        $isLeader = $this->isReviewerLeaderRole($role);
+        $childRole = $this->childRoleForLeader($role);
 
         // ===== scope user ids =====
-        if ($role === 'TLRO') {
-            $today = now()->toDateString();
+        if ($isLeader) {
+            $scopeUserIds = $this->activeSubordinateUserIds($me, $childRole);
 
-            $scopeUserIds = OrgAssignment::query()
-                ->where('leader_id', (int)$me->id)
-                ->where('is_active', 1)
-                ->where(function ($q) use ($today) {
-                    $q->whereNull('effective_to')
-                    ->orWhere('effective_to', '>=', $today);
-                })
-                ->pluck('user_id')
-                ->map(fn($x) => (int)$x)
-                ->unique()
-                ->values()
-                ->all();
-
-            if (empty($scopeUserIds)) $scopeUserIds = [(int)$me->id];
+            // fallback aman kalau belum ada mapping aktif
+            if (empty($scopeUserIds)) {
+                $scopeUserIds = [(int)$me->id];
+            }
         } else {
             $scopeUserIds = [(int)$me->id];
         }
@@ -91,8 +134,8 @@ class RkhController extends Controller
             ? Carbon::parse($request->input('to'))->endOfDay()
             : now()->endOfDay();
 
-        $status = $request->input('status'); // draft/submitted/approved/done
-        $roId   = $request->input('ro_id');  // khusus TLRO
+        $status  = $request->input('status');
+        $staffId = $request->input('staff_id');
 
         // ===== query =====
         $rows = DB::table('rkh_headers as h')
@@ -101,7 +144,7 @@ class RkhController extends Controller
             ->selectRaw("
                 h.id,
                 h.user_id,
-                u.name as ro_name,
+                u.name as staff_name,
                 h.tanggal,
                 h.total_jam,
                 h.status,
@@ -109,30 +152,32 @@ class RkhController extends Controller
             ")
             ->whereIn('h.user_id', $scopeUserIds)
             ->whereBetween('h.tanggal', [$from->toDateString(), $to->toDateString()])
-            ->when($status, fn($q) => $q->where('h.status', $status))
-            ->when(($role === 'TLRO' && $roId), fn($q) => $q->where('h.user_id', (int)$roId))
-            ->groupBy('h.id','h.user_id','u.name','h.tanggal','h.total_jam','h.status')
+            ->when($status, fn ($q) => $q->where('h.status', $status))
+            ->when(($isLeader && $staffId), fn ($q) => $q->where('h.user_id', (int)$staffId))
+            ->groupBy('h.id', 'h.user_id', 'u.name', 'h.tanggal', 'h.total_jam', 'h.status')
             ->orderByDesc('h.tanggal')
             ->paginate(20)
             ->withQueryString();
 
-        // list RO untuk filter dropdown (khusus TLRO)
-        $ros = [];
-        if ($role === 'TLRO') {
-            $ros = DB::table('users')
+        // ===== list staff untuk dropdown leader =====
+        $staffs = [];
+        if ($isLeader) {
+            $staffs = DB::table('users')
                 ->whereIn('id', $scopeUserIds)
                 ->orderBy('name')
-                ->get(['id','name']);
+                ->get(['id', 'name']);
         }
 
         return view('rkh.index', [
-            'rows' => $rows,
-            'role' => $role,
-            'ros'  => $ros,
-            'from' => $from->toDateString(),
-            'to'   => $to->toDateString(),
-            'status' => $status,
-            'roId'   => $roId,
+            'rows'     => $rows,
+            'role'     => $role,
+            'isLeader' => $isLeader,
+            'staffs'   => $staffs,
+
+            'from'     => $from->toDateString(),
+            'to'       => $to->toDateString(),
+            'status'   => $status,
+            'staffId'  => $staffId,
         ]);
     }
 
@@ -167,7 +212,6 @@ class RkhController extends Controller
         $tanggal = (string) $request->input('tanggal');
         $items   = (array) $request->input('items', []);
 
-        // validasi overlap + gap + jam kerja
         $check = $tv->validate($items, [
             'gap_tolerance_minutes' => 30,
             'max_gap_minutes' => 120,
@@ -193,8 +237,10 @@ class RkhController extends Controller
         $rkh->load([
             'user',
             'approver',
+            'rejector',
             'details' => fn($q) => $q->orderBy('jam_mulai'),
             'details.lkh',
+            'details.roVisit',
             'details.networking',
         ]);
 
@@ -208,24 +254,15 @@ class RkhController extends Controller
 
         $role = $this->roleValue($me);
 
-        // owner always allowed
-        if ((int)$rkh->user_id === (int)$me->id) return;
+        // owner selalu boleh
+        if ((int)$rkh->user_id === (int)$me->id) {
+            return;
+        }
 
-        if ($role === 'TLRO') {
-            $today = Carbon::today()->toDateString();
-
-            $subIds = OrgAssignment::query()
-                ->where('leader_id', (int)$me->id)
-                ->where('is_active', 1)
-                ->where(function ($q) use ($today) {
-                    $q->whereNull('effective_to')
-                    ->orWhere('effective_to', '>=', $today);
-                })
-                ->pluck('user_id')
-                ->map(fn($x) => (int)$x)
-                ->unique()
-                ->values()
-                ->all();
+        // leader reviewer boleh akses bawahan aktif dalam scope-nya
+        if ($this->isReviewerLeaderRole($role)) {
+            $childRole = $this->childRoleForLeader($role);
+            $subIds = $this->activeSubordinateUserIds($me, $childRole);
 
             abort_if(!in_array((int)$rkh->user_id, $subIds, true), 403);
             return;
@@ -233,6 +270,7 @@ class RkhController extends Controller
 
         abort(403);
     }
+
     public function edit(RkhHeader $rkh)
     {
         $this->authorizeOwner($rkh);
@@ -262,7 +300,6 @@ class RkhController extends Controller
 
         $items = (array) $request->input('items', []);
 
-        // ✅ account_no ikut di $items, tidak masuk ke config validator waktu
         $check = $tv->validate($items, [
             'gap_tolerance_minutes' => 30,
             'max_gap_minutes' => 120,
@@ -275,10 +312,8 @@ class RkhController extends Controller
             return back()->withInput()->withErrors(['items' => $check['errors']]);
         }
 
-        // ✅ writer yang bertugas menyimpan semua field items termasuk account_no
         $writer->update($rkh, $items, $check['meta']);
 
-        // kalau sebelumnya rejected, begitu RO edit, reset review TL
         if ($rkh->status === 'rejected') {
             $rkh->status = 'draft';
             $rkh->rejected_by = null;
@@ -308,7 +343,6 @@ class RkhController extends Controller
             abort(403);
         }
 
-        // optional: pastikan ada detail
         $itemsCount = $rkh->details()->count();
         if ($itemsCount <= 0) {
             return back()->withErrors(['msg' => 'Tidak bisa submit. RKH belum memiliki item kegiatan.']);
@@ -317,7 +351,6 @@ class RkhController extends Controller
         $rkh->update([
             'status' => 'submitted',
             'submitted_at' => now(),
-            // reset approval/reject metadata
             'approved_by' => null,
             'approved_at' => null,
             'approval_note' => null,
@@ -326,7 +359,6 @@ class RkhController extends Controller
             'rejection_note' => null,
         ]);
 
-        // TODO: notif WA ke TLRO (opsional nanti)
         return back()->with('success', 'RKH berhasil disubmit ke TL.');
     }
 
@@ -338,9 +370,8 @@ class RkhController extends Controller
         abort_unless($me, 403);
 
         $role = $this->roleValue($me);
-        abort_unless($role === 'TLRO', 403);
+        abort_unless($this->isReviewerLeaderRole($role), 403);
 
-        // hanya boleh approve jika submitted
         abort_unless($rkh->status === 'submitted', 403);
 
         $data = $request->validate([
@@ -348,28 +379,23 @@ class RkhController extends Controller
         ]);
 
         DB::transaction(function () use ($rkh, $me, $data) {
-            // 1) update header
             $rkh->status = 'approved';
             $rkh->approved_by = (int) $me->id;
             $rkh->approved_at = now();
             $rkh->approval_note = $data['approval_note'] ?? null;
 
-            // bersihin reject fields
             $rkh->rejected_by = null;
             $rkh->rejected_at = null;
             $rkh->rejection_note = null;
 
             $rkh->save();
 
-            // 2) set semua detail jadi approved (final)
             DB::table('rkh_details')
                 ->where('rkh_id', (int) $rkh->id)
                 ->update([
                     'tl_status'      => 'approved',
                     'tl_reviewed_by' => (int) $me->id,
                     'tl_reviewed_at' => now(),
-                    // note per item jangan dihapus paksa (kalau sebelumnya ada), tapi biasanya aman dikosongkan
-                    // 'tl_note' => null,
                 ]);
         });
 
@@ -386,9 +412,8 @@ class RkhController extends Controller
         abort_unless($me, 403);
 
         $role = $this->roleValue($me);
-        abort_unless($role === 'TLRO', 403);
+        abort_unless($this->isReviewerLeaderRole($role), 403);
 
-        // hanya boleh reject jika submitted
         abort_unless($rkh->status === 'submitted', 403);
 
         $data = $request->validate([
@@ -398,7 +423,6 @@ class RkhController extends Controller
             'tl_note'        => ['nullable', 'array'],
         ]);
 
-        // validasi reject_ids memang milik rkh ini
         $validDetailIds = DB::table('rkh_details')
             ->where('rkh_id', (int)$rkh->id)
             ->pluck('id')
@@ -411,21 +435,17 @@ class RkhController extends Controller
         }
 
         DB::transaction(function () use ($rkh, $me, $data, $rejectIds) {
-
-            // 1) header jadi rejected
             $rkh->status = 'rejected';
             $rkh->rejected_by = (int) $me->id;
             $rkh->rejected_at = now();
             $rkh->rejection_note = $data['rejection_note'] ?? null;
 
-            // bersihin approve fields
             $rkh->approved_by = null;
             $rkh->approved_at = null;
             $rkh->approval_note = null;
 
             $rkh->save();
 
-            // 2) semua detail default approved (biar TL “merestui” yang OK)
             DB::table('rkh_details')
                 ->where('rkh_id', (int)$rkh->id)
                 ->update([
@@ -434,7 +454,6 @@ class RkhController extends Controller
                     'tl_reviewed_at' => now(),
                 ]);
 
-            // 3) detail yang dipilih jadi rejected + note per item
             foreach ($rejectIds as $did) {
                 $note = null;
                 if (!empty($data['tl_note']) && array_key_exists((string)$did, $data['tl_note'])) {
@@ -453,7 +472,7 @@ class RkhController extends Controller
 
         return redirect()
             ->route('rkh.show', $rkh->id)
-            ->with('success', 'RKH direject. RO diminta revisi item yang ditandai.');
+            ->with('success', 'RKH direject. Staff diminta revisi item yang ditandai.');
     }
 
     // ================= helpers =================
@@ -487,25 +506,9 @@ class RkhController extends Controller
     {
         $role = $this->roleValue($me);
 
-        if ($role === 'RO') {
-            return [(int)$me->id];
-        }
-
-        if ($role === 'TLRO') {
-            $today = now()->toDateString();
-
-            $ids = OrgAssignment::query()
-                ->where('leader_id', (int)$me->id)
-                ->where('is_active', 1)
-                ->where(function ($q) use ($today) {
-                    $q->whereNull('effective_to')
-                    ->orWhere('effective_to', '>=', $today);
-                })
-                ->pluck('user_id')
-                ->map(fn($x) => (int)$x)
-                ->unique()
-                ->values()
-                ->all();
+        if ($this->isReviewerLeaderRole($role)) {
+            $childRole = $this->childRoleForLeader($role);
+            $ids = $this->activeSubordinateUserIds($me, $childRole);
 
             return !empty($ids) ? $ids : [(int)$me->id];
         }
@@ -519,24 +522,11 @@ class RkhController extends Controller
         abort_unless($me, 403);
 
         $role = $this->roleValue($me);
-        abort_if($role !== 'TLRO', 403);
+        abort_if(!$this->isReviewerLeaderRole($role), 403);
 
-        $today = now()->toDateString();
-
-        $subIds = OrgAssignment::query()
-            ->where('leader_id', (int)$me->id)
-            ->where('is_active', 1)
-            ->where(function ($q) use ($today) {
-                $q->whereNull('effective_to')
-                ->orWhere('effective_to', '>=', $today);
-            })
-            ->pluck('user_id')
-            ->map(fn($x) => (int)$x)
-            ->unique()
-            ->values()
-            ->all();
+        $childRole = $this->childRoleForLeader($role);
+        $subIds = $this->activeSubordinateUserIds($me, $childRole);
 
         abort_if(!in_array((int)$rkh->user_id, $subIds, true), 403);
     }
-
 }

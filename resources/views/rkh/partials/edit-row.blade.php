@@ -54,6 +54,9 @@
       <option value="">-</option>
       <option value="L0" @selected($val('kolektibilitas')==='L0')>L0</option>
       <option value="LT" @selected($val('kolektibilitas')==='LT')>LT</option>
+      <option value="DPK" @selected($val('kolektibilitas')==='DPK')>DPK</option>
+      <option value="POTENSI" @selected($val('kolektibilitas')==='POTENSI')>Potensi</option>
+      <option value="KL" @selected($val('kolektibilitas')==='KL')>KL</option>
     </select>
   </td>
 

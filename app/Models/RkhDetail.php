@@ -48,6 +48,13 @@ class RkhDetail extends Model
     public function visitLogs()
     {
         return $this->hasMany(\App\Models\RkhVisitLog::class, 'rkh_detail_id');
+
+
+    }
+
+    public function roVisit()
+    {
+        return $this->hasOne(\App\Models\RoVisit::class, 'rkh_detail_id');
     }
 
 }

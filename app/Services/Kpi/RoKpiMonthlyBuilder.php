@@ -725,4 +725,287 @@ class RoKpiMonthlyBuilder
 
         return $q->pluck('ao_code')->map(fn($x) => (string)$x)->all();
     }
+
+    public function buildAndStoreForAo(string $periodYmd, ?string $aoCode, string $mode = 'realtime'): ?array
+    {
+        $period = Carbon::parse($periodYmd)->startOfMonth();
+        $periodDate = $period->toDateString();
+
+        $ao = str_pad(trim((string)$aoCode), 6, '0', STR_PAD_LEFT);
+        if ($ao === '' || $ao === '000000') {
+            return null;
+        }
+
+        $weights = [
+            'repayment' => 0.40,
+            'topup'     => 0.20,
+            'noa'       => 0.10,
+            'dpk'       => 0.30,
+        ];
+
+        $endMonth   = Carbon::parse($periodDate)->startOfMonth();
+        $startMonth = $endMonth->copy()->startOfYear();
+
+        $isEndMonthCurrent = $endMonth->equalTo(now()->startOfMonth());
+        $endMonthMode      = $isEndMonthCurrent ? 'realtime' : 'eom';
+
+        $dpkPrevSnap = $endMonth->copy()->subMonth()->startOfMonth()->toDateString();
+        $dpkCurSnap  = $endMonth->copy()->startOfMonth()->toDateString();
+
+        $latestPosLoan = DB::table('loan_accounts')->max('position_date');
+        $latestPosLoan = $latestPosLoan
+            ? Carbon::parse($latestPosLoan)->toDateString()
+            : now()->toDateString();
+
+        // =========================================================
+        // 1) OS AGG (sama persis dengan sheet)
+        // =========================================================
+        if ($mode === 'realtime') {
+            $osRow = DB::table('loan_accounts as cur')
+                ->whereDate('cur.position_date', $latestPosLoan)
+                ->whereRaw("LPAD(TRIM(cur.ao_code),6,'0') = ?", [$ao])
+                ->selectRaw("
+                    LPAD(TRIM(cur.ao_code),6,'0') as ao_code,
+                    SUM(COALESCE(cur.outstanding,0)) as os_total_kelolaan,
+                    SUM(
+                        CASE
+                            WHEN COALESCE(cur.ft_pokok,0) = 0 AND COALESCE(cur.ft_bunga,0) = 0
+                            THEN COALESCE(cur.outstanding,0) ELSE 0
+                        END
+                    ) as os_l0,
+                    SUM(
+                        CASE
+                            WHEN GREATEST(COALESCE(cur.ft_pokok,0), COALESCE(cur.ft_bunga,0)) = 1
+                            THEN COALESCE(cur.outstanding,0) ELSE 0
+                        END
+                    ) as os_l1,
+                    SUM(
+                        CASE
+                            WHEN GREATEST(COALESCE(cur.ft_pokok,0), COALESCE(cur.ft_bunga,0)) = 2
+                            THEN COALESCE(cur.outstanding,0) ELSE 0
+                        END
+                    ) as os_l2,
+                    SUM(
+                        CASE
+                            WHEN GREATEST(COALESCE(cur.ft_pokok,0), COALESCE(cur.ft_bunga,0)) >= 3
+                            THEN COALESCE(cur.outstanding,0) ELSE 0
+                        END
+                    ) as os_ft3plus
+                ")
+                ->groupBy('cur.ao_code')
+                ->first();
+        } else {
+            $osRow = DB::table('loan_account_snapshots_monthly as cur')
+                ->whereDate('cur.snapshot_month', $dpkCurSnap)
+                ->whereRaw("LPAD(TRIM(cur.ao_code),6,'0') = ?", [$ao])
+                ->selectRaw("
+                    LPAD(TRIM(cur.ao_code),6,'0') as ao_code,
+                    SUM(COALESCE(cur.outstanding,0)) as os_total_kelolaan,
+                    SUM(
+                        CASE
+                            WHEN COALESCE(cur.ft_pokok,0) = 0 AND COALESCE(cur.ft_bunga,0) = 0
+                            THEN COALESCE(cur.outstanding,0) ELSE 0
+                        END
+                    ) as os_l0,
+                    SUM(
+                        CASE
+                            WHEN GREATEST(COALESCE(cur.ft_pokok,0), COALESCE(cur.ft_bunga,0)) = 1
+                            THEN COALESCE(cur.outstanding,0) ELSE 0
+                        END
+                    ) as os_l1,
+                    SUM(
+                        CASE
+                            WHEN GREATEST(COALESCE(cur.ft_pokok,0), COALESCE(cur.ft_bunga,0)) = 2
+                            THEN COALESCE(cur.outstanding,0) ELSE 0
+                        END
+                    ) as os_l2,
+                    SUM(
+                        CASE
+                            WHEN GREATEST(COALESCE(cur.ft_pokok,0), COALESCE(cur.ft_bunga,0)) >= 3
+                            THEN COALESCE(cur.outstanding,0) ELSE 0
+                        END
+                    ) as os_ft3plus
+                ")
+                ->groupBy('cur.ao_code')
+                ->first();
+        }
+
+        // =========================================================
+        // 2) DPK AGG (sama persis dengan sheet)
+        // =========================================================
+        if ($mode === 'realtime') {
+            $dpkRow = DB::table('loan_account_snapshots_monthly as prev')
+                ->join('loan_accounts as cur', function ($j) use ($latestPosLoan) {
+                    $j->on('cur.account_no','=','prev.account_no')
+                    ->whereDate('cur.position_date', $latestPosLoan);
+                })
+                ->whereDate('prev.snapshot_month', $dpkPrevSnap)
+                ->whereRaw("LPAD(TRIM(prev.ao_code),6,'0') = ?", [$ao])
+                ->selectRaw("
+                    LPAD(TRIM(prev.ao_code),6,'0') as ao_code,
+                    SUM(
+                        CASE WHEN prev.kolek = 1 AND cur.kolek = 2
+                        THEN COALESCE(prev.outstanding,0) ELSE 0 END
+                    ) as dpk_migrasi_os,
+                    SUM(
+                        CASE WHEN prev.kolek = 1 AND cur.kolek = 2
+                        THEN 1 ELSE 0 END
+                    ) as dpk_migrasi_count
+                ")
+                ->groupBy('prev.ao_code')
+                ->first();
+        } else {
+            $dpkRow = DB::table('loan_account_snapshots_monthly as prev')
+                ->join('loan_account_snapshots_monthly as cur', function ($j) use ($dpkCurSnap) {
+                    $j->on('cur.account_no','=','prev.account_no')
+                    ->whereDate('cur.snapshot_month', $dpkCurSnap);
+                })
+                ->whereDate('prev.snapshot_month', $dpkPrevSnap)
+                ->whereRaw("LPAD(TRIM(prev.ao_code),6,'0') = ?", [$ao])
+                ->selectRaw("
+                    LPAD(TRIM(prev.ao_code),6,'0') as ao_code,
+                    SUM(
+                        CASE WHEN prev.kolek = 1 AND cur.kolek = 2
+                        THEN COALESCE(prev.outstanding,0) ELSE 0 END
+                    ) as dpk_migrasi_os,
+                    SUM(
+                        CASE WHEN prev.kolek = 1 AND cur.kolek = 2
+                        THEN 1 ELSE 0 END
+                    ) as dpk_migrasi_count
+                ")
+                ->groupBy('prev.ao_code')
+                ->first();
+        }
+
+        // =========================================================
+        // 3) KPI RANGE (YTD non-DPK) - sama sheet
+        // =========================================================
+        $kpiRow = DB::table('kpi_ro_monthly as k')
+            ->where('k.ao_code', $ao)
+            ->whereBetween('k.period_month', [$startMonth->toDateString(), $endMonth->toDateString()])
+            ->where(function ($w) use ($endMonth, $endMonthMode) {
+                $w->where(function ($q) use ($endMonth) {
+                    $q->where('k.period_month', '<', $endMonth->toDateString())
+                    ->where('k.calc_mode', '=', 'eom');
+                })->orWhere(function ($q) use ($endMonth, $endMonthMode) {
+                    $q->where('k.period_month', '=', $endMonth->toDateString())
+                    ->where('k.calc_mode', '=', $endMonthMode);
+                });
+            })
+            ->selectRaw("
+                k.ao_code,
+                SUM(COALESCE(k.topup_realisasi,0)) as topup_realisasi,
+                SUM(COALESCE(k.noa_realisasi,0)) as noa_realisasi,
+                SUM(COALESCE(k.repayment_total_os,0))  as repayment_total_os,
+                SUM(COALESCE(k.repayment_os_lancar,0)) as repayment_os_lancar,
+                SUM(COALESCE(k.topup_cif_count,0)) as topup_cif_count,
+                SUM(COALESCE(k.topup_cif_new_count,0)) as topup_cif_new_count,
+                MAX(COALESCE(k.topup_max_cif_amount,0)) as topup_max_cif_amount,
+                MIN(COALESCE(k.baseline_ok,0)) as baseline_ok
+            ")
+            ->groupBy('k.ao_code')
+            ->first();
+
+        // =========================================================
+        // 4) TARGET MAP - sama sheet
+        // =========================================================
+        $targetRow = DB::table('kpi_ro_targets')
+            ->whereRaw("LPAD(TRIM(ao_code),6,'0') = ?", [$ao])
+            ->whereBetween('period', [$startMonth->toDateString(), $endMonth->toDateString()])
+            ->selectRaw("
+                LPAD(TRIM(ao_code),6,'0') as ao_code,
+                SUM(COALESCE(target_topup,0)) as target_topup_acc,
+                SUM(COALESCE(target_noa,0))   as target_noa_acc,
+                MAX(COALESCE(target_rr_pct,0)) as target_rr_pct,
+                MAX(COALESCE(target_dpk_pct,0)) as target_dpk_pct
+            ")
+            ->groupBy('ao_code')
+            ->first();
+
+        // =========================================================
+        // 5) NOA MANUAL - sama sheet
+        // =========================================================
+        $manual = DB::table('kpi_ro_manual_actuals')
+            ->whereDate('period', $periodDate)
+            ->whereRaw("LPAD(TRIM(ao_code),6,'0') = ?", [$ao])
+            ->first();
+
+        $targetTopup = (float)($targetRow->target_topup_acc ?? 0);
+        $targetNoa   = (int)($targetRow->target_noa_acc ?? 0);
+
+        $osTotal = (float)($osRow->os_total_kelolaan ?? 0);
+        $osL0    = (float)($osRow->os_l0 ?? 0);
+
+        $rrActual = $osTotal > 0 ? round(($osL0 / $osTotal) * 100.0, 2) : 0.0;
+        $scoreRr  = KpiScoreHelper::scoreBand1to6ByActualRr($rrActual);
+
+        $topupReal  = (float)($kpiRow->topup_realisasi ?? 0);
+        $achTopup   = KpiScoreHelper::achievementPct($topupReal, $targetTopup);
+        $scoreTopup = KpiScoreHelper::scoreBand1to6($achTopup);
+
+        $noaReal   = (int)($manual->noa_pengembangan ?? 0);
+        $achNoa    = KpiScoreHelper::achievementPct((float)$noaReal, (float)$targetNoa);
+        $scoreNoa  = KpiScoreHelper::scoreBand1to6($achNoa);
+
+        $sumMigrasiOs = (float)($dpkRow->dpk_migrasi_os ?? 0);
+        $dpkActual    = $osTotal > 0 ? round(($sumMigrasiOs / $osTotal) * 100.0, 2) : 0.0;
+        $scoreDpk     = KpiScoreHelper::scoreBand1to6ByActualDpkReverse($dpkActual);
+
+        $piRepay = round($scoreRr    * $weights['repayment'], 2);
+        $piTopup = round($scoreTopup * $weights['topup'], 2);
+        $piNoa   = round($scoreNoa   * $weights['noa'], 2);
+        $piDpk   = round($scoreDpk   * $weights['dpk'], 2);
+        $piTotal = round($piRepay + $piTopup + $piNoa + $piDpk, 2);
+
+        $payload = [
+            'period_month' => $periodDate,
+            'ao_code'      => $ao,
+            'calc_mode'    => $mode,
+
+            'repayment_pct'   => $rrActual,
+            'repayment_score' => $scoreRr,
+            'repayment_rate'  => round($rrActual / 100, 4),
+            'repayment_total_os'   => $osTotal,
+            'repayment_os_lancar'  => $osL0,
+
+            'topup_realisasi' => $topupReal,
+            'topup_target'    => $targetTopup,
+            'topup_pct'       => $achTopup,
+            'topup_score'     => $scoreTopup,
+            'topup_cif_count'      => (int)($kpiRow->topup_cif_count ?? 0),
+            'topup_cif_new_count'  => (int)($kpiRow->topup_cif_new_count ?? 0),
+            'topup_max_cif_amount' => (float)($kpiRow->topup_max_cif_amount ?? 0),
+
+            'noa_realisasi' => $noaReal,
+            'noa_target'    => $targetNoa,
+            'noa_pct'       => $achNoa,
+            'noa_score'     => $scoreNoa,
+
+            'dpk_pct'           => $dpkActual,
+            'dpk_score'         => $scoreDpk,
+            'dpk_migrasi_count' => (int)($dpkRow->dpk_migrasi_count ?? 0),
+            'dpk_migrasi_os'    => $sumMigrasiOs,
+            'dpk_total_os_akhir'=> $osTotal,
+
+            'total_score_weighted' => $piTotal,
+
+            'baseline_ok'   => (int)($kpiRow->baseline_ok ?? 0),
+            'baseline_note' => null,
+        ];
+
+        KpiRoMonthly::query()->updateOrCreate(
+            [
+                'period_month' => $periodDate,
+                'ao_code'      => $ao,
+            ],
+            $payload
+        );
+
+        return [
+            'ao_code' => $ao,
+            'period_month' => $periodDate,
+            'calc_mode' => $mode,
+            'total_score_weighted' => $piTotal,
+        ];
+    }
 }

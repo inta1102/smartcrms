@@ -398,34 +398,34 @@ class FeKpiMonthlyService
     }
 
     private function resolveScopeUserIds($leader, Carbon $period): array
-{
-    $leaderId   = (int)($leader?->id ?? 0);
-    $leaderRole = $this->leaderRoleValue($leader);
-    if ($leaderId <= 0) return [];
+    {
+        $leaderId   = (int)($leader?->id ?? 0);
+        $leaderRole = $this->leaderRoleValue($leader);
+        if ($leaderId <= 0) return [];
 
-    $start = $period->copy()->startOfMonth()->toDateString();
-    $end   = $period->copy()->endOfMonth()->toDateString();
+        $start = $period->copy()->startOfMonth()->toDateString();
+        $end   = $period->copy()->endOfMonth()->toDateString();
 
-    $aliases = match ($leaderRole) {
-        'TLFE' => ['tlfe','tl','teamleader','leader'],
-        'KSFE' => ['ksfe','kasi','kasilending'],
-        default => [strtolower($leaderRole)],
-    };
+        $aliases = match ($leaderRole) {
+            'TLFE' => ['tlfe','tl','teamleader','leader'],
+            'KSFE' => ['ksfe','kasi','kasilending'],
+            default => [strtolower($leaderRole)],
+        };
 
-    return DB::table('org_assignments')
-        ->where('leader_id', $leaderId)
-        ->where('is_active', 1)
-        ->whereIn(DB::raw("LOWER(REPLACE(TRIM(leader_role),' ',''))"), $aliases)
-        ->whereDate('effective_from', '<=', $end)
-        ->where(function ($q) use ($start) {
-            $q->whereNull('effective_to')
-              ->orWhereDate('effective_to', '>=', $start);
-        })
-        ->pluck('user_id')
-        ->map(fn($x) => (int)$x)
-        ->values()
-        ->all();
-}
+        return DB::table('org_assignments')
+            ->where('leader_id', $leaderId)
+            ->where('is_active', 1)
+            ->whereIn(DB::raw("LOWER(REPLACE(TRIM(leader_role),' ',''))"), $aliases)
+            ->whereDate('effective_from', '<=', $end)
+            ->where(function ($q) use ($start) {
+                $q->whereNull('effective_to')
+                ->orWhereDate('effective_to', '>=', $start);
+            })
+            ->pluck('user_id')
+            ->map(fn($x) => (int)$x)
+            ->values()
+            ->all();
+    }
 
     private function buildTlFeRecap($items, string $periodDate, $leaderUser = null): ?object
     {

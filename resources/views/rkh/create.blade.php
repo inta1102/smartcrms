@@ -1,12 +1,46 @@
 @extends('layouts.app')
+@php
+  use App\Enums\UserRole;
+
+  $me = auth()->user();
+
+  $roleValue = 'RO';
+  if ($me) {
+      if (method_exists($me, 'role') && $me->role()) {
+          $r = $me->role();
+          $roleValue = strtoupper(trim((string)($r->value ?? $r)));
+      } else {
+          $lvl = $me->getAttribute('level');
+          if ($lvl instanceof UserRole) {
+              $roleValue = strtoupper(trim((string)$lvl->value));
+          } elseif (is_string($lvl) && trim($lvl) !== '') {
+              $roleValue = strtoupper(trim($lvl));
+          }
+      }
+  }
+
+  $roleLabelMap = [
+      'RO' => 'RO',
+      'FE' => 'FE',
+      'AO' => 'AO',
+      'SO' => 'SO',
+      'BE' => 'BE',
+      'TLRO' => 'TLRO',
+      'TLFE' => 'TLFE',
+  ];
+
+  $roleLabel = $roleLabelMap[$roleValue] ?? $roleValue;
+  $pageTitle = "Buat RKH {$roleLabel}";
+  $pageDesc  = "1 klik tanggal → langsung isi 4 kegiatan.";
+@endphp
 
 @section('content')
 <div class="max-w-6xl mx-auto p-4">
 
   <div class="flex items-center justify-between">
     <div>
-      <h1 class="text-2xl font-bold">Buat RKH</h1>
-      <p class="text-sm text-slate-500">1 klik tanggal → langsung isi 4 kegiatan.</p>
+      <h1 class="text-2xl font-bold">{{ $pageTitle }}</h1>
+      <p class="text-sm text-slate-500">{{ $pageDesc }}</p>
     </div>
     <a href="{{ route('rkh.index') }}" class="px-3 py-2 rounded border">Kembali</a>
   </div>
@@ -27,8 +61,8 @@
       <div class="mt-4 border rounded-xl p-3 bg-white">
         <div class="flex items-start justify-between gap-2">
           <div>
-            <div class="text-sm font-bold">Nasabah Wajib Dikunjungi</div>
-            <div class="text-xs text-slate-500">Smart reminder otomatis (read-only). Klik untuk masukkan ke RKH.</div>
+            <div class="text-sm font-bold">Daftar Prioritas Kunjungan</div>
+            <div class="text-xs text-slate-500">Smart reminder otomatis (read-only). Klik untuk memasukkan item ke RKH.</div>
           </div>
           <button type="button" class="px-3 py-2 border rounded-lg text-sm" id="btnSmartToggle">Tutup</button>
         </div>
@@ -149,6 +183,7 @@
             <th class="text-left p-2 w-[120px]">Jam Mulai</th>
             <th class="text-left p-2 w-[120px]">Jam Selesai</th>
             <th class="text-left p-2 w-[260px]">Nama Nasabah</th>
+            <th class="text-left p-2 w-[170px]">Account No</th>
             <th class="text-left p-2 w-[90px]">Kolek</th>
             <th class="text-left p-2 w-[170px]">Jenis</th>
             <th class="text-left p-2 w-[260px]">Tujuan</th>
@@ -317,7 +352,8 @@
     // nasabah
     if (prefill.nama_nasabah !== undefined) setVal(scopeEl, `[name="items[${idx}][nama_nasabah]"]`, prefill.nama_nasabah);
     if (prefill.nasabah_id !== undefined)   setVal(scopeEl, `[name="items[${idx}][nasabah_id]"]`, prefill.nasabah_id);
-
+    if (prefill.account_no !== undefined) setVal(scopeEl, `[name="items[${idx}][account_no]"]`, prefill.account_no);
+    
     // lainnya
     if (prefill.kolektibilitas !== undefined) setVal(scopeEl, `[name="items[${idx}][kolektibilitas]"]`, prefill.kolektibilitas);
     if (prefill.area !== undefined)          setVal(scopeEl, `[name="items[${idx}][area]"]`, prefill.area);
@@ -432,6 +468,7 @@
     const prefill = {
       nama_nasabah: data.nama || '',
       nasabah_id: data.nasabah_id || '',
+      account_no: data.account_no || '',
       kolektibilitas: sug.kolektibilitas || data.kolek_now || '',
 
       // IMPORTANT: ini harus CODE master_jenis_kegiatan / master_tujuan_kegiatan

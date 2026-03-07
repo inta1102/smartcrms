@@ -10,6 +10,14 @@ class KpiSummaryController extends Controller
 {
     public function index(Request $request, KpiSummaryService $svc)
     {
+        \Log::info('SUMMARY AUTH DEBUG', [
+            'user_id' => auth()->id(),
+            'roleValue' => auth()->user()?->roleValue(),
+            'can_summary' => auth()->user()?->can('kpi-summary-view') ?? null,
+            'can_viewDashboard' => auth()->user()?->can('viewDashboard') ?? null,
+            'can_view_ranking' => auth()->user()?->can('kpi-marketing-ranking-view') ?? null,
+            ]);
+
         // period: support 2026-02 / 2026-02-01; default bulan ini
         $rawPeriod = trim((string) $request->query('period', ''));
         $level     = strtoupper(trim((string) $request->query('level', 'ALL'))); // STAFF/TL/KASI/ALL
@@ -21,6 +29,8 @@ class KpiSummaryController extends Controller
             'role'  => $role,
             'q'     => $q,
         ]);
+
+        
 
         return view('kpi.summary.index', [
             'rows' => $rows,

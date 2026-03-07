@@ -647,4 +647,56 @@ class BeKpiMonthlyService
     {
         return $this->calculateRealtime($periodYm, $users, $targetsByUserId);
     }
+
+    public function persistFromBuild(string $periodYm, \App\Models\User $authUser): int
+    {
+        $data = $this->buildForPeriod($periodYm, $authUser); // <-- HITUNG SEKALI DI SINI
+        $periodDate = \Carbon\Carbon::createFromFormat('Y-m', $periodYm)->startOfMonth()->toDateString();
+
+        $calcMode = ($periodDate === now()->startOfMonth()->toDateString()) ? 'realtime' : 'eom';
+
+        $count = 0;
+
+        foreach (($data['items'] ?? collect()) as $row) {
+
+            $beUserId = (int) data_get($row, 'be_user_id');
+            if (!$beUserId) continue;
+
+            \App\Models\KpiBeMonthly::updateOrCreate(
+                [
+                    'period'     => $periodDate,
+                    'be_user_id' => $beUserId,
+                    
+                ],
+                [
+                    'status' => (string) (data_get($row,'status') ?? 'draft'),
+
+                    'actual_os_selesai'    => (float) data_get($row,'actual.os',0),
+                    'actual_noa_selesai'   => (int)   data_get($row,'actual.noa',0),
+                    'actual_bunga_masuk'   => (float) data_get($row,'actual.bunga',0),
+                    'actual_denda_masuk'   => (float) data_get($row,'actual.denda',0),
+
+                    'score_os'    => (int) data_get($row,'score.os',1),
+                    'score_noa'   => (int) data_get($row,'score.noa',1),
+                    'score_bunga' => (int) data_get($row,'score.bunga',1),
+                    'score_denda' => (int) data_get($row,'score.denda',1),
+
+                    'pi_os'    => (float) data_get($row,'pi.os',0),
+                    'pi_noa'   => (float) data_get($row,'pi.noa',0),
+                    'pi_bunga' => (float) data_get($row,'pi.bunga',0),
+                    'pi_denda' => (float) data_get($row,'pi.denda',0),
+                    'total_pi' => (float) data_get($row,'pi.total',0),
+
+                    // kalau kamu punya kolom ini di monthlies:
+                    'os_npl_prev'  => (float) data_get($row,'actual.os_npl_prev',0),
+                    'os_npl_now'   => (float) data_get($row,'actual.os_npl_now',0),
+                    'net_npl_drop' => (float) data_get($row,'actual.net_npl_drop',0),
+                ]
+            );
+
+            $count++;
+        }
+
+        return $count;
+    }
 }

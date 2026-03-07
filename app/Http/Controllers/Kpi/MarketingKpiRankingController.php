@@ -13,6 +13,15 @@ use App\Services\Kpi\MarketingKpiMonthlyService;
 
 class MarketingKpiRankingController extends Controller
 {
+    public function __construct()
+    {
+        // yg boleh lihat ranking
+        $this->middleware('can:kpi-marketing-ranking-view')->only(['index']);
+
+        // yg boleh recalc
+        $this->middleware('can:recalcMarketingKpi')->only(['recalcAll']);
+    }
+
     public function goto(Request $request)
     {
         $me = auth()->user();
@@ -411,6 +420,15 @@ class MarketingKpiRankingController extends Controller
 
     public function recalcAll(Request $request, MarketingKpiMonthlyService $svc)
     {
+        \Log::info('AUTH DEBUG', [
+        'url' => request()->fullUrl(),
+        'user_id' => auth()->id(),
+        'roleValue' => auth()->user()?->roleValue(),
+        'can_recalc' => auth()->user()?->can('recalcMarketingKpi') ?? null,
+        'can_view_ranking' => auth()->user()?->can('viewMarketingRanking') ?? null,
+        'can_kpi_marketing' => auth()->user()?->can('kpi-marketing-view') ?? null,
+        ]);
+
         $me = auth()->user();
         abort_unless($me, 403);
 
@@ -463,7 +481,12 @@ class MarketingKpiRankingController extends Controller
             }
         });
 
-        return back()->with('status', 'Recalc KPI Marketing (ALL ROLE) berhasil.');
+        return redirect()
+            ->route('kpi.summary.index', [
+                // opsional: bawa period biar summary langsung ke period yg sama
+                'period' => $period->format('Y-m'),
+            ])
+            ->with('status', 'Recalc KPI Marketing (ALL ROLE) berhasil.');
     }
 
     private function resolveRoMode(Carbon $period): string

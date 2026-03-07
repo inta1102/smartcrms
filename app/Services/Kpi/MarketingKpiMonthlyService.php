@@ -9,7 +9,6 @@ use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
-
 class MarketingKpiMonthlyService
 {
     /**
@@ -139,46 +138,140 @@ class MarketingKpiMonthlyService
         });
     }
 
-    public function recalcAnyUserAndPeriod(int $userId, string|Carbon $period): void
+    public function recalcAnyUserAndPeriod(int $userId, Carbon $period): void
     {
-        $period = Carbon::parse($period)->startOfMonth();
+        $u = User::find($userId);
+        if (!$u) return;
 
-        $user = User::query()->findOrFail($userId);
+        $role = $this->roleValueFromUser($u);
+        $periodYmd = $period->copy()->startOfMonth()->toDateString();
 
-        // Di project kamu: role kadang di level, kadang di role/roleValue
-        $role = $this->roleValueFromUser($user);
+        // calcMode standar (yang kamu pakai di builder KBL/KSLR)
+        $calcMode = $period->copy()->startOfMonth()->equalTo(now()->startOfMonth())
+            ? 'realtime'
+            : 'eom';
 
-        
-        // =========================
-        // STAFF: AO/RO/SO/FE/BE
-        // =========================
+        // =========================================
+        // 1) STAFF foundation
+        // =========================================
         if (in_array($role, ['AO','RO','SO','FE','BE'], true)) {
-            // method lama kamu tetap dipakai (return MarketingKpiMonthly)
-            $this->recalcForUserAndPeriod($userId, $period);
+            $this->recalcStaff($u, $periodYmd);   // <- fungsi kamu yang existing
             return;
         }
 
-        // =========================
-        // LEADERSHIP (TL / KASI / KABAG)
-        // =========================
-        
+        // =========================================
+        // 2) LEADERSHIP routing (opsi B)
+        // =========================================
 
+        // ---- TLUM (adapter) ----
+        if ($role === 'TLUM') {
+            app(\App\Services\Kpi\TlumMarketingMonthlyBuilder::class)
+                ->build((int)$u->id, $periodYmd);
+            return;
+        }
+
+        // ---- KSLR ----
+        if ($role === 'KSLR') {
+            app(\App\Services\Kpi\KslrMonthlyBuilder::class)
+                ->build(
+                    (int)$u->id,
+                    $periodYmd,
+                    $calcMode,
+                    app(\App\Services\Org\OrgScopeService::class) // sesuaikan namespace
+                );
+            return;
+        }
+
+       if ($role === 'KSBE') {
+            app(\App\Services\Kpi\KsbeKpiMonthlyService::class)
+                ->buildAndStore(
+                    (int)$u->id,
+                    \Carbon\Carbon::parse($periodYmd)->format('Y-m')
+                );
+            return;
+        }
+
+        // ---- KBL ----
+        if ($role === 'KBL') {
+            // paling aman: kalau kosong = GLOBAL (sesuai komentar di KblMonthlyBuilder kamu)
+            $scopeAoCodes = [];
+
+            app(\App\Services\Kpi\KblMonthlyBuilder::class)
+                ->build(
+                    (int)$u->id,
+                    $periodYmd,
+                    $scopeAoCodes,
+                    null
+                );
+            return;
+        }
+
+        // ---- Role leadership lain (TLRO/TLFE/TLBE/KSFE/KSBE...) ----
+        // fallback ke dispatcher generik kamu (yang pakai resolveLeadershipBuilderClass + runLeadershipBuilderIfAny)
         $builderClass = $this->resolveLeadershipBuilderClass($role);
         if ($builderClass) {
-            $this->runLeadershipBuilderIfAny($builderClass, $user, $period);
+            $this->runLeadershipBuilderIfAny($builderClass, $u, $period);
         }
-        return;
-
-        // Default: no-op (biar aman)
     }
-    
+
+    private function recalcStaff(User $u, string $periodYmd): void
+    {
+        $role   = $this->roleValueFromUser($u);
+        $userId = (int) $u->id;
+
+        // helper
+        $periodYm = \Carbon\Carbon::parse($periodYmd)->format('Y-m');
+        $calcMode = \Carbon\Carbon::parse($periodYmd)->startOfMonth()->equalTo(now()->startOfMonth())
+            ? 'realtime'
+            : 'eom';
+
+        switch ($role) {
+
+            // =====================
+            // AO ✅ FIX: pakai builder/service AO baru
+            // =====================
+            case 'AO':
+                app(\App\Services\Kpi\AoKpiMonthlyService::class)
+                    ->buildForPeriod($periodYmd, $userId);
+                return;
+
+            case 'RO':
+                app(\App\Services\Kpi\RoKpiMonthlyBuilder::class)
+                    ->buildAndStoreForAo(
+                        $periodYmd,
+                        $u->ao_code,
+                        $calcMode
+                    );
+                return;
+                            
+            case 'SO':
+                app(\App\Services\Kpi\SoKpiMonthlyService::class)
+                    ->buildForPeriod($periodYmd, $userId);
+                return;
+
+            // =====================
+            // FE ✅ FIX
+            // =====================
+            case 'FE':
+                // FeKpiMonthlyBuilder signature: build(periodYmd, mode?, actorId?)
+                app(\App\Services\Kpi\FeKpiMonthlyBuilder::class)
+                    ->build($periodYmd, $calcMode, auth()->id());
+                return;
+
+            case 'BE':
+                app(\App\Services\Kpi\BeKpiMonthlyService::class)
+                    ->persistFromBuild($periodYm, $u);
+                return;
+        }
+    }
+
+    // resolveLeadershipBuilderClass + runLeadershipBuilderIfAny tetap dipakai
+
     private function roleValueFromUser(User $user): string
     {
         // kandidat field yang mungkin dipakai di projectmu
         $candidates = [
-            // $user->role_value ?? null,
             $user->roleValue() ?? null, // kalau method ada
-            // $user->role ?? null,
             $user->level ?? null,
         ];
 
@@ -217,8 +310,6 @@ class MarketingKpiMonthlyService
             'TLUM' => \App\Services\Kpi\TlumMarketingMonthlyBuilder::class,
             'TLFE' => \App\Services\Kpi\TlfeLeadershipBuilder::class,
             'TLBE' => \App\Services\Kpi\TlBeMonthlyService::class,
-            // 'TLSO' => \App\Services\Kpi\Leadership\TlsoMarketingMonthlyBuilder::class,
-            // tambahin kalau ada lagi
         ];
 
         // ===== KASI family (KS*) =====
@@ -226,15 +317,11 @@ class MarketingKpiMonthlyService
             'KSLR' => \App\Services\Kpi\KslrMonthlyBuilder::class,
             'KSFE' => \App\Services\Kpi\KsfeLeadershipBuilder::class,
             'KSBE' => \App\Services\Kpi\KsbeKpiMonthlyService::class,
-            // 'KSLU' => \App\Services\Kpi\Leadership\KsluMarketingMonthlyBuilder::class,
-            // 'KSSO' => \App\Services\Kpi\Leadership\KssoMarketingMonthlyBuilder::class,
-            // tambahin kalau ada lagi
         ];
 
         // ===== KABAG family =====
         $kabagMap = [
             'KBL'  => \App\Services\Kpi\KblMonthlyBuilder::class,
-            // contoh kalau ada: 'KBO' => ..., dst
         ];
 
         if (isset($tlMap[$role])) return $tlMap[$role];
@@ -244,54 +331,90 @@ class MarketingKpiMonthlyService
         return null; // unknown role -> no builder
     }
 
-    
-    private function runLeadershipBuilderIfAny(string $builderClass, User $user, Carbon $period): void
+    private function runLeadershipBuilderIfAny(string $builderClass, \App\Models\User $user, \Carbon\Carbon $period): void
     {
-        if (!class_exists($builderClass)) {
-            Log::warning('KPI Recalc builder class not found', [
-                'builder_class' => $builderClass,
-                'user_id' => $user->id,
-                'role' => $this->roleValueFromUser($user),
+        // ✅ Guard: builderClass null/empty (misal TLUM kita set null)
+        if (!$builderClass) {
+            \Log::info('KPI Recalc skip (no builderClass)', [
+                'user_id' => (int)$user->id,
+                'role'    => $this->roleValueFromUser($user),
+                'period'  => $period->toDateString(),
             ]);
             return;
         }
 
-        $builder = app($builderClass);
+        // ✅ Guard: class belum ada (kasus TLUM paling sering)
+        if (!class_exists($builderClass)) {
+            \Log::warning('KPI Recalc skip (builder class not found)', [
+                'builder' => $builderClass,
+                'user_id' => (int)$user->id,
+                'role'    => $this->roleValueFromUser($user),
+                'period'  => $period->toDateString(),
+            ]);
+            return;
+        }
+
+        $svc = app($builderClass);
+
+        $periodObj = $period->copy()->startOfMonth();
+        $periodYmd = $periodObj->toDateString();          // 2026-03-01
+        $periodYm  = $periodObj->format('Y-m');           // 2026-03
+        $userId    = (int) $user->id;
+
+        $calcMode = $period->equalTo(now()->startOfMonth()) ? 'realtime' : 'eom';
+
+        // paling aman untuk KBL: kosong = GLOBAL
+        $scopeAoCodes = [];
 
         $calls = [
-            // method => args
-            ['buildForLeader', [$user, $period]],
-            ['buildForLeader', [$user->id, $period]],
-            ['build',          [$user, $period]],
-            ['build',          [$user->id, $period]],
-            ['recalcForLeader',[$user, $period]],
-            ['recalcForLeader',[$user->id, $period]],
-            ['recalcAnyUserAndPeriod', [$user->id, $period]],
-            ['recalcForUserAndPeriod', [$user->id, $period]],
-            ['handle',         [$user, $period]],
-            ['handle',         [$user->id, $period]],
+            ['build', [$userId, $periodYmd, $calcMode, app(\App\Services\Org\OrgScopeService::class)]],
+            ['build', [$userId, $periodYmd, $scopeAoCodes, null]],
+            ['build', [$userId, $periodYmd]],
+            ['build', [$userId, $periodObj]],
+
+            ['buildForLeader', [$user, $periodObj]],
+            ['buildForLeader', [$user, $periodYmd]],
+            ['buildForLeader', [$userId, $periodObj]],
+            ['buildForLeader', [$userId, $periodYmd]],
+
+            ['buildForPeriod', [$periodYm, $user]],
+            ['buildForPeriod', [$periodYm, $userId]],
+            ['buildForPeriod', [$periodYm, null]],
+            ['buildForPeriod', [$periodYm]],
+
+            ['buildForPeriod', [$periodYmd, $user]],
+            ['buildForPeriod', [$periodYmd, $userId]],
+            ['buildForPeriod', [$periodYmd]],
+
+            ['recalc', [$userId, $periodObj]],
+            ['recalc', [$userId, $periodYmd]],
+            ['handle', [$userId, $periodYmd]],
         ];
 
-        foreach ($calls as [$method, $args]) {
-            if (method_exists($builder, $method)) {
-                Log::info('KPI Recalc builder call', [
-                    'builder_class' => $builderClass,
-                    'method' => $method,
-                    'user_id' => $user->id,
-                    'role' => $this->roleValueFromUser($user),
-                    'period' => $period->toDateString(),
-                ]);
+        $lastErr = null;
 
-                $builder->{$method}(...$args);
-                return;
+        foreach ($calls as [$method, $args]) {
+            if (!method_exists($svc, $method)) continue;
+
+            try {
+                $svc->{$method}(...$args);
+                return; // ✅ sukses 1 signature, stop
+            } catch (\Throwable $e) {
+                $lastErr = $e;
+                continue;
             }
         }
 
-        Log::warning('KPI Recalc builder has no compatible method', [
-            'builder_class' => $builderClass,
-            'user_id' => $user->id,
-            'role' => $this->roleValueFromUser($user),
-        ]);
+        // optional: log last error
+        if ($lastErr) {
+            \Log::warning('KPI Recalc builder failed all signatures', [
+                'builder' => $builderClass,
+                'user_id' => $userId,
+                'role'    => $this->roleValueFromUser($user),
+                'period'  => $periodYmd,
+                'err'     => $lastErr->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -311,7 +434,6 @@ class MarketingKpiMonthlyService
         $noa = $this->noaMode === 'cif'
             ? (int) (clone $base)->distinct('cif')->count('cif')
             : (int) (clone $base)->count();
-
 
         return [(int) round($os), $noa];
     }
