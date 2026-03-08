@@ -19,23 +19,72 @@ class LkhRecapService
                 $q->orderBy('jam_mulai');
             },
             'details.lkh',
+            'details.latestRoVisit',
             'details.networking',
         ]);
 
         $rows = [];
+        $filled = 0;
+
         foreach ($rkh->details as $d) {
+            $visit = $d->latestRoVisit;
+            $lkh   = $d->lkh;
+
+            $visitStatus = strtoupper(trim((string)($visit->status ?? '')));
+            $visitDone   = ($visitStatus === 'DONE');
+
+            // source utama: ro_visits.lkh_note
+            // fallback: lkh lama
+            $hasil = trim((string)(
+                $visit->lkh_note
+                ?? $lkh->hasil_kunjungan
+                ?? ''
+            ));
+
+            $respon = trim((string)(
+                $lkh->respon_nasabah
+                ?? ''
+            ));
+
+            $tindakLanjut = trim((string)(
+                $visit->next_action
+                ?? $lkh->tindak_lanjut
+                ?? ''
+            ));
+
+            // visited state
+            if ($visit) {
+                $isVisited = $visitDone;
+            } elseif ($lkh) {
+                $isVisited = $lkh->is_visited;
+            } else {
+                $isVisited = null;
+            }
+
+            // hitung terisi:
+            // - visit done
+            // - atau ada hasil
+            // - atau ada row lkh lama
+            $isFilled = $visitDone || $hasil !== '' || !empty($lkh);
+            if ($isFilled) {
+                $filled++;
+            }
+
             $rows[] = [
-                'jam' => $this->fmtJam($d->jam_mulai, $d->jam_selesai),
+                'jam' => $this->fmtJam((string)$d->jam_mulai, (string)$d->jam_selesai),
                 'nasabah' => $d->nama_nasabah ?: '-',
                 'kolek' => $d->kolektibilitas ?: '-',
                 'jenis' => $d->jenis_kegiatan,
                 'tujuan' => $d->tujuan_kegiatan,
                 'area' => $d->area ?: '-',
 
-                'is_visited' => $d->lkh?->is_visited,
-                'hasil' => $d->lkh?->hasil_kunjungan,
-                'respon' => $d->lkh?->respon_nasabah,
-                'tindak_lanjut' => $d->lkh?->tindak_lanjut,
+                'is_visited' => $isVisited,
+                'hasil' => $hasil,
+                'respon' => $respon,
+                'tindak_lanjut' => $tindakLanjut,
+
+                // penanda sumber untuk blade
+                'source_visit_done' => $visitDone,
 
                 'networking' => $d->networking ? [
                     'nama_relasi' => $d->networking->nama_relasi,
@@ -46,15 +95,11 @@ class LkhRecapService
             ];
         }
 
-        // Statistik ringan: berapa kegiatan sudah ada LKH
         $total = count($rows);
-        $filled = 0;
-        foreach ($rkh->details as $d) {
-            if ($d->lkh) $filled++;
-        }
 
         return [
             'rkh' => $rkh,
+            'role' => strtoupper((string)($rkh->user?->level?->value ?? $rkh->user?->level ?? 'RO')),
             'rows' => $rows,
             'stats' => [
                 'total_kegiatan' => $total,
@@ -66,7 +111,6 @@ class LkhRecapService
 
     private function fmtJam(string $start, string $end): string
     {
-        // DB time biasanya "HH:MM:SS", kita ringkas
         return substr($start, 0, 5) . ' - ' . substr($end, 0, 5);
     }
 }

@@ -57,4 +57,8 @@ class RkhDetail extends Model
         return $this->hasOne(\App\Models\RoVisit::class, 'rkh_detail_id');
     }
 
+    public function latestRoVisit()
+    {
+        return $this->hasOne(\App\Models\RoVisit::class, 'rkh_detail_id')->latestOfMany();
+    }
 }

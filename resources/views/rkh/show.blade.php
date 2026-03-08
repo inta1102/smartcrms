@@ -238,7 +238,7 @@
             $isProspect = !$hasAcc && empty($d->nasabah_id);
             $ts = $d->tl_status ?? 'pending';
 
-            $visitStatus = strtoupper((string)($d->roVisit->status ?? ''));
+            $visitStatus = strtoupper((string)($d->latestRoVisit->status ?? ''));
             $visitDone = ($visitStatus === 'DONE');
 
             $hasLkhFilled = !empty($d->lkh) || $visitDone;

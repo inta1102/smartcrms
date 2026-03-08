@@ -48,7 +48,7 @@ class RoVisitController extends Controller
         $row = DB::table('ro_visits')
             ->where('user_id', (int) $user->id)
             ->where('account_no', $accountNo)
-            ->where('visit_date', $today)
+            ->whereDate('visit_date', $today)
             ->first();
 
         // kalau sudah done => lock
@@ -121,7 +121,16 @@ class RoVisitController extends Controller
         $user = $request->user();
         abort_if(!$user, 401);
 
-        $backUrl = (string) $request->query('back', url()->previous());
+        $backUrl = trim((string) $request->query('back', ''));
+
+        $rkhDetailId = (int) $request->query('rkh_detail_id', 0);
+        $accountNoQ  = trim((string) $request->query('account_no', ''));
+
+        abort_if(
+            $rkhDetailId <= 0 && $accountNoQ === '',
+            422,
+            'rkh_detail_id / account_no required'
+        );
 
         // =========================
         // MODE A: RKH (punya rkh_detail_id)
@@ -129,10 +138,18 @@ class RoVisitController extends Controller
         $rkhDetailId = (int) $request->query('rkh_detail_id', 0);
         if ($rkhDetailId > 0) {
 
+            $visit = null;
+
             $detail = \App\Models\RkhDetail::with('header')->findOrFail($rkhDetailId);
 
             // pastikan ini RKH milik user tsb
             abort_if((int)($detail->header?->user_id ?? 0) !== (int)$user->id, 403, 'Bukan RKH kamu.');
+
+            $defaultBackUrl = route('rkh.show', $detail->header->id);
+
+            if ($backUrl === '' || str_contains($backUrl, '/ro-visits/visit')) {
+                $backUrl = $defaultBackUrl;
+            }
 
             $accountNo = trim((string)($detail->account_no ?? ''));
 
@@ -143,40 +160,67 @@ class RoVisitController extends Controller
                     ->with('status', 'Prospect belum punya account_no. Isi log kunjungan dulu. Setelah jadi nasabah, lakukan Link account.');
             }
 
-            // ensure ro_visits planned hari ini ada
             $today = now()->toDateString();
 
+            // 1) prioritas utama: cari yang sudah terhubung ke detail RKH ini
             $visit = \App\Models\RoVisit::query()
+                ->where('rkh_detail_id', $detail->id)
                 ->where('user_id', $user->id)
-                ->where('account_no', $accountNo)
-                ->where('visit_date', $today)
                 ->first();
 
+            // 2) fallback: row legacy by user + account + date
+            if (!$visit) {
+                $visit = \App\Models\RoVisit::query()
+                    ->where('user_id', $user->id)
+                    ->where('account_no', $accountNo)
+                    ->whereDate('visit_date', $today)
+                    ->first();
+
+                if ($visit) {
+                    $dirty = false;
+
+                    if ((int)($visit->rkh_detail_id ?? 0) !== (int)$detail->id) {
+                        $visit->rkh_detail_id = $detail->id;
+                        $dirty = true;
+                    }
+
+                    if ((string)($visit->source ?? '') !== 'rkh') {
+                        $visit->source = 'rkh';
+                        $dirty = true;
+                    }
+
+                    $newAo = $detail->header?->ao_code
+                        ?? $detail->ao_code
+                        ?? ($request->user()->ao_code ?? null);
+
+                    if (!empty($newAo) && (string)$visit->ao_code !== (string)$newAo) {
+                        $visit->ao_code = $newAo;
+                        $dirty = true;
+                    }
+
+                    if ($dirty) {
+                        $visit->save();
+                    }
+                }
+            }
+
+            // 3) kalau tetap belum ada, baru create baru
             if (!$visit) {
                 $visit = \App\Models\RoVisit::create([
-                    'rkh_detail_id' => $detail->id,         // ✅ penting
+                    'rkh_detail_id' => $detail->id,
                     'user_id'       => $user->id,
                     'account_no'    => $accountNo,
                     'ao_code'       => $detail->header?->ao_code
                                     ?? $detail->ao_code
-                                    ?? ($request->user()->ao_code ?? null), // optional sesuai strukturmu
+                                    ?? ($request->user()->ao_code ?? null),
                     'visit_date'    => $today,
                     'status'        => 'planned',
                     'source'        => 'rkh',
                 ]);
-            } else {
-                // kalau sudah ada visit tapi rkh_detail_id kosong, kita isi biar nyambung
-                if (empty($visit->rkh_detail_id)) {
-                    $visit->rkh_detail_id = $detail->id;
-                    $visit->source = $visit->source ?: 'rkh';
-                    $visit->save();
-                }
             }
 
-            // ✅ ambil debitur info dari loan_accounts
             $deb = $this->getLoanAccountLatest((string) $visit->account_no);
 
-            // ✅ ambil foto jika ada table ro_visit_photos
             $photos = collect();
             if (Schema::hasTable('ro_visit_photos')) {
                 $photos = DB::table('ro_visit_photos')
@@ -184,6 +228,12 @@ class RoVisitController extends Controller
                     ->orderBy('id')
                     ->get();
             }
+
+            \Log::info('RO VISIT CREATE', [
+                'full_url' => request()->fullUrl(),
+                'query'    => request()->query(),
+                'visit_id' => $visit->id ?? null,
+            ]);
 
             return view('ro_visits.form', [
                 'visit'         => $visit,
@@ -206,7 +256,7 @@ class RoVisitController extends Controller
         $visit = \App\Models\RoVisit::query()
             ->where('user_id', $user->id)
             ->where('account_no', $accountNo)
-            ->where('visit_date', $today)
+            ->whereDate('visit_date', $today)
             ->first();
 
         abort_if(!$visit, 404, 'Visit belum di-plan.');
@@ -239,18 +289,20 @@ class RoVisitController extends Controller
         abort_if(!$user, 401);
 
         $data = $request->validate([
-            'visit_id'   => ['required','integer'],
-            'account_no' => ['required','string','max:30'],
+            'visit_id'       => ['required','integer'],
+            'rkh_detail_id'  => ['nullable','integer'],
+            'account_no'     => ['required','string','max:30'],
 
-            'lat'      => ['nullable','string','max:30'],
-            'lng'      => ['nullable','string','max:30'],
+            'lat'        => ['nullable','string','max:30'],
+            'lng'        => ['nullable','string','max:30'],
 
-            'lkh_note' => ['required','string','min:10'],
+            'lkh_note'   => ['required','string','min:10'],
+            'next_action'=> ['nullable','string','max:2000'],
 
-            'photos'   => ['nullable','array','max:6'],
-            'photos.*' => ['file','mimes:jpg,jpeg,png','max:5120'], // 5MB
+            'photos'     => ['nullable','array','max:6'],
+            'photos.*'   => ['file','mimes:jpg,jpeg,png','max:5120'],
 
-            'back'     => ['nullable','string','max:2048'],
+            'back'       => ['nullable','string','max:2048'],
         ]);
 
         $visit = DB::table('ro_visits')
@@ -258,27 +310,39 @@ class RoVisitController extends Controller
             ->where('user_id', (int)$user->id)
             ->first();
 
-        abort_if(!$visit, 404);
+        abort_if(!$visit, 404, 'Visit tidak ditemukan.');
         abort_if((string)($visit->status ?? '') === 'done', 409, 'Sudah DONE.');
 
-        // validasi halus: pastikan account_no match
         if (trim((string)$visit->account_no) !== trim((string)$data['account_no'])) {
             abort(422, 'account_no mismatch');
         }
 
+        // sinkronkan rkh_detail_id bila perlu
+        if (!empty($data['rkh_detail_id']) && (int)($visit->rkh_detail_id ?? 0) !== (int)$data['rkh_detail_id']) {
+            DB::table('ro_visits')
+                ->where('id', (int)$visit->id)
+                ->update([
+                    'rkh_detail_id' => (int)$data['rkh_detail_id'],
+                    'updated_at'    => now(),
+                ]);
+
+            $visit = DB::table('ro_visits')
+                ->where('id', (int)$visit->id)
+                ->where('user_id', (int)$user->id)
+                ->first();
+        }
+
         $back = trim((string)($data['back'] ?? ''));
-        if ($back === '') $back = url()->previous();
-        if ($back === '') $back = route('kpi.ro.os-daily');
 
         DB::beginTransaction();
         try {
             $update = [
-                'lkh_note'   => $data['lkh_note'],
-                'status'     => 'done',
-                'updated_at' => now(),
+                'lkh_note'    => $data['lkh_note'],
+                'next_action' => $data['next_action'] ?? null,
+                'status'      => 'done',
+                'updated_at'  => now(),
             ];
 
-            // ✅ hanya update kolom kalau memang ada (biar aman tanpa migrate dulu)
             if (Schema::hasColumn('ro_visits', 'visited_at')) {
                 $update['visited_at'] = now();
             }
@@ -291,7 +355,6 @@ class RoVisitController extends Controller
 
             DB::table('ro_visits')->where('id', (int)$visit->id)->update($update);
 
-            // Upload foto tanpa symlink (public/uploads)
             if ($request->hasFile('photos') && Schema::hasTable('ro_visit_photos')) {
                 $ym = now()->format('Y/m');
                 $dir = public_path('uploads/ro-visits/' . $ym);
@@ -318,9 +381,26 @@ class RoVisitController extends Controller
             throw $e;
         }
 
-        // ✅ setelah save, balik lagi ke form (biar user lihat sukses + preview foto)
+        // flow RKH => balik ke detail RKH
+        if (!empty($data['rkh_detail_id'])) {
+            $detail = DB::table('rkh_details')->where('id', (int)$data['rkh_detail_id'])->first();
+
+            if ($detail) {
+                return redirect()
+                    ->route('rkh.show', (int)$detail->rkh_id)
+                    ->with('success', 'LKH berhasil disimpan (DONE).');
+            }
+        }
+
+        // fallback legacy
+        $params = [];
+        if ($back !== '') {
+            $params['back'] = $back;
+        }
+        $params['account_no'] = $visit->account_no;
+
         return redirect()
-            ->route('ro_visits.create', ['account_no' => $visit->account_no, 'back' => $back])
+            ->route('ro_visits.create', $params)
             ->with('success', 'LKH berhasil disimpan (DONE).');
     }
 

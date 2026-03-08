@@ -240,7 +240,7 @@ class RkhController extends Controller
             'rejector',
             'details' => fn($q) => $q->orderBy('jam_mulai'),
             'details.lkh',
-            'details.roVisit',
+            'details.latestRoVisit',
             'details.networking',
         ]);
 

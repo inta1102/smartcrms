@@ -537,7 +537,9 @@
         </div>
       </div>
 
-      {{-- META / COMPARE --}}
+    @include('kpi.tlro.partials._visit_discipline')
+      
+    {{-- META / COMPARE --}}
       <!-- <div class="rounded-2xl border border-slate-200 bg-white p-4">
         <div class="text-xs text-slate-500">Basis perbandingan</div>
         <div class="text-sm font-extrabold text-slate-900 mt-1">

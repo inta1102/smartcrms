@@ -16,7 +16,11 @@
       </div>
     </div>
 
-    <button class="px-3 py-2 border rounded" onclick="window.print()">Print</button>
+    <!-- <button class="px-3 py-2 border rounded" onclick="window.print()">Print</button> -->
+    <a href="{{ route('lkh.recap.pdf', $rkh->id) }}"
+      class="px-3 py-2 border rounded inline-block">
+      Download PDF
+    </a>
   </div>
 
   <div class="mt-4 overflow-auto border rounded">

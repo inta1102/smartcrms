@@ -94,9 +94,14 @@
 
   <form method="POST" action="{{ route('ro_visits.store') }}" enctype="multipart/form-data" class="space-y-3">
     @csrf
-    <input type="hidden" name="visit_id" value="{{ (int)($visit->id ?? 0) }}">
-    <input type="hidden" name="account_no" value="{{ $visit->account_no ?? '' }}">
-    <input type="hidden" name="back" value="{{ $backUrl }}">
+    <input type="hidden" name="visit_id" value="{{ $visit->id }}">
+    <input type="hidden" name="account_no" value="{{ $visit->account_no }}">
+    @if(!empty($rkh_detail_id))
+      <input type="hidden" name="rkh_detail_id" value="{{ $rkh_detail_id }}">
+    @endif
+    <!-- @if(!empty($back))
+      <input type="hidden" name="back" value="{{ $back }}">
+    @endif -->
 
     {{-- Koordinat --}}
     <div class="rounded-2xl border border-slate-200 bg-white p-3">
@@ -160,14 +165,54 @@
       <textarea name="lkh_note" id="lkh_note" rows="9" maxlength="1500"
                 class="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm bg-white leading-relaxed"
                 placeholder="Contoh:
-• Debitur ditemui (ya/tidak), kondisi usaha/rumah
-• Komitmen bayar: tanggal & nominal
-• Kendala/penyebab
-• Next action: kunjungan ulang / telepon / surat / restruk / eskalasi TL"
+  • Debitur ditemui (ya/tidak), kondisi usaha/rumah
+  • Komitmen bayar: tanggal & nominal
+  • Kendala/penyebab
+  • Next action: kunjungan ulang / telepon / surat / restruk / eskalasi TL"
                 {{ $isDone ? 'disabled' : '' }}>{{ old('lkh_note', $visit->lkh_note ?? '') }}</textarea>
 
       <div class="mt-2 text-xs text-slate-500">
         Tips: tulis pakai poin “•” biar cepat dan kebaca TL/Kasi.
+      </div>
+    </div>
+
+    <div class="mt-3">
+      <div class="flex items-start justify-between gap-2">
+        <div>
+          <div class="text-sm font-extrabold text-slate-900">Rencana Tindak Lanjut</div>
+          <div class="text-xs text-slate-500 mt-0.5">Apa langkah berikutnya setelah kunjungan ini.</div>
+        </div>
+        <div class="text-[11px] text-slate-500">
+          <span id="nextActionCount">0</span>/2000
+        </div>
+      </div>
+
+      <div class="mt-2 grid grid-cols-2 gap-2">
+        <button type="button" id="tplFollowUp"
+                {{ $isDone ? 'disabled' : '' }}
+                class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
+          Isi Template Follow Up
+        </button>
+
+        <button type="button" id="tplSurat"
+                {{ $isDone ? 'disabled' : '' }}
+                class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700">
+          Isi Template Surat / Eskalasi
+        </button>
+      </div>
+
+      <textarea name="next_action" id="next_action" rows="5" maxlength="2000"
+                class="mt-2 w-full rounded-xl border border-slate-300 px-3 py-2 text-sm bg-white leading-relaxed"
+                placeholder="Contoh:
+    • Follow up telepon tanggal ...
+    • Kunjungan ulang tanggal ...
+    • Minta bukti transfer / bukti setoran
+    • Koordinasi dengan TL
+    • Eskalasi ke surat peringatan / analisa restruktur"
+                {{ $isDone ? 'disabled' : '' }}>{{ old('next_action', $visit->next_action ?? '') }}</textarea>
+
+      <div class="mt-2 text-xs text-slate-500">
+        Tulis langkah konkret dan waktunya, supaya tindak lanjut terbaca jelas di rekap LKH.
       </div>
     </div>
 
@@ -308,6 +353,44 @@
 • Next action: follow up H-1 & cek realisasi`
     );
   });
+
+    // ===== Next Action counter + template =====
+    const taNext = document.getElementById('next_action');
+    const nextCountEl = document.getElementById('nextActionCount');
+
+    function refreshNextCount(){
+      if (!taNext || !nextCountEl) return;
+      nextCountEl.textContent = String((taNext.value || '').length);
+    }
+    taNext?.addEventListener('input', refreshNextCount);
+    refreshNextCount();
+
+    function fillNextIfEmpty(text){
+      if (!taNext) return;
+      const cur = (taNext.value || '').trim();
+      if (cur !== '') return;
+      taNext.value = text;
+      refreshNextCount();
+      taNext.focus();
+    }
+
+    document.getElementById('tplFollowUp')?.addEventListener('click', () => {
+      fillNextIfEmpty(
+  `• Follow up telepon pada tanggal ....
+  • Cek realisasi komitmen bayar pada tanggal ....
+  • Jika belum terealisasi, lakukan kunjungan ulang.
+  • Update hasil ke TL.`
+      );
+    });
+
+    document.getElementById('tplSurat')?.addEventListener('click', () => {
+      fillNextIfEmpty(
+  `• Monitor realisasi sampai tanggal ....
+  • Jika tidak ada pembayaran, eskalasi ke TL.
+  • Siapkan usulan surat peringatan / tindakan lanjutan.
+  • Jadwalkan kunjungan berikutnya.`
+      );
+    });
 
   // ===== Photo preview (client-side) =====
   const inputPhotos = document.getElementById('photos');

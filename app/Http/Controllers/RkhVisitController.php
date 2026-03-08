@@ -237,7 +237,7 @@ class RkhVisitController extends Controller
         }
 
         // =========================================================
-        // GUARD 1) OWNER ONLY (anti bypass)
+        // GUARD 1) OWNER ONLY
         // =========================================================
         abort_unless(
             (int) $detail->header->user_id === (int) auth()->id(),
@@ -250,27 +250,16 @@ class RkhVisitController extends Controller
         abort_unless(
             (string) $detail->header->status === 'approved',
             403
-            // atau: abort(403, 'LKH hanya bisa diisi setelah RKH di-approve TL.');
         );
 
-        // =========================================================
-        // (Opsional) GUARD 3) Hanya untuk tanggal hari ini
-        // kalau mau disiplin, aktifkan ini:
-        // =========================================================
-        // abort_unless(
-        //     Carbon::parse($detail->header->tanggal)->isToday(),
-        //     403
-        // );
+        $backUrl = route('rkh.show', $detail->header->id);
 
-        // === 1) Kalau sudah ada account_no => existing nasabah => masuk flow timeline (ActionSchedule / Visits)
+        // === 1) existing nasabah => flow ro_visits
         $accountNo = trim((string) ($detail->account_no ?? ''));
 
         if ($accountNo !== '') {
-
-            // ensure open case
             $case = $this->ensureCaseByAccountNo($accountNo);
 
-            // ensure action schedule (visit) utk sumber rkh_detail ini
             $scheduledAt = Carbon::parse($detail->header->tanggal)
                 ->setTimeFromTimeString($detail->jam_mulai);
 
@@ -280,25 +269,23 @@ class RkhVisitController extends Controller
                 $scheduledAt
             );
 
-            // sync link di rkh_details (pakai kolom yang benar: linked_npl_case_id)
             $detail->linked_npl_case_id = (int) $case->id;
 
-            // ⚠️ penting: ActionSchedule ID (bukan visit_schedule_id)
-            // aman: cek kolom ada di table (runtime)
             if (\Illuminate\Support\Facades\Schema::hasColumn('rkh_details', 'action_schedule_id')) {
                 $detail->action_schedule_id = (int) $schedule->id;
             }
 
             $detail->save();
 
-            // redirect ke form Visit (timeline)
             return redirect()->route('ro_visits.create', [
                 'rkh_detail_id' => $detail->id,
-                'back' => url()->previous(),
+                'back' => route('rkh.show', $detail->header->id),
             ]);
         }
 
-        // === 2) Kalau prospect / belum ada account_no => pakai form RKH visit log (rkh_visit_logs)
+        
+
+        // === 2) prospect => flow rkh_visit_logs
         return $this->create($request, $detail);
     }
 

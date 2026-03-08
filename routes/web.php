@@ -898,6 +898,9 @@ Route::middleware('auth')->group(function () {
 
     Route::get('/rkh/{rkh}/lkh-recap', [LkhRecapController::class, 'show'])
         ->name('lkh.recap.show');
+        
+    Route::get('/rkh/{rkh}/lkh-recap/pdf', [\App\Http\Controllers\LkhRecapController::class, 'pdf'])
+    ->name('lkh.recap.pdf');
 
     Route::get('/rkh', [RkhController::class, 'index'])->name('rkh.index');
     Route::get('/rkh/create', [RkhController::class, 'create'])->name('rkh.create');
