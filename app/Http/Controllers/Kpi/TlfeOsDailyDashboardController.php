@@ -551,32 +551,27 @@ class TlfeOsDailyDashboardController extends Controller
                 ROUND(SUM(COALESCE(m.outstanding,0))) as os,
 
                 ROUND(SUM(CASE
-                    WHEN COALESCE(m.kolek,0)=1
-                     AND COALESCE(m.ft_pokok,0)=0
-                     AND COALESCE(m.ft_bunga,0)=0
+                    WHEN {$this->sqlBucketL0('m')}
                     THEN COALESCE(m.outstanding,0) ELSE 0 END
                 )) as l0,
 
                 ROUND(SUM(CASE
-                    WHEN COALESCE(m.kolek,0)=1
-                     AND (COALESCE(m.ft_pokok,0)=1 OR COALESCE(m.ft_bunga,0)=1)
+                    WHEN {$this->sqlBucketLt('m')}
                     THEN COALESCE(m.outstanding,0) ELSE 0 END
                 )) as lt,
 
                 ROUND(SUM(CASE
-                    WHEN COALESCE(m.kolek,0)=2
-                     AND (COALESCE(m.ft_pokok,0)=2 OR COALESCE(m.ft_bunga,0)=2)
+                    WHEN {$this->sqlBucketDpk('m')}
                     THEN COALESCE(m.outstanding,0) ELSE 0 END
                 )) as dpk,
 
                 ROUND(SUM(CASE
-                    WHEN COALESCE(m.kolek,0)=2
-                     AND (COALESCE(m.ft_pokok,0)=3 OR COALESCE(m.ft_bunga,0)=3)
+                    WHEN {$this->sqlBucketPotensi('m')}
                     THEN COALESCE(m.outstanding,0) ELSE 0 END
                 )) as potensi,
 
                 ROUND(SUM(CASE
-                    WHEN COALESCE(m.kolek,0)=3
+                    WHEN {$this->sqlBucketKl('m')}
                     THEN COALESCE(m.outstanding,0) ELSE 0 END
                 )) as kl
             ")
@@ -726,17 +721,14 @@ class TlfeOsDailyDashboardController extends Controller
         $bucketSql = function (string $alias): string {
             return "(
                 CASE
-                  WHEN COALESCE({$alias}.kolek,0) = 3 THEN 'KL'
-                  WHEN COALESCE({$alias}.kolek,0) = 2
-                       AND (COALESCE({$alias}.ft_pokok,0) = 3 OR COALESCE({$alias}.ft_bunga,0) = 3) THEN 'POTENSI'
-                  WHEN COALESCE({$alias}.kolek,0) = 2
-                       AND (COALESCE({$alias}.ft_pokok,0) = 2 OR COALESCE({$alias}.ft_bunga,0) = 2) THEN 'DPK'
-                  WHEN COALESCE({$alias}.kolek,0) = 1
-                       AND (COALESCE({$alias}.ft_pokok,0) = 1 OR COALESCE({$alias}.ft_bunga,0) = 1) THEN 'LT'
-                  WHEN COALESCE({$alias}.kolek,0) = 1
-                       AND COALESCE({$alias}.ft_pokok,0) = 0
-                       AND COALESCE({$alias}.ft_bunga,0) = 0 THEN 'L0'
-                  ELSE '-'
+                WHEN " . $this->sqlBucketL0($alias) . " THEN 'L0'
+                WHEN " . $this->sqlBucketLt($alias) . " THEN 'LT'
+                WHEN " . $this->sqlBucketDpk($alias) . " THEN 'DPK'
+                WHEN " . $this->sqlBucketPotensi($alias) . " THEN 'POTENSI'
+                WHEN " . $this->sqlBucketKl($alias) . " THEN 'KL'
+                WHEN COALESCE({$alias}.kolek,0)=4 THEN 'D'
+                WHEN COALESCE({$alias}.kolek,0)=5 THEN 'M'
+                ELSE '-'
                 END
             )";
         };
@@ -778,17 +770,13 @@ class TlfeOsDailyDashboardController extends Controller
             ->where(function ($q) use ($activeAoCodes) {
                 $this->applyAoScope($q, 'la.ao_code', $activeAoCodes);
             })
-            ->where('m.ft_pokok', 0)
-            ->where('m.ft_bunga', 0)
-            ->where(function ($q) {
-                $q->where('la.ft_pokok', '>', 0)
-                    ->orWhere('la.ft_bunga', '>', 0);
-            })
+            ->whereRaw($this->sqlBucketL0('m'))
+            ->whereRaw($this->sqlBucketLt('la'))
             ->first();
 
         $l0ToLtNoa = (int)($l0ToLtAgg->noa ?? 0);
         $l0ToLtOs  = (int)($l0ToLtAgg->os ?? 0);
-
+            
         /*
          * ============================================================
          * 14) H-1 -> H
@@ -807,11 +795,8 @@ class TlfeOsDailyDashboardController extends Controller
             ->where(function ($q) use ($activeAoCodes) {
                 $this->applyAoScope($q, 't.ao_code', $activeAoCodes);
             })
-            ->where(function ($q) {
-                $q->where('p.ft_pokok', 1)->orWhere('p.ft_bunga', 1);
-            })
-            ->where('t.ft_pokok', 0)
-            ->where('t.ft_bunga', 0)
+            ->whereRaw($this->sqlBucketLt('p'))
+            ->whereRaw($this->sqlBucketL0('t'))
             ->first();
 
         $ltToL0Noa = (int)($ltToL0Agg->noa ?? 0);
@@ -830,16 +815,10 @@ class TlfeOsDailyDashboardController extends Controller
             ->where(function ($q) use ($activeAoCodes) {
                 $this->applyAoScope($q, 't.ao_code', $activeAoCodes);
             })
-            ->where(function ($q) {
-                $q->where('p.ft_pokok', 1)->orWhere('p.ft_bunga', 1);
-            })
-            ->where(function ($q) {
-                $q->where('t.ft_pokok', 2)
-                    ->orWhere('t.ft_bunga', 2)
-                    ->orWhere('t.kolek', 2);
-            })
+            ->whereRaw($this->sqlBucketLt('p'))
+            ->whereRaw($this->sqlBucketDpk('t'))
             ->first();
-
+            
         $ltToDpkNoa = (int)($ltToDpkAgg->noa ?? 0);
         $ltToDpkOs  = (int)($ltToDpkAgg->os ?? 0);
 
@@ -890,12 +869,8 @@ class TlfeOsDailyDashboardController extends Controller
             ->where(function ($q) use ($activeAoCodes) {
                 $this->applyAoScope($q, 'la.ao_code', $activeAoCodes);
             })
-            ->where(function ($q) {
-                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
-            })
-            ->where(function ($q) {
-                $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2)->orWhere('la.kolek', 2);
-            })
+            ->whereRaw($this->sqlBucketLt('m'))
+            ->whereRaw($this->sqlBucketDpk('la'))
             ->first();
 
         $ltEomToDpkNoa = (int)($ltEomToDpkAgg->noa ?? 0);
@@ -909,11 +884,8 @@ class TlfeOsDailyDashboardController extends Controller
             ->where(function ($q) use ($activeAoCodes) {
                 $this->applyAoScope($q, 'la.ao_code', $activeAoCodes);
             })
-            ->where(function ($q) {
-                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
-            })
-            ->where('la.ft_pokok', 0)
-            ->where('la.ft_bunga', 0)
+            ->whereRaw($this->sqlBucketLt('m'))
+            ->whereRaw($this->sqlBucketL0('la'))
             ->first();
 
         $ltEomToL0Noa = (int)($ltEomToL0Agg->noa ?? 0);
@@ -935,22 +907,10 @@ class TlfeOsDailyDashboardController extends Controller
             ->where(function ($q) use ($activeAoCodes) {
                 $this->applyAoScope($q, 'la.ao_code', $activeAoCodes);
             })
-            ->where(function ($q) {
-                $q->where('m.kolek', 2)
-                    ->where(function ($qq) {
-                        $qq->where('m.ft_pokok', 2)
-                            ->orWhere('m.ft_bunga', 2);
-                    });
-            })
-            ->where(function ($q) {
-                $q->where('la.kolek', 2)
-                    ->where(function ($qq) {
-                        $qq->where('la.ft_pokok', 3)
-                            ->orWhere('la.ft_bunga', 3);
-                    });
-            })
+            ->whereRaw($this->sqlBucketDpk('m'))
+            ->whereRaw($this->sqlBucketPotensi('la'))
             ->first();
-
+            
         $dpkToPotensiNoa = (int)($dpkToPotensiAgg->noa ?? 0);
         $dpkToPotensiOs  = (int)($dpkToPotensiAgg->os ?? 0);
 
@@ -965,14 +925,8 @@ class TlfeOsDailyDashboardController extends Controller
             ->where(function ($q) use ($activeAoCodes) {
                 $this->applyAoScope($q, 'la.ao_code', $activeAoCodes);
             })
-            ->where(function ($q) {
-                $q->where('m.kolek', 2)
-                    ->where(function ($qq) {
-                        $qq->where('m.ft_pokok', 3)
-                            ->orWhere('m.ft_bunga', 3);
-                    });
-            })
-            ->where('la.kolek', 3)
+            ->whereRaw($this->sqlBucketPotensi('m'))
+            ->whereRaw($this->sqlBucketKl('la'))
             ->first();
 
         $potensiToKlNoa = (int)($potensiToKlAgg->noa ?? 0);
@@ -1006,16 +960,12 @@ class TlfeOsDailyDashboardController extends Controller
             ->where(function ($q) use ($activeAoCodes) {
                 $this->applyAoScope($q, 'la.ao_code', $activeAoCodes);
             })
-            ->where(function ($q) {
-                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
-            })
-            ->where(function ($q) {
-                $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2)->orWhere('la.kolek', 2);
-            })
+            ->whereRaw($this->sqlBucketLt('m'))
+            ->whereRaw($this->sqlBucketDpk('la'))
             ->orderByDesc('la.outstanding')
             ->limit(200)
             ->get();
-
+            
         /*
          * ============================================================
          * 18) LIST FE: DPK EOM -> POTENSI
@@ -1054,20 +1004,8 @@ class TlfeOsDailyDashboardController extends Controller
             ->where(function ($q) use ($activeAoCodes) {
                 $this->applyAoScope($q, 'la.ao_code', $activeAoCodes);
             })
-            ->where(function ($q) {
-                $q->where('m.kolek', 2)
-                    ->where(function ($qq) {
-                        $qq->where('m.ft_pokok', 2)
-                            ->orWhere('m.ft_bunga', 2);
-                    });
-            })
-            ->where(function ($q) {
-                $q->where('la.kolek', 2)
-                    ->where(function ($qq) {
-                        $qq->where('la.ft_pokok', 3)
-                            ->orWhere('la.ft_bunga', 3);
-                    });
-            })
+            ->whereRaw($this->sqlBucketDpk('m'))
+            ->whereRaw($this->sqlBucketPotensi('la'))
             ->orderByDesc('la.outstanding')
             ->limit(200)
             ->get();
@@ -1110,13 +1048,8 @@ class TlfeOsDailyDashboardController extends Controller
             ->where(function ($q) use ($activeAoCodes) {
                 $this->applyAoScope($q, 'la.ao_code', $activeAoCodes);
             })
-            ->where(function ($q) {
-                $q->where('m.kolek', 2)
-                    ->where(function ($qq) {
-                        $qq->where('m.ft_pokok', 3)
-                            ->orWhere('m.ft_bunga', 3);
-                    });
-            })
+            ->whereRaw($this->sqlBucketPotensi('m'))
+            ->whereRaw($this->sqlBucketKl('la'))
             ->where('la.kolek', 3)
             ->orderByDesc('la.outstanding')
             ->limit(200)
@@ -1252,13 +1185,7 @@ class TlfeOsDailyDashboardController extends Controller
             ->where(function ($q) use ($activeAoCodes) {
                 $this->applyAoScope($q, 'la.ao_code', $activeAoCodes);
             })
-            ->where(function ($q) {
-                $q->where('m.kolek', 1)
-                    ->where(function ($qq) {
-                        $qq->where('m.ft_pokok', 1)
-                            ->orWhere('m.ft_bunga', 1);
-                    });
-            })
+            ->whereRaw($this->sqlBucketLt('m'))
             ->orderByDesc('la.dpd')
             ->orderByDesc('la.outstanding')
             ->limit(300)
@@ -1269,52 +1196,11 @@ class TlfeOsDailyDashboardController extends Controller
          * 23) PARTISI LT EOM
          * ============================================================
          */
-        $isDpk = function ($r) {
-            return ((int)($r->kolek ?? 0) === 2)
-                && (
-                    ((int)($r->ft_pokok ?? 0) === 2) ||
-                    ((int)($r->ft_bunga ?? 0) === 2)
-                );
-        };
-
-        $isPotensi = function ($r) {
-            return ((int)($r->kolek ?? 0) === 2)
-                && (
-                    ((int)($r->ft_pokok ?? 0) === 3) ||
-                    ((int)($r->ft_bunga ?? 0) === 3)
-                );
-        };
-
-        $isKl = function ($r) {
-            return ((int)($r->kolek ?? 0) === 3);
-        };
-
-        $isL0 = function ($r) {
-            return ((int)($r->kolek ?? 0) === 1)
-                && ((int)($r->ft_pokok ?? 0) === 0)
-                && ((int)($r->ft_bunga ?? 0) === 0);
-        };
-
-        $isLtOnly = function ($r) use ($isDpk, $isPotensi, $isKl, $isL0) {
-            if ($isDpk($r)) {
-                return false;
-            }
-            if ($isPotensi($r)) {
-                return false;
-            }
-            if ($isKl($r)) {
-                return false;
-            }
-            if ($isL0($r)) {
-                return false;
-            }
-
-            return ((int)($r->kolek ?? 0) === 1)
-                && (
-                    ((int)($r->ft_pokok ?? 0) === 1) ||
-                    ((int)($r->ft_bunga ?? 0) === 1)
-                );
-        };
+        $isDpk = fn($r) => $this->rowIsDpk($r);
+        $isPotensi = fn($r) => $this->rowIsPotensi($r);
+        $isKl = fn($r) => $this->rowIsKl($r);
+        $isL0 = fn($r) => $this->rowIsL0($r);
+        $isLtOnly = fn($r) => $this->rowIsLt($r);
 
         $ltToDpk   = collect($ltEom)->filter($isDpk)->values();
         $ltStillLt = collect($ltEom)->filter($isLtOnly)->values();
@@ -1427,11 +1313,7 @@ class TlfeOsDailyDashboardController extends Controller
                     $this->applyAoScope($qq, 'la.ao_code', $activeAoCodes);
                 });
             })
-            ->whereRaw("
-                COALESCE(m.kolek,0)=1
-                AND COALESCE(m.ft_pokok,0)=0
-                AND COALESCE(m.ft_bunga,0)=0
-            ")
+            ->whereRaw($this->sqlBucketL0('m'))
             ->orderByDesc('la.dpd')
             ->orderByDesc('la.os')
             ->limit(300)
@@ -1979,5 +1861,76 @@ class TlfeOsDailyDashboardController extends Controller
             ->filter(fn ($r) => !empty($r['ao_code']))
             ->unique('ao_code')
             ->values();
+    }
+
+    private function sqlBucketL0(string $alias = ''): string
+    {
+        $a = $alias !== '' ? trim($alias) . '.' : '';
+        return "COALESCE({$a}kolek,0)=1 AND COALESCE({$a}ft_pokok,0)=0 AND COALESCE({$a}ft_bunga,0)=0";
+    }
+
+    private function sqlBucketLt(string $alias = ''): string
+    {
+        $a = $alias !== '' ? trim($alias) . '.' : '';
+        return "COALESCE({$a}kolek,0)=1 AND (COALESCE({$a}ft_pokok,0)>0 OR COALESCE({$a}ft_bunga,0)>0)";
+    }
+
+    private function sqlBucketDpk(string $alias = ''): string
+    {
+        $a = $alias !== '' ? trim($alias) . '.' : '';
+        return "COALESCE({$a}kolek,0)=2 AND (COALESCE({$a}ft_pokok,0)=2 OR COALESCE({$a}ft_bunga,0)=2)";
+    }
+
+    private function sqlBucketPotensi(string $alias = ''): string
+    {
+        $a = $alias !== '' ? trim($alias) . '.' : '';
+        return "COALESCE({$a}kolek,0)=2 AND (COALESCE({$a}ft_pokok,0)=3 OR COALESCE({$a}ft_bunga,0)=3)";
+    }
+
+    private function sqlBucketKl(string $alias = ''): string
+    {
+        $a = $alias !== '' ? trim($alias) . '.' : '';
+        return "COALESCE({$a}kolek,0)=3";
+    }
+
+    private function rowIsL0(object $r): bool
+    {
+        $kolek   = (int)($r->kolek ?? 0);
+        $ftPokok = (int)($r->ft_pokok ?? 0);
+        $ftBunga = (int)($r->ft_bunga ?? 0);
+
+        return $kolek === 1 && $ftPokok === 0 && $ftBunga === 0;
+    }
+
+    private function rowIsLt(object $r): bool
+    {
+        $kolek   = (int)($r->kolek ?? 0);
+        $ftPokok = (int)($r->ft_pokok ?? 0);
+        $ftBunga = (int)($r->ft_bunga ?? 0);
+
+        return $kolek === 1 && ($ftPokok > 0 || $ftBunga > 0);
+    }
+
+    private function rowIsDpk(object $r): bool
+    {
+        $kolek   = (int)($r->kolek ?? 0);
+        $ftPokok = (int)($r->ft_pokok ?? 0);
+        $ftBunga = (int)($r->ft_bunga ?? 0);
+
+        return $kolek === 2 && ($ftPokok === 2 || $ftBunga === 2);
+    }
+
+    private function rowIsPotensi(object $r): bool
+    {
+        $kolek   = (int)($r->kolek ?? 0);
+        $ftPokok = (int)($r->ft_pokok ?? 0);
+        $ftBunga = (int)($r->ft_bunga ?? 0);
+
+        return $kolek === 2 && ($ftPokok === 3 || $ftBunga === 3);
+    }
+
+    private function rowIsKl(object $r): bool
+    {
+        return (int)($r->kolek ?? 0) === 3;
     }
 }

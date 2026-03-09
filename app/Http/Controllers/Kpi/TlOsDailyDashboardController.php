@@ -128,7 +128,7 @@ class TlOsDailyDashboardController extends Controller
         $latestKpiDate = $latestKpiDate
             ? Carbon::parse($latestKpiDate)->toDateString()
             : null;
-                
+
         $aoCount = count($scopeAoCodes);
 
         $visitDiscipline = $this->buildVisitDisciplineSummary(
@@ -210,13 +210,13 @@ class TlOsDailyDashboardController extends Controller
             ->orderBy('d')
             ->get();
 
-            \Log::info('TLRO KPI DAILY RAW', [
-                'from' => $from->toDateString(),
-                'to' => $to->toDateString(),
-                'aoCodes' => $aoCodes,
-                'row_count' => $rows->count(),
-                'sample' => $rows->take(10)->toArray(),
-            ]);
+        \Log::info('TLRO KPI DAILY RAW', [
+            'from' => $from->toDateString(),
+            'to' => $to->toDateString(),
+            'aoCodes' => $aoCodes,
+            'row_count' => $rows->count(),
+            'sample' => $rows->take(10)->toArray(),
+        ]);
 
         // map[ao_code][date] = metrics
         $map = [];
@@ -269,14 +269,22 @@ class TlOsDailyDashboardController extends Controller
          * =========================================================
          * 6.5) ✅ SUMMARY M-1 (EOM bulan lalu) : OS, L0, LT, DPK
          *    sumber: loan_account_snapshots_monthly
+         *    DEFINISI TERBARU:
+         *      L0  = kolek=1 AND ft_pokok=0 AND ft_bunga=0
+         *      LT  = kolek=1 AND (ft_pokok>0 OR ft_bunga>0)
+         *      DPK = kolek=2 AND (ft_pokok=2 OR ft_bunga=2)
          * =========================================================
          */
+        $sqlM1L0  = $this->sqlBucketL0('m');
+        $sqlM1LT  = $this->sqlBucketLt('m');
+        $sqlM1DPK = $this->sqlBucketDpk('m');
+
         $m1 = DB::table('loan_account_snapshots_monthly as m')
             ->selectRaw("
                 ROUND(SUM(m.outstanding)) as os_m1,
-                ROUND(SUM(CASE WHEN COALESCE(m.ft_pokok,0)=0 AND COALESCE(m.ft_bunga,0)=0 THEN m.outstanding ELSE 0 END)) as l0_m1,
-                ROUND(SUM(CASE WHEN COALESCE(m.ft_pokok,0)=1 OR  COALESCE(m.ft_bunga,0)=1 THEN m.outstanding ELSE 0 END)) as lt_m1,
-                ROUND(SUM(CASE WHEN COALESCE(m.ft_pokok,0)=2 OR  COALESCE(m.ft_bunga,0)=2 OR COALESCE(m.kolek,0)=2 THEN m.outstanding ELSE 0 END)) as dpk_m1
+                ROUND(SUM(CASE WHEN {$sqlM1L0}  THEN m.outstanding ELSE 0 END)) as l0_m1,
+                ROUND(SUM(CASE WHEN {$sqlM1LT}  THEN m.outstanding ELSE 0 END)) as lt_m1,
+                ROUND(SUM(CASE WHEN {$sqlM1DPK} THEN m.outstanding ELSE 0 END)) as dpk_m1
             ")
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(m.ao_code),6,'0')"), $aoCodes))
@@ -371,7 +379,7 @@ class TlOsDailyDashboardController extends Controller
          * =========================================================
          * 8.5) CARDS AGREGAT (Latest + Growth)
          *     - day: latestDataDate vs prevDataDate (daily snapshot)
-         *     - mtd: latestDataDate vs EOM bulan lalu (monthly snapshot)  ✅ sesuai kartu "OS Bulan Lalu"
+         *     - mtd: latestDataDate vs EOM bulan lalu (monthly snapshot)
          * =========================================================
          */
 
@@ -428,7 +436,6 @@ class TlOsDailyDashboardController extends Controller
             if (!$hasLatest) $latestPack = null;
         }
 
-        
         // ===== Build prevPack sesuai mode =====
         $prevPack = null;
 
@@ -477,7 +484,6 @@ class TlOsDailyDashboardController extends Controller
             'prevDataDate' => $prevDataDate,
             'latestPack' => $latestPack,
             'prevPack' => $prevPack,
-            // 'cards' => $cards,
         ]);
 
         // ===== Normalisasi latest/prev agar cards aman =====
@@ -651,6 +657,8 @@ class TlOsDailyDashboardController extends Controller
                 'la.maturity_date',
                 'la.kolek',
                 'la.dpd',
+                'la.ft_pokok',
+                'la.ft_bunga',
             ])
             ->whereNotNull('la.maturity_date')
             ->whereBetween('la.maturity_date', [$monthStart, $monthEnd])
@@ -664,7 +672,14 @@ class TlOsDailyDashboardController extends Controller
 
         /**
          * 2) ✅ LT EOM bulan lalu (snapshot cohort) -> status hari ini
+         *    LT terbaru = kolek=1 AND (ft_pokok>0 OR ft_bunga>0)
          */
+        $sqlPrevLtM  = $this->sqlBucketLt('m');
+        $sqlCurDpkLa = $this->sqlBucketDpk('la');
+        $sqlCurPotLa = $this->sqlBucketPotensi('la');
+        $sqlCurLtLa  = $this->sqlBucketLt('la');
+        $sqlCurL0La  = $this->sqlBucketL0('la');
+
         $ltEom = DB::table('loan_account_snapshots_monthly as m')
             ->join('loan_accounts as la', function ($j) use ($latestPosDate) {
                 $j->on('la.account_no', '=', 'm.account_no')
@@ -682,18 +697,19 @@ class TlOsDailyDashboardController extends Controller
                 'la.kolek',
                 DB::raw("COALESCE(m.ft_pokok,0) as eom_ft_pokok"),
                 DB::raw("COALESCE(m.ft_bunga,0) as eom_ft_bunga"),
+                DB::raw("COALESCE(m.kolek,0) as eom_kolek"),
                 DB::raw("COALESCE(u.name,'') as ao_name"),
             ])
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
-            ->where(function ($q) {
-                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
-            })
+            ->whereRaw($sqlPrevLtM)
             ->orderByRaw("
                 CASE
-                  WHEN la.ft_pokok = 2 OR la.ft_bunga = 2 THEN 0
-                  WHEN la.ft_pokok = 1 OR la.ft_bunga = 1 THEN 1
-                  ELSE 2
+                  WHEN {$sqlCurDpkLa} THEN 0
+                  WHEN {$sqlCurPotLa} THEN 1
+                  WHEN {$sqlCurLtLa}  THEN 2
+                  WHEN {$sqlCurL0La}  THEN 3
+                  ELSE 4
                 END
             ")
             ->orderByDesc('la.dpd')
@@ -703,10 +719,13 @@ class TlOsDailyDashboardController extends Controller
 
         $ltEom = $attachVisitMeta($ltEom);
 
-        // 3) L0 -> LT bulan ini
+        // 3) L0 -> LT bulan ini (strict sesuai definisi terbaru)
         $perPage = (int) $request->query('per_page', 25);
         if ($perPage <= 0) $perPage = 25;
         if ($perPage > 200) $perPage = 200;
+
+        $sqlPrevL0M  = $this->sqlBucketL0('m');
+        $sqlCurLtLa2 = $this->sqlBucketLt('la');
 
         $migrasiTunggakan = DB::table('loan_account_snapshots_monthly as m')
             ->join('loan_accounts as la', 'la.account_no', '=', 'm.account_no')
@@ -724,11 +743,8 @@ class TlOsDailyDashboardController extends Controller
             ->whereDate('la.position_date', $latestPosDate)
             ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
             ->where('la.outstanding', '>', 0)
-            ->where('m.ft_pokok', 0)
-            ->where('m.ft_bunga', 0)
-            ->where(function ($q) {
-                $q->where('la.ft_pokok', '>', 0)->orWhere('la.ft_bunga', '>', 0);
-            })
+            ->whereRaw($sqlPrevL0M)
+            ->whereRaw($sqlCurLtLa2)
             ->orderByDesc('os')
             ->paginate($perPage)
             ->appends($request->query());
@@ -834,25 +850,14 @@ class TlOsDailyDashboardController extends Controller
         ";
 
         // =============================
-        // PARTISI: LT EOM -> (DPK only) + (LT only) ; L0 drop
-        // gunakan $ltEom hasil query di atas, jangan re-query lagi
+        // PARTISI: LT EOM -> (DPK only) + (LT only)
+        // definisi terbaru:
+        //   LT only  = kolek=1 AND (ft>0)
+        //   DPK only = kolek=2 AND (ft=2)
         // =============================
-        $isDpk = function ($r) {
-            return ((int)($r->ft_pokok ?? 0) === 2)
-                || ((int)($r->ft_bunga ?? 0) === 2)
-                || ((int)($r->kolek ?? 0) === 2);
-        };
-
-        $isL0 = function ($r) {
-            return ((int)($r->ft_pokok ?? 0) === 0)
-                && ((int)($r->ft_bunga ?? 0) === 0);
-        };
-
-        $isLtOnly = function ($r) use ($isDpk, $isL0) {
-            if ($isDpk($r)) return false;
-            if ($isL0($r))  return false;
-            return ((int)($r->ft_pokok ?? 0) === 1) || ((int)($r->ft_bunga ?? 0) === 1);
-        };
+        $isDpk = fn($r) => $this->rowIsDpk($r);
+        $isL0 = fn($r) => $this->rowIsL0($r);
+        $isLtOnly = fn($r) => $this->rowIsLt($r);
 
         $ltToDpk   = collect($ltEom)->filter($isDpk)->values();
         $ltStillLt = collect($ltEom)->filter($isLtOnly)->values();
@@ -862,6 +867,9 @@ class TlOsDailyDashboardController extends Controller
 
         // A) LT -> L0 list (butuh prevPosDate)
         if ($prevPosDate) {
+            $sqlPrevLtPrev = $this->sqlBucketLt('prev');
+            $sqlCurL0Cur   = $this->sqlBucketL0('cur');
+
             $ltToL0List = DB::table('loan_accounts as cur')
                 ->join('loan_accounts as prev', function ($j) use ($prevPosDate) {
                     $j->on('prev.account_no', '=', 'cur.account_no')
@@ -884,11 +892,8 @@ class TlOsDailyDashboardController extends Controller
                 ])
                 ->whereDate('cur.position_date', $latestPosDate)
                 ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(cur.ao_code),6,'0')"), $aoCodes))
-                ->where(function ($q) {
-                    $q->where('prev.ft_pokok', '>', 0)->orWhere('prev.ft_bunga', '>', 0);
-                })
-                ->where('cur.ft_pokok', 0)
-                ->where('cur.ft_bunga', 0)
+                ->whereRaw($sqlPrevLtPrev)
+                ->whereRaw($sqlCurL0Cur)
                 ->orderByDesc(DB::raw("ROUND(cur.outstanding)"))
                 ->limit(30)
                 ->get();
@@ -993,18 +998,17 @@ class TlOsDailyDashboardController extends Controller
             ->startOfMonth()
             ->toDateString();
 
+        $sqlPrevLtM2 = $this->sqlBucketLt('m');
+        $sqlCurDpkLa2 = $this->sqlBucketDpk('la');
+
         $ltToDpkQ = DB::table('loan_account_snapshots_monthly as m')
             ->join('loan_accounts as la', function ($j) use ($latestPosDate) {
                 $j->on('la.account_no', '=', 'm.account_no')
                     ->whereDate('la.position_date', $latestPosDate);
             })
             ->whereDate('m.snapshot_month', $prevSnapMonth)
-            ->where(function ($q) {
-                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
-            })
-            ->where(function ($q) {
-                $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2)->orWhere('la.kolek', 2);
-            })
+            ->whereRaw($sqlPrevLtM2)
+            ->whereRaw($sqlCurDpkLa2)
             ->when(!empty($aoCodes), fn($q) =>
                 $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes)
             );
@@ -1032,6 +1036,7 @@ class TlOsDailyDashboardController extends Controller
                 'la.ft_bunga',
                 DB::raw("COALESCE(m.ft_pokok,0) as eom_ft_pokok"),
                 DB::raw("COALESCE(m.ft_bunga,0) as eom_ft_bunga"),
+                DB::raw("COALESCE(m.kolek,0) as eom_kolek"),
             ])
             ->orderByDesc(DB::raw("ROUND(la.outstanding)"))
             ->limit(50)
@@ -1135,22 +1140,15 @@ class TlOsDailyDashboardController extends Controller
             'latestPosDate'        => $latestPosDate,
             'ltToDpk'              => $ltToDpk,
             'ltStillLt'            => $ltStillLt,
-            'ltToDpkNoa'   => $ltToDpkNoa,
-            'ltToDpkOs'    => $ltToDpkOs,
-            'ltToDpkList'  => $ltToDpkList,
+            'ltToDpkNoa'           => $ltToDpkNoa,
+            'ltToDpkOs'            => $ltToDpkOs,
+            'ltToDpkList'          => $ltToDpkList,
         ]);
     }
 
     private function buildVisitCoverageByRo(array $scopeAoCodes, string $from, string $to, ?string $latestPosDate): array
     {
         if (empty($scopeAoCodes) || empty($latestPosDate)) {
-            \Log::info('VISIT COVERAGE EARLY EXIT', [
-                'scopeAoCodes' => $scopeAoCodes,
-                'from' => $from,
-                'to' => $to,
-                'latestPosDate' => $latestPosDate,
-            ]);
-
             return [
                 'summary' => [
                     'total_noa' => 0,
@@ -1163,9 +1161,22 @@ class TlOsDailyDashboardController extends Controller
             ];
         }
 
-        // ============================================
-        // 1) detect kolom real di loan_accounts
-        // ============================================
+        /*
+        |--------------------------------------------------
+        | helper normalisasi account
+        |--------------------------------------------------
+        */
+        $normAcc = function ($acc) {
+            $acc = trim((string)$acc);
+            $acc = ltrim($acc, '0');
+            return $acc === '' ? '0' : $acc;
+        };
+
+        /*
+        |--------------------------------------------------
+        | 1 detect kolom loan_accounts
+        |--------------------------------------------------
+        */
         $osCol = null;
         foreach (['outstanding', 'os', 'baki_debet', 'saldo_pokok'] as $c) {
             if (Schema::hasColumn('loan_accounts', $c)) {
@@ -1198,40 +1209,26 @@ class TlOsDailyDashboardController extends Controller
             }
         }
 
-        // ============================================
-        // 2) base portfolio per posisi terakhir
-        // ============================================
+        /*
+        |--------------------------------------------------
+        | 2 portfolio snapshot
+        |--------------------------------------------------
+        */
         $portfolio = DB::table('loan_accounts as la')
             ->selectRaw("
                 la.account_no,
-                la.ao_code,
+                LPAD(TRIM(la.ao_code),6,'0') as ao_code,
                 " . ($customerCol ? "la.$customerCol as customer_name" : "NULL as customer_name") . ",
-                " . ($osCol ? "COALESCE(la.$osCol, 0)" : "0") . " as os,
-                " . ($dpdCol ? "COALESCE(la.$dpdCol, 0)" : "0") . " as dpd,
-                " . ($kolekCol ? "COALESCE(la.$kolekCol, 0)" : "0") . " as kolek,
-                COALESCE(la.ft_pokok, 0) as ft_pokok,
-                COALESCE(la.ft_bunga, 0) as ft_bunga
+                " . ($osCol ? "COALESCE(la.$osCol,0)" : "0") . " as os,
+                " . ($dpdCol ? "COALESCE(la.$dpdCol,0)" : "0") . " as dpd,
+                " . ($kolekCol ? "COALESCE(la.$kolekCol,0)" : "0") . " as kolek,
+                COALESCE(la.ft_pokok,0) as ft_pokok,
+                COALESCE(la.ft_bunga,0) as ft_bunga
             ")
             ->whereDate('la.position_date', $latestPosDate)
             ->whereNotNull('la.account_no')
-            ->where(function ($q) use ($scopeAoCodes) {
-                foreach ($scopeAoCodes as $ao) {
-                    $ao = (string)$ao;
-                    $aoTrim = ltrim($ao, '0');
-                    $aoTrim = $aoTrim === '' ? '0' : $aoTrim;
-
-                    $q->orWhere('la.ao_code', $ao)
-                        ->orWhereRaw("TRIM(LEADING '0' FROM la.ao_code) = ?", [$aoTrim]);
-                }
-            })
+            ->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $scopeAoCodes)
             ->get();
-
-        \Log::info('VISIT COVERAGE PORTFOLIO RAW', [
-            'latestPosDate' => $latestPosDate,
-            'scopeAoCodes' => $scopeAoCodes,
-            'portfolio_count' => $portfolio->count(),
-            'sample' => $portfolio->take(5)->values()->all(),
-        ]);
 
         if ($portfolio->isEmpty()) {
             return [
@@ -1246,64 +1243,80 @@ class TlOsDailyDashboardController extends Controller
             ];
         }
 
-        // ============================================
-        // 3) map account -> visit status dalam periode
-        //    ambil status tertinggi:
-        //    done > planned
-        // ============================================
+        /*
+        |--------------------------------------------------
+        | 3 ambil visit
+        |--------------------------------------------------
+        */
         $visitRows = DB::table('ro_visits')
-            ->select('account_no', 'ao_code', 'user_id', 'status', 'visit_date')
-            ->whereDate('visit_date', '>=', $from)
-            ->whereDate('visit_date', '<=', $to)
-            ->whereIn('status', ['planned', 'done'])
+            ->selectRaw("
+                account_no,
+                LPAD(TRIM(ao_code),6,'0') as ao_code,
+                status,
+                visit_date,
+                visited_at
+            ")
+            ->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $scopeAoCodes)
+            ->whereIn('status', ['planned','done'])
+            ->whereRaw("DATE(COALESCE(visited_at, visit_date)) >= ?", [$from])
+            ->whereRaw("DATE(COALESCE(visited_at, visit_date)) <= ?", [$to])
             ->get();
 
+        /*
+        |--------------------------------------------------
+        | 4 build visit map
+        |--------------------------------------------------
+        */
         $visitMap = [];
-        foreach ($visitRows as $v) {
-            $acc = trim((string)($v->account_no ?? ''));
-            if ($acc === '') continue;
 
-            if (!isset($visitMap[$acc])) {
-                $visitMap[$acc] = (string)$v->status;
+        foreach ($visitRows as $v) {
+
+            $accKey = $normAcc($v->account_no ?? null);
+            if ($accKey === '0') continue;
+
+            $status = strtolower(trim((string)$v->status));
+
+            if (!isset($visitMap[$accKey])) {
+                $visitMap[$accKey] = $status;
                 continue;
             }
 
-            if ($visitMap[$acc] !== 'done' && (string)$v->status === 'done') {
-                $visitMap[$acc] = 'done';
+            if ($visitMap[$accKey] !== 'done' && $status === 'done') {
+                $visitMap[$accKey] = 'done';
             }
         }
 
-        \Log::info('VISIT COVERAGE VISITS RAW', [
-            'from' => $from,
-            'to' => $to,
-            'visit_rows_count' => $visitRows->count(),
-            'visit_map_count' => count($visitMap),
-            'visit_sample' => array_slice($visitMap, 0, 10, true),
-        ]);
-
-        // ============================================
-        // 4) mapping AO -> RO user
-        // ============================================
+        /*
+        |--------------------------------------------------
+        | 5 mapping AO -> RO
+        |--------------------------------------------------
+        */
         $staff = DB::table('users')
-            ->selectRaw("id, name, LPAD(TRIM(ao_code),6,'0') as ao_code")
+            ->selectRaw("id,name,LPAD(TRIM(ao_code),6,'0') as ao_code")
             ->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $scopeAoCodes)
             ->get();
 
         $staffByAo = $staff->keyBy('ao_code');
 
-        // ============================================
-        // 5) aggregate per RO/AO
-        // ============================================
+        /*
+        |--------------------------------------------------
+        | 6 aggregate per AO
+        |--------------------------------------------------
+        */
         $rows = [];
 
         foreach ($portfolio as $p) {
-            $ao = str_pad(trim((string)($p->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
+
+            $ao = str_pad(trim((string)$p->ao_code),6,'0',STR_PAD_LEFT);
 
             $staffRow = $staffByAo->get($ao);
+
             $roName = $staffRow->name ?? $ao;
-            $acc = trim((string)($p->account_no ?? ''));
+
+            $accKey = $normAcc($p->account_no ?? null);
 
             if (!isset($rows[$ao])) {
+
                 $rows[$ao] = [
                     'ro_name' => $roName,
                     'ao_code' => $ao,
@@ -1320,60 +1333,71 @@ class TlOsDailyDashboardController extends Controller
             }
 
             $rows[$ao]['total_noa']++;
-            $rows[$ao]['os_total'] += (float)($p->os ?? 0);
+            $rows[$ao]['os_total'] += (float)$p->os;
 
-            $status = $visitMap[$acc] ?? null;
+            $status = $visitMap[$accKey] ?? null;
 
             if ($status === 'done') {
+
                 $rows[$ao]['done_visit']++;
+
             } elseif ($status === 'planned') {
+
                 $rows[$ao]['plan_only']++;
-                $rows[$ao]['os_belum_visit'] += (float)($p->os ?? 0);
+                $rows[$ao]['os_belum_visit'] += (float)$p->os;
+
             } else {
+
                 $rows[$ao]['belum_visit']++;
-                $rows[$ao]['os_belum_visit'] += (float)($p->os ?? 0);
+                $rows[$ao]['os_belum_visit'] += (float)$p->os;
             }
 
-            $ftPokok = (int)($p->ft_pokok ?? 0);
-            $ftBunga = (int)($p->ft_bunga ?? 0);
-            $kolek   = (int)($p->kolek ?? 0);
-
-            if ($ftPokok === 1 || $ftBunga === 1) {
+            if ($this->rowIsLt($p)) {
                 $rows[$ao]['lt_noa']++;
             }
 
-            if ($ftPokok === 2 || $ftBunga === 2 || $kolek === 2) {
+            if ($this->rowIsDpk($p)) {
                 $rows[$ao]['dpk_noa']++;
             }
         }
 
         $rows = collect($rows)
             ->map(function ($r) {
+
                 $r['coverage_pct'] = $r['total_noa'] > 0
-                    ? round(($r['done_visit'] / $r['total_noa']) * 100, 2)
+                    ? round(($r['done_visit'] / $r['total_noa']) * 100,2)
                     : 0;
+
                 return (object)$r;
             })
             ->sortByDesc('os_belum_visit')
             ->values();
 
-        // ============================================
-        // 6) summary scope TL
-        // ============================================
+        /*
+        |--------------------------------------------------
+        | 7 summary TL
+        |--------------------------------------------------
+        */
         $summary = [
-            'total_noa'      => (int)$rows->sum('total_noa'),
-            'done_visit'     => (int)$rows->sum('done_visit'),
-            'plan_only'      => (int)$rows->sum('plan_only'),
-            'belum_visit'    => (int)$rows->sum('belum_visit'),
-            'coverage_pct'   => $rows->sum('total_noa') > 0
-                ? round(($rows->sum('done_visit') / $rows->sum('total_noa')) * 100, 2)
+            'total_noa' => (int)$rows->sum('total_noa'),
+            'done_visit' => (int)$rows->sum('done_visit'),
+            'plan_only' => (int)$rows->sum('plan_only'),
+            'belum_visit' => (int)$rows->sum('belum_visit'),
+            'coverage_pct' => $rows->sum('total_noa') > 0
+                ? round(($rows->sum('done_visit') / $rows->sum('total_noa')) * 100,2)
                 : 0,
         ];
 
-        \Log::info('VISIT COVERAGE FINAL', [
-            'summary' => $summary,
-            'rows_count' => $rows->count(),
-            'rows_sample' => $rows->take(5)->values()->all(),
+        /*
+        |--------------------------------------------------
+        | debug log
+        |--------------------------------------------------
+        */
+        \Log::info('VISIT COVERAGE DEBUG', [
+            'portfolio_count' => $portfolio->count(),
+            'visit_rows' => $visitRows->count(),
+            'visit_map' => count($visitMap),
+            'summary' => $summary
         ]);
 
         return [
@@ -1466,5 +1490,61 @@ class TlOsDailyDashboardController extends Controller
             })
             ->filter(fn ($u) => $u->ao_code !== '000000')
             ->values();
+    }
+
+    /**
+     * =========================================================
+     * HELPER DEFINISI BUCKET TERBARU
+     * =========================================================
+     */
+    private function sqlBucketL0(string $alias = ''): string
+    {
+        $a = $alias !== '' ? trim($alias) . '.' : '';
+        return "COALESCE({$a}kolek,0)=1 AND COALESCE({$a}ft_pokok,0)=0 AND COALESCE({$a}ft_bunga,0)=0";
+    }
+
+    private function sqlBucketLt(string $alias = ''): string
+    {
+        $a = $alias !== '' ? trim($alias) . '.' : '';
+        return "COALESCE({$a}kolek,0)=1 AND (COALESCE({$a}ft_pokok,0)>0 OR COALESCE({$a}ft_bunga,0)>0)";
+    }
+
+    private function sqlBucketDpk(string $alias = ''): string
+    {
+        $a = $alias !== '' ? trim($alias) . '.' : '';
+        return "COALESCE({$a}kolek,0)=2 AND (COALESCE({$a}ft_pokok,0)=2 OR COALESCE({$a}ft_bunga,0)=2)";
+    }
+
+    private function sqlBucketPotensi(string $alias = ''): string
+    {
+        $a = $alias !== '' ? trim($alias) . '.' : '';
+        return "COALESCE({$a}kolek,0)=2 AND (COALESCE({$a}ft_pokok,0)=3 OR COALESCE({$a}ft_bunga,0)=3)";
+    }
+
+    private function rowIsL0(object $r): bool
+    {
+        $kolek   = (int) ($r->kolek ?? 0);
+        $ftPokok = (int) ($r->ft_pokok ?? 0);
+        $ftBunga = (int) ($r->ft_bunga ?? 0);
+
+        return $kolek === 1 && $ftPokok === 0 && $ftBunga === 0;
+    }
+
+    private function rowIsLt(object $r): bool
+    {
+        $kolek   = (int) ($r->kolek ?? 0);
+        $ftPokok = (int) ($r->ft_pokok ?? 0);
+        $ftBunga = (int) ($r->ft_bunga ?? 0);
+
+        return $kolek === 1 && ($ftPokok > 0 || $ftBunga > 0);
+    }
+
+    private function rowIsDpk(object $r): bool
+    {
+        $kolek   = (int) ($r->kolek ?? 0);
+        $ftPokok = (int) ($r->ft_pokok ?? 0);
+        $ftBunga = (int) ($r->ft_bunga ?? 0);
+
+        return $kolek === 2 && ($ftPokok === 2 || $ftBunga === 2);
     }
 }

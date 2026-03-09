@@ -325,7 +325,7 @@ class FeOsDailyDashboardController extends Controller
 
                 ROUND(SUM(CASE
                     WHEN COALESCE(m.kolek,0)=1
-                     AND (COALESCE(m.ft_pokok,0)=1 OR COALESCE(m.ft_bunga,0)=1)
+                     AND (COALESCE(m.ft_pokok,0)>0 OR COALESCE(m.ft_bunga,0)>0)
                     THEN COALESCE(m.outstanding,0) ELSE 0 END
                 )) as lt,
 
@@ -540,7 +540,7 @@ class FeOsDailyDashboardController extends Controller
                   WHEN COALESCE({$alias}.kolek,0) = 2
                        AND (COALESCE({$alias}.ft_pokok,0) = 2 OR COALESCE({$alias}.ft_bunga,0) = 2) THEN 'DPK'
                   WHEN COALESCE({$alias}.kolek,0) = 1
-                       AND (COALESCE({$alias}.ft_pokok,0) = 1 OR COALESCE({$alias}.ft_bunga,0) = 1) THEN 'LT'
+                       AND (COALESCE({$alias}.ft_pokok,0) > 0 OR COALESCE({$alias}.ft_bunga,0) > 0) THEN 'LT'
                   WHEN COALESCE({$alias}.kolek,0) = 1
                        AND COALESCE({$alias}.ft_pokok,0) = 0
                        AND COALESCE({$alias}.ft_bunga,0) = 0 THEN 'L0'
@@ -578,8 +578,10 @@ class FeOsDailyDashboardController extends Controller
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereDate('la.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
+            ->where('m.kolek', 1)
             ->where('m.ft_pokok', 0)
             ->where('m.ft_bunga', 0)
+            ->where('la.kolek', 1)
             ->where(function ($q) {
                 $q->where('la.ft_pokok', '>', 0)
                   ->orWhere('la.ft_bunga', '>', 0);
@@ -603,9 +605,11 @@ class FeOsDailyDashboardController extends Controller
             ")
             ->whereDate('t.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(t.ao_code),6,'0') = ?", [$ao])
+            ->where('p.kolek', 1)
             ->where(function ($q) {
-                $q->where('p.ft_pokok', 1)->orWhere('p.ft_bunga', 1);
+                $q->where('p.ft_pokok', '>', 0)->orWhere('p.ft_bunga', '>', 0);
             })
+            ->where('t.kolek', 1)
             ->where('t.ft_pokok', 0)
             ->where('t.ft_bunga', 0)
             ->first();
@@ -624,13 +628,14 @@ class FeOsDailyDashboardController extends Controller
             ")
             ->whereDate('t.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(t.ao_code),6,'0') = ?", [$ao])
+            ->where('p.kolek', 1)
             ->where(function ($q) {
-                $q->where('p.ft_pokok', 1)->orWhere('p.ft_bunga', 1);
+                $q->where('p.ft_pokok', '>', 0)->orWhere('p.ft_bunga', '>', 0);
             })
+            ->where('t.kolek', 2)
             ->where(function ($q) {
                 $q->where('t.ft_pokok', 2)
-                  ->orWhere('t.ft_bunga', 2)
-                  ->orWhere('t.kolek', 2);
+                  ->orWhere('t.ft_bunga', 2);
             })
             ->first();
 
@@ -679,11 +684,13 @@ class FeOsDailyDashboardController extends Controller
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereDate('la.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
+            ->where('m.kolek', 1)
             ->where(function ($q) {
-                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
+                $q->where('m.ft_pokok', '>', 0)->orWhere('m.ft_bunga', '>', 0);
             })
+            ->where('la.kolek', 2)
             ->where(function ($q) {
-                $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2)->orWhere('la.kolek', 2);
+                $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2);
             })
             ->first();
 
@@ -696,9 +703,11 @@ class FeOsDailyDashboardController extends Controller
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereDate('la.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
+            ->where('m.kolek', 1)
             ->where(function ($q) {
-                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
+                $q->where('m.ft_pokok', '>', 0)->orWhere('m.ft_bunga', '>', 0);
             })
+            ->where('la.kolek', 1)
             ->where('la.ft_pokok', 0)
             ->where('la.ft_bunga', 0)
             ->first();
@@ -785,11 +794,13 @@ class FeOsDailyDashboardController extends Controller
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereDate('la.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
+            ->where('m.kolek', 1)
             ->where(function ($q) {
-                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
+                $q->where('m.ft_pokok', '>', 0)->orWhere('m.ft_bunga', '>', 0);
             })
+            ->where('la.kolek', 2)
             ->where(function ($q) {
-                $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2)->orWhere('la.kolek', 2);
+                $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2);
             })
             ->orderByDesc('la.outstanding')
             ->limit(200)
@@ -893,31 +904,31 @@ class FeOsDailyDashboardController extends Controller
         // bounce risk
         // =============================
         $bounce = [
-            'prevPosDate'           => $prevPosDate,
-            'd1'                    => $d1,
-            'd2'                    => $d2,
+            'prevPosDate'            => $prevPosDate,
+            'd1'                     => $d1,
+            'd2'                     => $d2,
 
-            'lt_to_l0_noa'          => $ltToL0Noa,
-            'lt_to_l0_os'           => $ltToL0Os,
-            'lt_to_dpk_noa'         => $ltToDpkNoa,
-            'lt_to_dpk_os'          => $ltToDpkOs,
+            'lt_to_l0_noa'           => $ltToL0Noa,
+            'lt_to_l0_os'            => $ltToL0Os,
+            'lt_to_dpk_noa'          => $ltToDpkNoa,
+            'lt_to_dpk_os'           => $ltToDpkOs,
 
-            'jt_next2_noa'          => $jtNext2Noa,
-            'jt_next2_os'           => $jtNext2Os,
+            'jt_next2_noa'           => $jtNext2Noa,
+            'jt_next2_os'            => $jtNext2Os,
 
-            'lt_eom_to_dpk_noa'     => $ltEomToDpkNoa,
-            'lt_eom_to_dpk_os'      => $ltEomToDpkOs,
-            'lt_eom_to_l0_noa'      => $ltEomToL0Noa,
-            'lt_eom_to_l0_os'       => $ltEomToL0Os,
+            'lt_eom_to_dpk_noa'      => $ltEomToDpkNoa,
+            'lt_eom_to_dpk_os'       => $ltEomToDpkOs,
+            'lt_eom_to_l0_noa'       => $ltEomToL0Noa,
+            'lt_eom_to_l0_os'        => $ltEomToL0Os,
 
-            'dpk_eom_to_potensi_noa'=> $dpkToPotensiNoa,
-            'dpk_eom_to_potensi_os' => $dpkToPotensiOs,
-            'potensi_eom_to_kl_noa' => $potensiToKlNoa,
-            'potensi_eom_to_kl_os'  => $potensiToKlOs,
+            'dpk_eom_to_potensi_noa' => $dpkToPotensiNoa,
+            'dpk_eom_to_potensi_os'  => $dpkToPotensiOs,
+            'potensi_eom_to_kl_noa'  => $potensiToKlNoa,
+            'potensi_eom_to_kl_os'   => $potensiToKlOs,
 
-            'signal_cure'           => (!is_null($deltaL0) && !is_null($deltaLT) && $deltaL0 > 0 && $deltaLT < 0),
-            'signal_jtsoon'         => ($jtNext2Noa > 0),
-            'signal_bounce_risk'    => (
+            'signal_cure'            => (!is_null($deltaL0) && !is_null($deltaLT) && $deltaL0 > 0 && $deltaLT < 0),
+            'signal_jtsoon'          => ($jtNext2Noa > 0),
+            'signal_bounce_risk'     => (
                 (!is_null($deltaL0) && !is_null($deltaLT) && $deltaL0 > 0 && $deltaLT < 0) && ($jtNext2Noa > 0)
             ),
         ];
@@ -1012,12 +1023,10 @@ class FeOsDailyDashboardController extends Controller
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
             ->whereDate('la.position_date', $latestPosDate)
             ->where('la.outstanding', '>', 0)
+            ->where('m.kolek', 1)
             ->where(function ($q) {
-                $q->where('m.kolek', 1)
-                  ->where(function ($qq) {
-                      $qq->where('m.ft_pokok', 1)
-                         ->orWhere('m.ft_bunga', 1);
-                  });
+                $q->where('m.ft_pokok', '>', 0)
+                  ->orWhere('m.ft_bunga', '>', 0);
             })
             ->orderByDesc('la.dpd')
             ->orderByDesc('la.outstanding')
@@ -1061,8 +1070,8 @@ class FeOsDailyDashboardController extends Controller
 
             return ((int)($r->kolek ?? 0) === 1)
                 && (
-                    ((int)($r->ft_pokok ?? 0) === 1) ||
-                    ((int)($r->ft_bunga ?? 0) === 1)
+                    ((int)($r->ft_pokok ?? 0) > 0) ||
+                    ((int)($r->ft_bunga ?? 0) > 0)
                 );
         };
 

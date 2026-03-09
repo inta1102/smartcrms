@@ -34,9 +34,11 @@ class KpiOsDailySnapshot extends Command
         $this->info("Building daily OS snapshot for date={$date} ...");
 
         /**
-         * Definisi harian terbaru:
+         * =========================================================
+         * DEFINISI HARIAN TERBARU
+         * =========================================================
          * - L0      : kolek=1 AND ft_pokok=0 AND ft_bunga=0
-         * - LT      : kolek=1 AND (ft_pokok=1 OR ft_bunga=1)
+         * - LT      : kolek=1 AND (ft_pokok>0 OR ft_bunga>0)
          * - DPK     : kolek=2 AND (ft_pokok=2 OR ft_bunga=2)
          * - Potensi : kolek=2 AND (ft_pokok=3 OR ft_bunga=3)
          * - KL      : kolek=3
@@ -44,98 +46,124 @@ class KpiOsDailySnapshot extends Command
          * - M       : kolek=5
          *
          * Catatan:
-         * - Bucket dibikin terpisah sesuai definisi terbaru.
-         * - LT tidak lagi berarti semua tunggakan > 0, tapi spesifik kolek=1 dengan flag 1.
-         * - DPK spesifik kolek=2 dengan flag 2.
-         * - Potensi diasumsikan flag 3 pada kolek=2.
+         * - LT spesifik kolek=1 dengan flag FT > 0
+         * - DPK spesifik kolek=2 dengan FT flag = 2
+         * - Potensi spesifik kolek=2 dengan FT flag = 3
+         * =========================================================
          */
 
-        // supaya grouping konsisten
+        // grouping AO konsisten
         $aoExpr = "LPAD(TRIM(COALESCE(loan_accounts.ao_code,'')),6,'0')";
+
+        // alias singkat untuk ekspresi SQL bucket
+        $l0Expr = "
+            COALESCE(kolek,0)=1
+            AND COALESCE(ft_pokok,0)=0
+            AND COALESCE(ft_bunga,0)=0
+        ";
+
+        $ltExpr = "
+            COALESCE(kolek,0)=1
+            AND (
+                COALESCE(ft_pokok,0)>0
+                OR COALESCE(ft_bunga,0)>0
+            )
+        ";
+
+        $dpkExpr = "
+            COALESCE(kolek,0)=2
+            AND (
+                COALESCE(ft_pokok,0)=2
+                OR COALESCE(ft_bunga,0)=2
+            )
+        ";
+
+        $potensiExpr = "
+            COALESCE(kolek,0)=2
+            AND (
+                COALESCE(ft_pokok,0)=3
+                OR COALESCE(ft_bunga,0)=3
+            )
+        ";
+
+        $klExpr = "COALESCE(kolek,0)=3";
+        $dExpr  = "COALESCE(kolek,0)=4";
+        $mExpr  = "COALESCE(kolek,0)=5";
 
         $rows = DB::table('loan_accounts')
             ->selectRaw("
                 {$aoExpr} as ao_code,
 
                 ROUND(SUM(COALESCE(outstanding,0)), 2) as os_total,
-                COUNT(*) as noa_total,
+                COUNT(account_no) as noa_total,
 
                 ROUND(SUM(CASE
-                    WHEN COALESCE(kolek,0)=1
-                     AND COALESCE(ft_pokok,0)=0
-                     AND COALESCE(ft_bunga,0)=0
+                    WHEN {$l0Expr}
                     THEN COALESCE(outstanding,0) ELSE 0 END
                 ), 2) as os_l0,
                 SUM(CASE
-                    WHEN COALESCE(kolek,0)=1
-                     AND COALESCE(ft_pokok,0)=0
-                     AND COALESCE(ft_bunga,0)=0
+                    WHEN {$l0Expr}
                     THEN 1 ELSE 0 END
                 ) as noa_l0,
 
                 ROUND(SUM(CASE
-                    WHEN COALESCE(kolek,0)=1
-                     AND (COALESCE(ft_pokok,0)=1 OR COALESCE(ft_bunga,0)=1)
+                    WHEN {$ltExpr}
                     THEN COALESCE(outstanding,0) ELSE 0 END
                 ), 2) as os_lt,
                 SUM(CASE
-                    WHEN COALESCE(kolek,0)=1
-                     AND (COALESCE(ft_pokok,0)=1 OR COALESCE(ft_bunga,0)=1)
+                    WHEN {$ltExpr}
                     THEN 1 ELSE 0 END
                 ) as noa_lt,
 
                 ROUND(SUM(CASE
-                    WHEN COALESCE(kolek,0)=2
-                     AND (COALESCE(ft_pokok,0)=2 OR COALESCE(ft_bunga,0)=2)
+                    WHEN {$dpkExpr}
                     THEN COALESCE(outstanding,0) ELSE 0 END
                 ), 2) as os_dpk,
                 SUM(CASE
-                    WHEN COALESCE(kolek,0)=2
-                     AND (COALESCE(ft_pokok,0)=2 OR COALESCE(ft_bunga,0)=2)
+                    WHEN {$dpkExpr}
                     THEN 1 ELSE 0 END
                 ) as noa_dpk,
 
                 ROUND(SUM(CASE
-                    WHEN COALESCE(kolek,0)=2
-                     AND (COALESCE(ft_pokok,0)=3 OR COALESCE(ft_bunga,0)=3)
+                    WHEN {$potensiExpr}
                     THEN COALESCE(outstanding,0) ELSE 0 END
                 ), 2) as os_potensi,
                 SUM(CASE
-                    WHEN COALESCE(kolek,0)=2
-                     AND (COALESCE(ft_pokok,0)=3 OR COALESCE(ft_bunga,0)=3)
+                    WHEN {$potensiExpr}
                     THEN 1 ELSE 0 END
                 ) as noa_potensi,
 
                 ROUND(SUM(CASE
-                    WHEN COALESCE(kolek,0)=3
+                    WHEN {$klExpr}
                     THEN COALESCE(outstanding,0) ELSE 0 END
                 ), 2) as os_kl,
                 SUM(CASE
-                    WHEN COALESCE(kolek,0)=3
+                    WHEN {$klExpr}
                     THEN 1 ELSE 0 END
                 ) as noa_kl,
 
                 ROUND(SUM(CASE
-                    WHEN COALESCE(kolek,0)=4
+                    WHEN {$dExpr}
                     THEN COALESCE(outstanding,0) ELSE 0 END
                 ), 2) as os_d,
                 SUM(CASE
-                    WHEN COALESCE(kolek,0)=4
+                    WHEN {$dExpr}
                     THEN 1 ELSE 0 END
                 ) as noa_d,
 
                 ROUND(SUM(CASE
-                    WHEN COALESCE(kolek,0)=5
+                    WHEN {$mExpr}
                     THEN COALESCE(outstanding,0) ELSE 0 END
                 ), 2) as os_m,
                 SUM(CASE
-                    WHEN COALESCE(kolek,0)=5
+                    WHEN {$mExpr}
                     THEN 1 ELSE 0 END
                 ) as noa_m
             ")
             ->whereDate('position_date', $date)
             ->whereNotNull('ao_code')
             ->whereRaw("TRIM(ao_code) <> ''")
+            ->whereRaw("COALESCE(outstanding,0) > 0")
             ->groupByRaw($aoExpr)
             ->get();
 
@@ -211,6 +239,29 @@ class KpiOsDailySnapshot extends Command
         );
 
         $this->info("OK upserted rows=" . count($payload));
+
+        // log ringkas untuk validasi cepat
+        $grand = [
+            'os_total'    => array_sum(array_map(fn ($x) => (float) $x['os_total'], $payload)),
+            'os_l0'       => array_sum(array_map(fn ($x) => (float) $x['os_l0'], $payload)),
+            'os_lt'       => array_sum(array_map(fn ($x) => (float) $x['os_lt'], $payload)),
+            'os_dpk'      => array_sum(array_map(fn ($x) => (float) $x['os_dpk'], $payload)),
+            'os_potensi'  => array_sum(array_map(fn ($x) => (float) $x['os_potensi'], $payload)),
+            'os_kl'       => array_sum(array_map(fn ($x) => (float) $x['os_kl'], $payload)),
+            'os_d'        => array_sum(array_map(fn ($x) => (float) $x['os_d'], $payload)),
+            'os_m'        => array_sum(array_map(fn ($x) => (float) $x['os_m'], $payload)),
+            'noa_total'   => array_sum(array_map(fn ($x) => (int) $x['noa_total'], $payload)),
+            'noa_l0'      => array_sum(array_map(fn ($x) => (int) $x['noa_l0'], $payload)),
+            'noa_lt'      => array_sum(array_map(fn ($x) => (int) $x['noa_lt'], $payload)),
+            'noa_dpk'     => array_sum(array_map(fn ($x) => (int) $x['noa_dpk'], $payload)),
+            'noa_potensi' => array_sum(array_map(fn ($x) => (int) $x['noa_potensi'], $payload)),
+            'noa_kl'      => array_sum(array_map(fn ($x) => (int) $x['noa_kl'], $payload)),
+            'noa_d'       => array_sum(array_map(fn ($x) => (int) $x['noa_d'], $payload)),
+            'noa_m'       => array_sum(array_map(fn ($x) => (int) $x['noa_m'], $payload)),
+        ];
+
+        $this->line('Grand summary: ' . json_encode($grand));
+
         return self::SUCCESS;
     }
 }

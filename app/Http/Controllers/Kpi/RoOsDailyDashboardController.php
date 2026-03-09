@@ -253,6 +253,7 @@ class RoOsDailyDashboardController extends Controller
         /**
          * =========================================================
          * 6) CARDS MTD (EOM bulan lalu vs latest)
+         *    DEFINISI TERBARU
          * =========================================================
          */
         $eomMonth = Carbon::parse($latestPosDate)
@@ -260,12 +261,16 @@ class RoOsDailyDashboardController extends Controller
             ->startOfMonth()
             ->toDateString();
 
+        $sqlL0m  = $this->sqlBucketL0('m');
+        $sqlLTm  = $this->sqlBucketLt('m');
+        $sqlDPKm = $this->sqlBucketDpk('m');
+
         $eomAgg = DB::table('loan_account_snapshots_monthly as m')
             ->selectRaw("
                 ROUND(SUM(m.outstanding)) as os,
-                ROUND(SUM(CASE WHEN COALESCE(m.ft_pokok,0)=0 AND COALESCE(m.ft_bunga,0)=0 THEN m.outstanding ELSE 0 END)) as l0,
-                ROUND(SUM(CASE WHEN COALESCE(m.ft_pokok,0)=1 OR COALESCE(m.ft_bunga,0)=1 THEN m.outstanding ELSE 0 END)) as lt,
-                ROUND(SUM(CASE WHEN COALESCE(m.ft_pokok,0)=2 OR COALESCE(m.ft_bunga,0)=2 OR COALESCE(m.kolek,0)=2 THEN m.outstanding ELSE 0 END)) as dpk
+                ROUND(SUM(CASE WHEN {$sqlL0m}  THEN m.outstanding ELSE 0 END)) as l0,
+                ROUND(SUM(CASE WHEN {$sqlLTm}  THEN m.outstanding ELSE 0 END)) as lt,
+                ROUND(SUM(CASE WHEN {$sqlDPKm} THEN m.outstanding ELSE 0 END)) as dpk
             ")
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereRaw("LPAD(TRIM(m.ao_code),6,'0') = ?", [$ao])
@@ -422,7 +427,8 @@ class RoOsDailyDashboardController extends Controller
             ->selectRaw("
                 TRIM(LEADING '0' FROM account_no) as acc_key,
                 COALESCE(ft_pokok,0) as prev_ft_pokok,
-                COALESCE(ft_bunga,0) as prev_ft_bunga
+                COALESCE(ft_bunga,0) as prev_ft_bunga,
+                COALESCE(kolek,0) as prev_kolek
             ");
 
         // Planned hari ini keyed by normalized account
@@ -452,6 +458,14 @@ class RoOsDailyDashboardController extends Controller
          * 9) INSIGHT FEASIBLE / BOUNCE AGG
          * =========================================================
          */
+        $sqlL0m2   = $this->sqlBucketL0('m');
+        $sqlLTla   = $this->sqlBucketLt('la');
+        $sqlLTp    = $this->sqlBucketLt('p');
+        $sqlL0t    = $this->sqlBucketL0('t');
+        $sqlDPKt   = $this->sqlBucketDpk('t');
+        $sqlDPKla  = $this->sqlBucketDpk('la');
+        $sqlLTm3   = $this->sqlBucketLt('m');
+
         $l0ToLtAgg = DB::table('loan_account_snapshots_monthly as m')
             ->join('loan_accounts as la', 'la.account_no', '=', 'm.account_no')
             ->selectRaw("
@@ -461,11 +475,8 @@ class RoOsDailyDashboardController extends Controller
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereDate('la.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
-            ->where('m.ft_pokok', 0)
-            ->where('m.ft_bunga', 0)
-            ->where(function ($q) {
-                $q->where('la.ft_pokok', '>', 0)->orWhere('la.ft_bunga', '>', 0);
-            })
+            ->whereRaw($sqlL0m2)
+            ->whereRaw($sqlLTla)
             ->first();
 
         $l0ToLtNoa = (int)($l0ToLtAgg->noa ?? 0);
@@ -482,11 +493,8 @@ class RoOsDailyDashboardController extends Controller
             ")
             ->whereDate('t.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(t.ao_code),6,'0') = ?", [$ao])
-            ->where(function ($q) {
-                $q->where('p.ft_pokok', 1)->orWhere('p.ft_bunga', 1);
-            })
-            ->where('t.ft_pokok', 0)
-            ->where('t.ft_bunga', 0)
+            ->whereRaw($sqlLTp)
+            ->whereRaw($sqlL0t)
             ->first();
 
         $ltToL0Noa = (int)($ltToL0Agg->noa ?? 0);
@@ -503,12 +511,8 @@ class RoOsDailyDashboardController extends Controller
             ")
             ->whereDate('t.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(t.ao_code),6,'0') = ?", [$ao])
-            ->where(function ($q) {
-                $q->where('p.ft_pokok', 1)->orWhere('p.ft_bunga', 1);
-            })
-            ->where(function ($q) {
-                $q->where('t.ft_pokok', 2)->orWhere('t.ft_bunga', 2)->orWhere('t.kolek', 2);
-            })
+            ->whereRaw($sqlLTp)
+            ->whereRaw($sqlDPKt)
             ->first();
 
         $ltToDpkNoaDaily = (int)($ltToDpkAgg->noa ?? 0);
@@ -551,12 +555,8 @@ class RoOsDailyDashboardController extends Controller
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereDate('la.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
-            ->where(function ($q) {
-                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
-            })
-            ->where(function ($q) {
-                $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2)->orWhere('la.kolek', 2);
-            })
+            ->whereRaw($sqlLTm3)
+            ->whereRaw($sqlDPKla)
             ->first();
 
         $ltEomToDpkNoa = (int)($ltEomToDpkAgg->noa ?? 0);
@@ -568,11 +568,8 @@ class RoOsDailyDashboardController extends Controller
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereDate('la.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
-            ->where(function ($q) {
-                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
-            })
-            ->where('la.ft_pokok', 0)
-            ->where('la.ft_bunga', 0)
+            ->whereRaw($sqlLTm3)
+            ->whereRaw($this->sqlBucketL0('la'))
             ->first();
 
         $ltEomToL0Noa = (int)($ltEomToL0Agg->noa ?? 0);
@@ -601,6 +598,10 @@ class RoOsDailyDashboardController extends Controller
                 'la.ft_pokok',
                 'la.ft_bunga',
 
+                DB::raw("COALESCE(m.ft_pokok,0) as eom_ft_pokok"),
+                DB::raw("COALESCE(m.ft_bunga,0) as eom_ft_bunga"),
+                DB::raw("COALESCE(m.kolek,0) as eom_kolek"),
+
                 DB::raw("COALESCE(pl.planned_today,0) as planned_today"),
                 DB::raw("pl.plan_visit_date as plan_visit_date"),
                 DB::raw("pl.plan_status as plan_status"),
@@ -611,12 +612,8 @@ class RoOsDailyDashboardController extends Controller
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereDate('la.position_date', $latestPosDate)
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
-            ->where(function ($q) {
-                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
-            })
-            ->where(function ($q) {
-                $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2)->orWhere('la.kolek', 2);
-            })
+            ->whereRaw($this->sqlBucketLt('m'))
+            ->whereRaw($this->sqlBucketDpk('la'))
             ->orderByDesc('la.outstanding')
             ->limit(200)
             ->get();
@@ -645,9 +642,12 @@ class RoOsDailyDashboardController extends Controller
                 'la.maturity_date',
                 'la.dpd',
                 'la.kolek',
+                'la.ft_pokok',
+                'la.ft_bunga',
 
                 DB::raw("COALESCE(p.ft_pokok,0) as prev_ft_pokok"),
                 DB::raw("COALESCE(p.ft_bunga,0) as prev_ft_bunga"),
+                DB::raw("COALESCE(p.kolek,0) as prev_kolek"),
                 DB::raw($bucketSql('p') . " as prev_bucket"),
                 DB::raw($bucketSql('la') . " as cur_bucket"),
 
@@ -692,9 +692,11 @@ class RoOsDailyDashboardController extends Controller
 
                 DB::raw("COALESCE(m.ft_pokok,0) as eom_ft_pokok"),
                 DB::raw("COALESCE(m.ft_bunga,0) as eom_ft_bunga"),
+                DB::raw("COALESCE(m.kolek,0) as eom_kolek"),
 
                 DB::raw("COALESCE(p.ft_pokok,0) as prev_ft_pokok"),
                 DB::raw("COALESCE(p.ft_bunga,0) as prev_ft_bunga"),
+                DB::raw("COALESCE(p.kolek,0) as prev_kolek"),
 
                 DB::raw("lv.last_visit_at as last_visit_at"),
                 DB::raw("lv.hasil_kunjungan as hasil_kunjungan"),
@@ -707,30 +709,15 @@ class RoOsDailyDashboardController extends Controller
             ->whereRaw("LPAD(TRIM(la.ao_code),6,'0') = ?", [$ao])
             ->whereDate('la.position_date', $latestPosDate)
             ->where('la.outstanding', '>', 0)
-            ->where(function ($q) {
-                $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
-            })
+            ->whereRaw($this->sqlBucketLt('m'))
             ->orderByDesc('la.dpd')
             ->orderByDesc('la.outstanding')
             ->limit(300)
             ->get();
 
-        $isDpk = function ($r) {
-            return ((int)($r->ft_pokok ?? 0) === 2)
-                || ((int)($r->ft_bunga ?? 0) === 2)
-                || ((int)($r->kolek ?? 0) === 2);
-        };
-
-        $isL0 = function ($r) {
-            return ((int)($r->ft_pokok ?? 0) === 0)
-                && ((int)($r->ft_bunga ?? 0) === 0);
-        };
-
-        $isLtOnly = function ($r) use ($isDpk, $isL0) {
-            if ($isDpk($r)) return false;
-            if ($isL0($r)) return false;
-            return ((int)($r->ft_pokok ?? 0) === 1) || ((int)($r->ft_bunga ?? 0) === 1);
-        };
+        $isDpk = fn($r) => $this->rowIsDpk($r);
+        $isL0 = fn($r) => $this->rowIsL0($r);
+        $isLtOnly = fn($r) => $this->rowIsLt($r);
 
         $ltToDpk   = collect($ltEom)->filter($isDpk)->values();
         $ltStillLt = collect($ltEom)->filter($isLtOnly)->values();
@@ -768,9 +755,11 @@ class RoOsDailyDashboardController extends Controller
 
                 DB::raw("COALESCE(m.ft_pokok,0) as eom_ft_pokok"),
                 DB::raw("COALESCE(m.ft_bunga,0) as eom_ft_bunga"),
+                DB::raw("COALESCE(m.kolek,0) as eom_kolek"),
 
                 DB::raw("COALESCE(p.prev_ft_pokok,0) as prev_ft_pokok"),
                 DB::raw("COALESCE(p.prev_ft_bunga,0) as prev_ft_bunga"),
+                DB::raw("COALESCE(p.prev_kolek,0) as prev_kolek"),
 
                 DB::raw("lv.last_visit_at as last_visit_at"),
                 DB::raw("lv.hasil_kunjungan as hasil_kunjungan"),
@@ -781,7 +770,7 @@ class RoOsDailyDashboardController extends Controller
             ])
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereRaw("LPAD(TRIM(COALESCE(NULLIF(m.ao_code,''), la.ao_code)),6,'0') = ?", [$ao])
-            ->whereRaw("COALESCE(m.ft_pokok,0)=0 AND COALESCE(m.ft_bunga,0)=0")
+            ->whereRaw($this->sqlBucketL0('m'))
             ->orderByDesc('la.dpd')
             ->orderByDesc('la.os')
             ->limit(300)
@@ -819,6 +808,7 @@ class RoOsDailyDashboardController extends Controller
 
                 DB::raw("COALESCE(p.ft_pokok,0) as prev_ft_pokok"),
                 DB::raw("COALESCE(p.ft_bunga,0) as prev_ft_bunga"),
+                DB::raw("COALESCE(p.kolek,0) as prev_kolek"),
                 DB::raw($bucketSql('p') . " as prev_bucket"),
                 DB::raw($bucketSql('la') . " as cur_bucket"),
 
@@ -865,6 +855,7 @@ class RoOsDailyDashboardController extends Controller
 
                 DB::raw("COALESCE(p.ft_pokok,0) as prev_ft_pokok"),
                 DB::raw("COALESCE(p.ft_bunga,0) as prev_ft_bunga"),
+                DB::raw("COALESCE(p.kolek,0) as prev_kolek"),
                 DB::raw($bucketSql('p') . " as prev_bucket"),
                 DB::raw($bucketSql('la') . " as cur_bucket"),
 
@@ -1057,7 +1048,7 @@ class RoOsDailyDashboardController extends Controller
 
     /**
      * =========================================================
-     * HELPER: bucket SQL
+     * HELPER: bucket SQL sesuai definisi terbaru
      * =========================================================
      */
     private function bucketSql(): \Closure
@@ -1065,12 +1056,84 @@ class RoOsDailyDashboardController extends Controller
         return function (string $alias): string {
             return "(
                 CASE
-                  WHEN {$alias}.ft_pokok = 2 OR {$alias}.ft_bunga = 2 THEN 'DPK'
-                  WHEN {$alias}.ft_pokok = 1 OR {$alias}.ft_bunga = 1 THEN 'LT'
-                  ELSE 'L0'
+                  WHEN COALESCE({$alias}.kolek,0)=1
+                       AND COALESCE({$alias}.ft_pokok,0)=0
+                       AND COALESCE({$alias}.ft_bunga,0)=0
+                    THEN 'L0'
+
+                  WHEN COALESCE({$alias}.kolek,0)=1
+                       AND (
+                           COALESCE({$alias}.ft_pokok,0)>0
+                           OR COALESCE({$alias}.ft_bunga,0)>0
+                       )
+                    THEN 'LT'
+
+                  WHEN COALESCE({$alias}.kolek,0)=2
+                       AND (
+                           COALESCE({$alias}.ft_pokok,0)=2
+                           OR COALESCE({$alias}.ft_bunga,0)=2
+                       )
+                    THEN 'DPK'
+
+                  WHEN COALESCE({$alias}.kolek,0)=2
+                       AND (
+                           COALESCE({$alias}.ft_pokok,0)=3
+                           OR COALESCE({$alias}.ft_bunga,0)=3
+                       )
+                    THEN 'POTENSI'
+
+                  WHEN COALESCE({$alias}.kolek,0)=3 THEN 'KL'
+                  WHEN COALESCE({$alias}.kolek,0)=4 THEN 'D'
+                  WHEN COALESCE({$alias}.kolek,0)=5 THEN 'M'
+                  ELSE 'UNK'
                 END
             )";
         };
+    }
+
+    private function sqlBucketL0(string $alias = ''): string
+    {
+        $a = $alias !== '' ? trim($alias) . '.' : '';
+        return "COALESCE({$a}kolek,0)=1 AND COALESCE({$a}ft_pokok,0)=0 AND COALESCE({$a}ft_bunga,0)=0";
+    }
+
+    private function sqlBucketLt(string $alias = ''): string
+    {
+        $a = $alias !== '' ? trim($alias) . '.' : '';
+        return "COALESCE({$a}kolek,0)=1 AND (COALESCE({$a}ft_pokok,0)>0 OR COALESCE({$a}ft_bunga,0)>0)";
+    }
+
+    private function sqlBucketDpk(string $alias = ''): string
+    {
+        $a = $alias !== '' ? trim($alias) . '.' : '';
+        return "COALESCE({$a}kolek,0)=2 AND (COALESCE({$a}ft_pokok,0)=2 OR COALESCE({$a}ft_bunga,0)=2)";
+    }
+
+    private function rowIsL0(object $r): bool
+    {
+        $kolek   = (int) ($r->kolek ?? 0);
+        $ftPokok = (int) ($r->ft_pokok ?? 0);
+        $ftBunga = (int) ($r->ft_bunga ?? 0);
+
+        return $kolek === 1 && $ftPokok === 0 && $ftBunga === 0;
+    }
+
+    private function rowIsLt(object $r): bool
+    {
+        $kolek   = (int) ($r->kolek ?? 0);
+        $ftPokok = (int) ($r->ft_pokok ?? 0);
+        $ftBunga = (int) ($r->ft_bunga ?? 0);
+
+        return $kolek === 1 && ($ftPokok > 0 || $ftBunga > 0);
+    }
+
+    private function rowIsDpk(object $r): bool
+    {
+        $kolek   = (int) ($r->kolek ?? 0);
+        $ftPokok = (int) ($r->ft_pokok ?? 0);
+        $ftBunga = (int) ($r->ft_bunga ?? 0);
+
+        return $kolek === 2 && ($ftPokok === 2 || $ftBunga === 2);
     }
 
     private function buildInsight(array $x): array
