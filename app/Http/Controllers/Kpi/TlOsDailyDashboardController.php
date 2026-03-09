@@ -544,11 +544,48 @@ class TlOsDailyDashboardController extends Controller
         $subUserIds = $staff->pluck('id')->map(fn($v) => (int) $v)->values()->all();
         $today = now()->toDateString();
 
-        $lastVisitMap = RoVisit::query()
-            ->selectRaw('account_no, MAX(visit_date) as last_visit_date')
-            ->groupBy('account_no')
-            ->pluck('last_visit_date', 'account_no')
-            ->toArray();
+        $lastVisitRows = DB::table('ro_visits as rv')
+            ->join(
+                DB::raw("
+                    (
+                        SELECT
+                            account_no,
+                            MAX(
+                                CONCAT(
+                                    DATE_FORMAT(COALESCE(visited_at, CONCAT(visit_date, ' 00:00:00')), '%Y-%m-%d %H:%i:%s'),
+                                    '#',
+                                    LPAD(id, 10, '0')
+                                )
+                            ) as max_key
+                        FROM ro_visits
+                        WHERE account_no IS NOT NULL
+                        GROUP BY account_no
+                    ) x
+                "),
+                function ($join) {
+                    $join->on('rv.account_no', '=', 'x.account_no')
+                        ->whereRaw("
+                            CONCAT(
+                                DATE_FORMAT(COALESCE(rv.visited_at, CONCAT(rv.visit_date, ' 00:00:00')), '%Y-%m-%d %H:%i:%s'),
+                                '#',
+                                LPAD(rv.id, 10, '0')
+                            ) = x.max_key
+                        ");
+                }
+            )
+            ->select([
+                'rv.account_no',
+                'rv.visit_date',
+                'rv.visited_at',
+                'rv.status',
+                'rv.lkh_note',
+                'rv.next_action',
+            ])
+            ->get();
+
+        $lastVisitMap = $lastVisitRows->keyBy(function ($r) {
+            return trim((string) $r->account_no);
+        });
 
         $plannedTodayMap = RoVisit::query()
             ->select(['account_no', 'status', 'visit_date', 'user_id'])
@@ -560,8 +597,17 @@ class TlOsDailyDashboardController extends Controller
 
         $attachVisitMeta = function ($rows) use ($lastVisitMap, $plannedTodayMap) {
             return collect($rows)->map(function ($r) use ($lastVisitMap, $plannedTodayMap) {
-                $acc = (string) ($r->account_no ?? '');
-                $r->last_visit_date = $acc !== '' ? ($lastVisitMap[$acc] ?? null) : null;
+                $acc = trim((string) ($r->account_no ?? ''));
+
+                $last = $acc !== '' ? ($lastVisitMap[$acc] ?? null) : null;
+
+                $r->last_visit_date = $last ? (string) ($last->visit_date ?? null) : null;
+                $r->hasil_kunjungan = $last ? (string) ($last->lkh_note ?? null) : null;
+
+                // optional tapi sangat disarankan untuk monitoring
+                $r->next_action_note = $last ? (string) ($last->next_action ?? null) : null;
+                $r->last_visit_status = $last ? (string) ($last->status ?? null) : null;
+                $r->last_visited_at = $last ? (string) ($last->visited_at ?? null) : null;
 
                 $row = ($acc !== '' && $plannedTodayMap->has($acc)) ? $plannedTodayMap->get($acc) : null;
                 $r->planned_today   = $row ? 1 : 0;

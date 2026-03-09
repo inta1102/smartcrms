@@ -27,6 +27,7 @@
                     <th class="text-center px-3 py-2">Kolek</th>
                     <th class="text-center px-3 py-2">Progres</th>
                     <th class="text-center px-3 py-2">Tgl Visit Terakhir</th>
+                    <th class="text-center px-3 py-2">Hasil Kunjungan</th>
                     <th class="text-center px-3 py-2">Umur Visit</th>
                     <th class="text-center px-3 py-2">Plan Visit</th>
                     <th class="text-center px-3 py-2">Tgl Plan Visit</th>
@@ -72,6 +73,12 @@
 
                         <td class="px-3 py-2 text-center whitespace-nowrap">
                             {{ $lastVisitAt ? \Carbon\Carbon::parse($lastVisitAt)->format('d/m/Y') : '-' }}
+                        </td>
+
+                        <td class="px-4 py-3 text-sm text-slate-700">
+                            <div title="{{ $r->hasil_kunjungan ?? '-' }}">
+                                {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
+                            </div>
                         </td>
 
                         <td class="px-3 py-2 text-center whitespace-nowrap">

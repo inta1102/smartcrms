@@ -760,6 +760,8 @@ class TlfeOsDailyDashboardController extends Controller
             ")
             ->groupBy(DB::raw("TRIM(d.account_no)"));
 
+        $subLastVisitMeta = $this->subLastVisitMeta($scopeUserIds);
+
         /*
          * ============================================================
          * 13) INSIGHT PENYEBAB
@@ -1024,6 +1026,9 @@ class TlfeOsDailyDashboardController extends Controller
             ->leftJoinSub($subPlanToday, 'pl', function ($j) {
                 $j->on(DB::raw("TRIM(pl.account_no)"), '=', DB::raw("TRIM(la.account_no)"));
             })
+            ->leftJoinSub($subLastVisitMeta, 'lv', function ($j) {
+                $j->on(DB::raw("TRIM(lv.account_no)"), '=', DB::raw("TRIM(la.account_no)"));
+            })
             ->select([
                 'la.account_no',
                 'la.customer_name',
@@ -1036,12 +1041,10 @@ class TlfeOsDailyDashboardController extends Controller
                 DB::raw("COALESCE(m.kolek,0) as eom_kolek"),
                 DB::raw("COALESCE(m.ft_pokok,0) as eom_ft_pokok"),
                 DB::raw("COALESCE(m.ft_bunga,0) as eom_ft_bunga"),
-                DB::raw("(
-                    SELECT MAX(v.visited_at)
-                    FROM rkh_details d
-                    JOIN rkh_visit_logs v ON v.rkh_detail_id = d.id
-                    WHERE TRIM(d.account_no) = TRIM(la.account_no)
-                ) as last_visit_at"),
+
+                DB::raw("lv.last_visit_at as last_visit_at"),
+                DB::raw("lv.hasil_kunjungan as hasil_kunjungan"),
+
                 DB::raw("COALESCE(pl.planned_today,0) as planned_today"),
                 DB::raw("pl.plan_visit_date as plan_visit_date"),
                 DB::raw("pl.plan_status as plan_status"),
@@ -1079,6 +1082,9 @@ class TlfeOsDailyDashboardController extends Controller
             ->leftJoinSub($subPlanToday, 'pl', function ($j) {
                 $j->on(DB::raw("TRIM(pl.account_no)"), '=', DB::raw("TRIM(la.account_no)"));
             })
+            ->leftJoinSub($subLastVisitMeta, 'lv', function ($j) {
+                $j->on(DB::raw("TRIM(lv.account_no)"), '=', DB::raw("TRIM(la.account_no)"));
+            })
             ->select([
                 'la.account_no',
                 'la.customer_name',
@@ -1091,12 +1097,10 @@ class TlfeOsDailyDashboardController extends Controller
                 DB::raw("COALESCE(m.kolek,0) as eom_kolek"),
                 DB::raw("COALESCE(m.ft_pokok,0) as eom_ft_pokok"),
                 DB::raw("COALESCE(m.ft_bunga,0) as eom_ft_bunga"),
-                DB::raw("(
-                    SELECT MAX(v.visited_at)
-                    FROM rkh_details d
-                    JOIN rkh_visit_logs v ON v.rkh_detail_id = d.id
-                    WHERE TRIM(d.account_no) = TRIM(la.account_no)
-                ) as last_visit_at"),
+
+                DB::raw("lv.last_visit_at as last_visit_at"),
+                DB::raw("lv.hasil_kunjungan as hasil_kunjungan"),
+
                 DB::raw("COALESCE(pl.planned_today,0) as planned_today"),
                 DB::raw("pl.plan_visit_date as plan_visit_date"),
                 DB::raw("pl.plan_status as plan_status"),
@@ -1117,8 +1121,7 @@ class TlfeOsDailyDashboardController extends Controller
             ->orderByDesc('la.outstanding')
             ->limit(200)
             ->get();
-
-        /*
+                    /*
          * ============================================================
          * 20) BOUNCE RISK
          * ============================================================
@@ -1170,6 +1173,9 @@ class TlfeOsDailyDashboardController extends Controller
             ->leftJoinSub($subPlanToday, 'pl', function ($j) {
                 $j->on(DB::raw("TRIM(pl.account_no)"), '=', DB::raw("TRIM(la.account_no)"));
             })
+            ->leftJoinSub($subLastVisitMeta, 'lv', function ($j) {
+                $j->on(DB::raw("TRIM(lv.account_no)"), '=', DB::raw("TRIM(la.account_no)"));
+            })
             ->select([
                 'la.account_no',
                 'la.customer_name',
@@ -1182,12 +1188,8 @@ class TlfeOsDailyDashboardController extends Controller
                 DB::raw("COALESCE(p.ft_bunga, 0) as prev_ft_bunga"),
                 DB::raw($bucketSql('p') . " as prev_bucket"),
                 DB::raw($bucketSql('la') . " as cur_bucket"),
-                DB::raw("(
-                    SELECT MAX(v.visited_at)
-                    FROM rkh_details d
-                    JOIN rkh_visit_logs v ON v.rkh_detail_id = d.id
-                    WHERE TRIM(d.account_no) = TRIM(la.account_no)
-                ) as last_visit_at"),
+                DB::raw("lv.last_visit_at as last_visit_at"),
+                DB::raw("lv.hasil_kunjungan as hasil_kunjungan"),
                 DB::raw("COALESCE(pl.planned_today,0) as planned_today"),
                 DB::raw("pl.plan_visit_date as plan_visit_date"),
                 DB::raw("pl.plan_status as plan_status"),
@@ -1216,6 +1218,9 @@ class TlfeOsDailyDashboardController extends Controller
                 $j->on('p.account_no', '=', 'la.account_no')
                     ->whereDate('p.position_date', $prevPosDate);
             })
+            ->leftJoinSub($subLastVisitMeta, 'lv', function ($j) {
+                $j->on(DB::raw("TRIM(lv.account_no)"), '=', DB::raw("TRIM(la.account_no)"));
+            })
             ->select([
                 'la.account_no',
                 'la.customer_name',
@@ -1234,12 +1239,8 @@ class TlfeOsDailyDashboardController extends Controller
                 DB::raw("COALESCE(p.ft_bunga,0) as prev_ft_bunga"),
                 DB::raw("COALESCE(p.kolek,0) as prev_kolek"),
 
-                DB::raw("(
-                    SELECT MAX(v.visited_at)
-                    FROM rkh_details d
-                    JOIN rkh_visit_logs v ON v.rkh_detail_id = d.id
-                    WHERE TRIM(d.account_no) = TRIM(la.account_no)
-                ) as last_visit_at"),
+                DB::raw("lv.last_visit_at as last_visit_at"),
+                DB::raw("lv.hasil_kunjungan as hasil_kunjungan"),
 
                 DB::raw("COALESCE(pl.planned_today,0) as planned_today"),
                 DB::raw("pl.plan_status as plan_status"),
@@ -1368,14 +1369,13 @@ class TlfeOsDailyDashboardController extends Controller
             ")
             ->groupBy('acc_key');
 
-        $subLastVisitAccKey = DB::table('ro_visits as rv')
-            ->whereIn('rv.user_id', $scopeUserIds)
-            ->where('rv.status', 'done')
+        $subLastVisitAccKey = DB::query()
+            ->fromSub($subLastVisitMeta, 'lv0')
             ->selectRaw("
-                TRIM(LEADING '0' FROM rv.account_no) as acc_key,
-                MAX(COALESCE(rv.visited_at, rv.updated_at)) as last_visit_at
-            ")
-            ->groupBy('acc_key');
+                TRIM(LEADING '0' FROM lv0.account_no) as acc_key,
+                lv0.last_visit_at,
+                lv0.hasil_kunjungan
+            ");
 
         $l0Eom = DB::table('loan_account_snapshots_monthly as m')
             ->joinSub($subLaLatestAccKey, 'la', function ($j) {
@@ -1413,6 +1413,7 @@ class TlfeOsDailyDashboardController extends Controller
                 DB::raw("COALESCE(p.prev_kolek,0) as prev_kolek"),
 
                 DB::raw("lv.last_visit_at as last_visit_at"),
+                DB::raw("lv.hasil_kunjungan as hasil_kunjungan"),
 
                 DB::raw("COALESCE(pl.planned_today,0) as planned_today"),
                 DB::raw("pl.plan_status as plan_status"),
@@ -1455,6 +1456,9 @@ class TlfeOsDailyDashboardController extends Controller
             ->leftJoinSub($subPlanToday, 'pl', function ($j) {
                 $j->on(DB::raw("TRIM(pl.account_no)"), '=', DB::raw("TRIM(la.account_no)"));
             })
+            ->leftJoinSub($subLastVisitMeta, 'lv', function ($j) {
+                $j->on(DB::raw("TRIM(lv.account_no)"), '=', DB::raw("TRIM(la.account_no)"));
+            })
             ->select([
                 'la.account_no',
                 'la.customer_name',
@@ -1473,12 +1477,8 @@ class TlfeOsDailyDashboardController extends Controller
                 DB::raw($bucketSql('p') . " as prev_bucket"),
                 DB::raw($bucketSql('la') . " as cur_bucket"),
 
-                DB::raw("(
-                    SELECT MAX(v.visited_at)
-                    FROM rkh_details d
-                    JOIN rkh_visit_logs v ON v.rkh_detail_id = d.id
-                    WHERE TRIM(d.account_no) = TRIM(la.account_no)
-                ) as last_visit_at"),
+                DB::raw("lv.last_visit_at as last_visit_at"),
+                DB::raw("lv.hasil_kunjungan as hasil_kunjungan"),
 
                 DB::raw("COALESCE(pl.planned_today,0) as planned_today"),
                 DB::raw("pl.plan_visit_date as plan_visit_date"),
@@ -1511,6 +1511,9 @@ class TlfeOsDailyDashboardController extends Controller
             ->leftJoinSub($subPlanToday, 'pl', function ($j) {
                 $j->on(DB::raw("TRIM(pl.account_no)"), '=', DB::raw("TRIM(la.account_no)"));
             })
+            ->leftJoinSub($subLastVisitMeta, 'lv', function ($j) {
+                $j->on(DB::raw("TRIM(lv.account_no)"), '=', DB::raw("TRIM(la.account_no)"));
+            })
             ->select([
                 'la.account_no',
                 'la.customer_name',
@@ -1527,12 +1530,8 @@ class TlfeOsDailyDashboardController extends Controller
                 DB::raw($bucketSql('p') . " as prev_bucket"),
                 DB::raw($bucketSql('la') . " as cur_bucket"),
 
-                DB::raw("(
-                    SELECT MAX(v.visited_at)
-                    FROM rkh_details d
-                    JOIN rkh_visit_logs v ON v.rkh_detail_id = d.id
-                    WHERE TRIM(d.account_no) = TRIM(la.account_no)
-                ) as last_visit_at"),
+                DB::raw("lv.last_visit_at as last_visit_at"),
+                DB::raw("lv.hasil_kunjungan as hasil_kunjungan"),
 
                 DB::raw("COALESCE(pl.planned_today,0) as planned_today"),
                 DB::raw("pl.plan_visit_date as plan_visit_date"),
@@ -1640,6 +1639,55 @@ class TlfeOsDailyDashboardController extends Controller
             'selectedFeUserId'=> $selectedFeUserId,
             'selectedFeName'  => $selectedFeName,
         ]);
+    }
+
+    private function subLastVisitMeta(array $scopeUserIds)
+    {
+        $scopeUserIds = collect($scopeUserIds)
+            ->map(fn ($x) => (int) $x)
+            ->filter(fn ($x) => $x > 0)
+            ->unique()
+            ->values()
+            ->all();
+
+        $latestKey = DB::table('ro_visits as rv')
+            ->when(!empty($scopeUserIds), fn ($q) => $q->whereIn('rv.user_id', $scopeUserIds))
+            ->whereNotNull('rv.account_no')
+            ->selectRaw("
+                TRIM(rv.account_no) as account_no,
+                MAX(
+                    CONCAT(
+                        DATE_FORMAT(
+                            COALESCE(rv.visited_at, rv.visit_date, rv.updated_at, rv.created_at),
+                            '%Y-%m-%d %H:%i:%s'
+                        ),
+                        '#',
+                        LPAD(rv.id, 12, '0')
+                    )
+                ) as max_key
+            ")
+            ->groupBy(DB::raw("TRIM(rv.account_no)"));
+
+        return DB::table('ro_visits as rv')
+            ->when(!empty($scopeUserIds), fn ($q) => $q->whereIn('rv.user_id', $scopeUserIds))
+            ->joinSub($latestKey, 'x', function ($join) {
+                $join->on(DB::raw("TRIM(rv.account_no)"), '=', 'x.account_no')
+                    ->whereRaw("
+                        CONCAT(
+                            DATE_FORMAT(
+                                COALESCE(rv.visited_at, rv.visit_date, rv.updated_at, rv.created_at),
+                                '%Y-%m-%d %H:%i:%s'
+                            ),
+                            '#',
+                            LPAD(rv.id, 12, '0')
+                        ) = x.max_key
+                    ");
+            })
+            ->selectRaw("
+                TRIM(rv.account_no) as account_no,
+                COALESCE(rv.visited_at, rv.visit_date, rv.updated_at, rv.created_at) as last_visit_at,
+                rv.lkh_note as hasil_kunjungan
+            ");
     }
 
     private function buildInsight(array $x): array

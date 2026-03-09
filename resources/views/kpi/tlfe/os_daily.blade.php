@@ -1113,6 +1113,7 @@
             <th class="text-center px-3 py-2">Kolek</th>
             <th class="text-center px-3 py-2">Progres</th>
             <th class="text-center px-3 py-2">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2">Hsl Visit</th>
             <th class="text-center px-3 py-2">Umur Visit</th>
             <th class="text-center px-3 py-2">Plan Visit</th>
             <th class="text-center px-3 py-2">Tgl Plan Visit</th>
@@ -1150,6 +1151,12 @@
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
                 {{ $lastVisitAt ? \Carbon\Carbon::parse($lastVisitAt)->format('d/m/Y') : '-' }}
+              </td>
+
+              <td class="px-4 py-3 text-sm text-slate-700">
+                  <div title="{{ $r->hasil_kunjungan ?? '-' }}">
+                      {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
+                  </div>
               </td>
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
@@ -1216,6 +1223,7 @@
             <th class="text-center px-3 py-2">Kolek</th>
             <th class="text-center px-3 py-2">Progres</th>
             <th class="text-center px-3 py-2">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2">Hsl Visit</th>
             <th class="text-center px-3 py-2">Umur Visit</th>
             <th class="text-center px-3 py-2">Plan Visit</th>
             <th class="text-center px-3 py-2">Tgl Plan Visit</th>
@@ -1253,6 +1261,12 @@
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
                 {{ $lastVisitAt ? \Carbon\Carbon::parse($lastVisitAt)->format('d/m/Y') : '-' }}
+              </td>
+
+              <td class="px-4 py-3 text-sm text-slate-700">
+                  <div title="{{ $r->hasil_kunjungan ?? '-' }}">
+                      {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
+                  </div>
               </td>
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
@@ -1317,6 +1331,7 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Progres (H-1→H)</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Hsl Visit</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Umur Visit</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
@@ -1370,6 +1385,12 @@
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
                 {{ $lastVisitAt ? \Carbon\Carbon::parse($lastVisitAt)->format('d/m/Y') : '-' }}
+              </td>
+
+              <td class="px-4 py-3 text-sm text-slate-700">
+                  <div title="{{ $r->hasil_kunjungan ?? '-' }}">
+                      {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
+                  </div>
               </td>
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
@@ -1435,6 +1456,7 @@
             <th class="text-center px-3 py-2">Kolek</th>
             <th class="text-center px-3 py-2">Progres</th>
             <th class="text-center px-3 py-2">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2">Hsl Visit</th>
             <th class="text-center px-3 py-2">Umur Visit</th>
             <th class="text-center px-3 py-2">Plan Visit</th>
             <th class="text-center px-3 py-2">Tgl Plan Visit</th>
@@ -1492,6 +1514,12 @@
               {{-- Last Visit Date --}}
               <td class="px-3 py-2 text-center whitespace-nowrap">
                 {{ $lastVisitAt ? \Carbon\Carbon::parse($lastVisitAt)->format('d/m/Y') : '-' }}
+              </td>
+
+              <td class="px-4 py-3 text-sm text-slate-700">
+                  <div title="{{ $r->hasil_kunjungan ?? '-' }}">
+                      {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
+                  </div>
               </td>
 
               {{-- Age Visit --}}
@@ -1570,6 +1598,7 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Progres (EOM→H)</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Hsl Visit</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Umur Visit</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit Hari Ini</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
@@ -1666,7 +1695,12 @@
                 {{ is_null($ageDays) ? '-' : (floor($ageDays).' hari') }}
               </td>
 
-              
+              <td class="px-4 py-3 text-sm text-slate-700">
+                  <div title="{{ $r->hasil_kunjungan ?? '-' }}">
+                      {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
+                  </div>
+              </td>
+
               <td class="px-3 py-2 text-center whitespace-nowrap">
                  @php
                   $isPlanned = (int)($plannedToday ?? 0) === 1;
@@ -1732,6 +1766,7 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Progres (H-1→H)</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Hsl Visit</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Umur Visit</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
@@ -1784,6 +1819,12 @@
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
                 {{ !empty($lastVisitAt) ? \Carbon\Carbon::parse($lastVisitAt)->format('d/m/Y') : '-' }}
+              </td>
+
+              <td class="px-4 py-3 text-sm text-slate-700">
+                  <div title="{{ $r->hasil_kunjungan ?? '-' }}">
+                      {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
+                  </div>
               </td>
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
@@ -1854,6 +1895,7 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Progres (H-1→H)</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Hsl Visit</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Umur Visit</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
@@ -1906,6 +1948,12 @@
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
                 {{ !empty($lastVisitAt) ? \Carbon\Carbon::parse($lastVisitAt)->format('d/m/Y') : '-' }}
+              </td>
+
+              <td class="px-4 py-3 text-sm text-slate-700">
+                  <div title="{{ $r->hasil_kunjungan ?? '-' }}">
+                      {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
+                  </div>
               </td>
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
@@ -1976,6 +2024,7 @@
             <th class="text-right px-3 py-2 whitespace-nowrap">Kolek</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Progres (H-1→H)</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
+            <th class="text-center px-3 py-2 whitespace-nowrap">Hsl Visit</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Umur Visit</th>
             <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit</th>
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
@@ -2028,6 +2077,12 @@
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
                 {{ !empty($lastVisitAt) ? \Carbon\Carbon::parse($lastVisitAt)->format('d/m/Y') : '-' }}
+              </td>
+
+              <td class="px-4 py-3 text-sm text-slate-700">
+                  <div title="{{ $r->hasil_kunjungan ?? '-' }}">
+                      {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
+                  </div>
               </td>
 
               <td class="px-3 py-2 text-center whitespace-nowrap">

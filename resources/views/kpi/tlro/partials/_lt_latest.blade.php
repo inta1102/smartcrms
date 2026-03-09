@@ -55,6 +55,7 @@
           <th class="text-center px-3 py-2 whitespace-nowrap">Progres</th>
           <th class="text-left px-3 py-2 whitespace-nowrap">Risk</th>
           <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Visit Terakhir</th>
+          <th class="text-left px-3 py-2 whitespace-nowrap">Hsl Visit</th>
           <th class="text-right px-3 py-2 whitespace-nowrap">Umur Visit</th>
           <th class="text-center px-3 py-2 whitespace-nowrap">Plan Visit</th>
           <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
@@ -131,6 +132,12 @@
             <td class="px-3 py-2 whitespace-nowrap">{!! $riskBadge($r->dpd ?? 0, $r->kolek ?? '-', true) !!}</td>
 
             <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
+
+            <td class="px-4 py-3 text-sm text-slate-700">
+                <div title="{{ $r->hasil_kunjungan ?? '-' }}">
+                    {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
+                </div>
+            </td>
 
             <td class="px-3 py-2 text-right whitespace-nowrap">
               @if($age === null)
