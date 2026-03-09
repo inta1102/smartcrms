@@ -24,6 +24,11 @@ class ShmCheckRequestController extends Controller
         $isSad = in_array($rv, ['KSA', 'KBO', 'SAD'], true);
 
         // ======================
+        // Input Filters
+        // ======================
+        $keyword = trim((string) $request->query('q', ''));
+
+        // ======================
         // Base Query (list)
         // ======================
         $q = ShmCheckRequest::query()
@@ -38,6 +43,19 @@ class ShmCheckRequestController extends Controller
 
         if ($status && $status !== 'ALL') {
             $q->where('status', $status);
+        }
+
+        // ======================
+        // ✅ Search keyword
+        // ======================
+        if ($keyword !== '') {
+            $q->where(function ($w) use ($keyword) {
+                $w->where('debtor_name', 'like', "%{$keyword}%")
+                ->orWhere('certificate_no', 'like', "%{$keyword}%")
+                ->orWhere('request_no', 'like', "%{$keyword}%")
+                ->orWhere('collateral_address', 'like', "%{$keyword}%")
+                ->orWhere('notary_name', 'like', "%{$keyword}%");
+            });
         }
 
         $rows = $q->latest()->paginate(20)->withQueryString();
@@ -58,18 +76,31 @@ class ShmCheckRequestController extends Controller
             ShmCheckRequest::STATUS_CLOSED,
             ShmCheckRequest::STATUS_REJECTED,
 
-            // ✅ revisi
+            // revisi
             ShmCheckRequest::STATUS_REVISION_REQUESTED,
             ShmCheckRequest::STATUS_REVISION_APPROVED,
         ];
 
         // ======================
-        // ✅ COUNTS for Quick Chips (SAD)
+        // COUNTS for Quick Chips (SAD)
         // ======================
         $counts = [];
 
         if ($isSad) {
-            $baseCountQ = ShmCheckRequest::query()->visibleFor($user);
+
+            $baseCountQ = ShmCheckRequest::query()
+                ->visibleFor($user);
+
+            // 🔎 supaya chip ikut filter keyword
+            if ($keyword !== '') {
+                $baseCountQ->where(function ($w) use ($keyword) {
+                    $w->where('debtor_name', 'like', "%{$keyword}%")
+                    ->orWhere('certificate_no', 'like', "%{$keyword}%")
+                    ->orWhere('request_no', 'like', "%{$keyword}%")
+                    ->orWhere('collateral_address', 'like', "%{$keyword}%")
+                    ->orWhere('notary_name', 'like', "%{$keyword}%");
+                });
+            }
 
             $totalAll = (clone $baseCountQ)->count();
 
@@ -88,7 +119,14 @@ class ShmCheckRequestController extends Controller
             ];
         }
 
-        return view('shm.index', compact('rows', 'statusOptions', 'status', 'isSad', 'counts'));
+        return view('shm.index', compact(
+            'rows',
+            'statusOptions',
+            'status',
+            'isSad',
+            'counts',
+            'keyword'
+        ));
     }
 
     public function create()

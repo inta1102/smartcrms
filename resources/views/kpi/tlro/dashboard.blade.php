@@ -51,6 +51,9 @@
         'latestPosDate'        => $latestPosDate ?? null,
         'coverageTo'           => $coverageTo ?? null,
   ])
+
+  @include('kpi.tlro.partials._lt_dpk')
+
   <!-- @include('kpi.tlro.partials._visit_discipline') -->
 
   <!-- @include('kpi.tlro.partials._top_risk_tomorrow') -->

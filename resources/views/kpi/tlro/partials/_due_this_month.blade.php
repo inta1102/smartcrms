@@ -95,7 +95,7 @@
                 <span class="text-slate-400">-</span>
               @else
                 <span class="{{ $age >= 14 ? 'text-rose-700 font-semibold' : ($age >= 7 ? 'text-amber-700 font-semibold' : 'text-slate-700') }}">
-                  {{ number_format($age,0,',','.') }} hari
+                  {{ number_format(floor($age),0,',','.') }} hari
                 </span>
               @endif
             </td>

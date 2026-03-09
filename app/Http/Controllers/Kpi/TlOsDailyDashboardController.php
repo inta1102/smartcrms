@@ -69,7 +69,6 @@ class TlOsDailyDashboardController extends Controller
                     'level' => method_exists($me, 'roleValue')
                         ? (string) $me->roleValue()
                         : (($me->level instanceof \App\Enums\UserRole) ? $me->level->value : (string)($me->level ?? '')),
-
                     'ao_code' => $selfAo,
                 ]]);
             }
@@ -89,16 +88,47 @@ class TlOsDailyDashboardController extends Controller
 
         // staff scope by filter
         if ($aoFilter !== '') {
-            $staff = $staff->filter(fn ($u) => $u->ao_code === $aoFilter)->values();
+            $staff = $staff->filter(fn($u) => $u->ao_code === $aoFilter)->values();
         }
 
         $aoCodes = $staff->pluck('ao_code')->unique()->values()->all();
         $scopeAoCodes = $staff->pluck('ao_code')
-            ->filter(fn ($v) => filled($v))
+            ->filter(fn($v) => filled($v))
             ->unique()
             ->values()
             ->all();
 
+        $latestKpiDate = null;
+
+        if (!empty($aoCodes)) {
+            $latestKpiDate = DB::table('kpi_os_daily_aos')
+                ->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $aoCodes)
+                ->whereDate('position_date', '<=', $to->toDateString())
+                ->max('position_date');
+        }
+
+        if (empty($aoCodes)) {
+            $rows = collect();
+        } else {
+            $rows = DB::table('kpi_os_daily_aos')
+                ->selectRaw("
+                    DATE(position_date) as d,
+                    LPAD(TRIM(ao_code),6,'0') as ao_code,
+                    ROUND(SUM(os_total)) as os_total,
+                    ROUND(SUM(os_l0)) as os_l0,
+                    ROUND(SUM(os_lt)) as os_lt,
+                    ROUND(SUM(os_dpk)) as os_dpk
+                ")
+                ->whereBetween('position_date', [$from->toDateString(), $to->toDateString()])
+                ->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $aoCodes)
+                ->groupBy('d', 'ao_code')
+                ->orderBy('d')
+                ->get();
+        }
+        $latestKpiDate = $latestKpiDate
+            ? Carbon::parse($latestKpiDate)->toDateString()
+            : null;
+                
         $aoCount = count($scopeAoCodes);
 
         $visitDiscipline = $this->buildVisitDisciplineSummary(
@@ -125,7 +155,14 @@ class TlOsDailyDashboardController extends Controller
         $latestDate = count($labels) ? $labels[count($labels) - 1] : $to->toDateString();
 
         // untuk tabel bawah & compare loan_accounts, gunakan $to (posisi terakhir)
-        $latestPosDate = $to->toDateString();
+        $latestPosDate = DB::table('loan_accounts')
+            ->when(!empty($aoCodes), fn ($q) => $q->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $aoCodes))
+            ->whereDate('position_date', '<=', $to->toDateString())
+            ->max('position_date');
+
+        $latestPosDate = $latestPosDate
+            ? Carbon::parse($latestPosDate)->toDateString()
+            : $to->toDateString();
 
         $coverageFrom = \Carbon\Carbon::parse($from)->toDateString();
         $coverageTo   = \Carbon\Carbon::parse($to)->toDateString();
@@ -168,12 +205,21 @@ class TlOsDailyDashboardController extends Controller
                 ROUND(SUM(os_dpk)) as os_dpk
             ")
             ->whereBetween('position_date', [$from->toDateString(), $to->toDateString()])
-            ->when(!empty($aoCodes), fn ($q) => $q->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $aoCodes))
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $aoCodes))
             ->groupBy('d', 'ao_code')
             ->orderBy('d')
             ->get();
 
+            \Log::info('TLRO KPI DAILY RAW', [
+                'from' => $from->toDateString(),
+                'to' => $to->toDateString(),
+                'aoCodes' => $aoCodes,
+                'row_count' => $rows->count(),
+                'sample' => $rows->take(10)->toArray(),
+            ]);
+
         // map[ao_code][date] = metrics
+        $map = [];
         foreach ($rows as $r) {
             $map[$r->ao_code][$r->d] = [
                 'os_total' => (int) ($r->os_total ?? 0),
@@ -183,7 +229,6 @@ class TlOsDailyDashboardController extends Controller
             ];
         }
 
-
         /**
          * =========================================================
          * 4.5) ✅ TANGGAL DATA (anti-bolong) untuk cards & perhitungan delta
@@ -192,11 +237,10 @@ class TlOsDailyDashboardController extends Controller
          * =========================================================
          */
         $availableDates = $rows->pluck('d')->unique()->sort()->values();
-        $latestDataDate = $availableDates->last() ?? $latestDate;
-        $prevDataDate   = null;
-        if ($availableDates->count() >= 2) {
-            $prevDataDate = $availableDates[$availableDates->count() - 2];
-        }
+        $latestDataDate = $availableDates->last() ?? $latestKpiDate;
+        $prevDataDate   = $availableDates->count() >= 2
+            ? (string) $availableDates[$availableDates->count() - 2]
+            : null;
 
         /**
          * =========================================================
@@ -235,7 +279,7 @@ class TlOsDailyDashboardController extends Controller
                 ROUND(SUM(CASE WHEN COALESCE(m.ft_pokok,0)=2 OR  COALESCE(m.ft_bunga,0)=2 OR COALESCE(m.kolek,0)=2 THEN m.outstanding ELSE 0 END)) as dpk_m1
             ")
             ->whereDate('m.snapshot_month', $prevSnapMonth)
-            ->when(!empty($aoCodes), fn ($q) => $q->whereIn(DB::raw("LPAD(TRIM(m.ao_code),6,'0')"), $aoCodes))
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(m.ao_code),6,'0')"), $aoCodes))
             ->first();
 
         $summaryM1 = [
@@ -246,7 +290,7 @@ class TlOsDailyDashboardController extends Controller
         ];
 
         $osLastMonth = (int) DB::table('loan_account_snapshots_monthly as m')
-            ->when(!empty($aoCodes), fn ($q) => $q->whereIn(DB::raw("LPAD(TRIM(m.ao_code),6,'0')"), $aoCodes))
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(m.ao_code),6,'0')"), $aoCodes))
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->sum('m.outstanding');
 
@@ -345,7 +389,6 @@ class TlOsDailyDashboardController extends Controller
 
         if ($sumMode === 'mtd') {
             // MTD baseline = EOM bulan lalu (monthly snapshot)
-            // pakai label yang sudah kamu punya: $prevOsLabel (mis. "January 2026")
             $compareLabel = $latestDataDate
                 ? "MTD: EOM {$prevOsLabel} → {$latestDataDate}"
                 : "MTD: n/a";
@@ -385,30 +428,31 @@ class TlOsDailyDashboardController extends Controller
             if (!$hasLatest) $latestPack = null;
         }
 
+        
         // ===== Build prevPack sesuai mode =====
         $prevPack = null;
 
         if ($sumMode === 'mtd') {
-            // ✅ baseline MTD dari monthly snapshot EOM bulan lalu (yang sama dengan kartu OS Bulan Lalu)
-            // gunakan $summaryM1 yang sudah kamu hitung:
-            // $summaryM1 = ['os'=>..., 'l0'=>..., 'lt'=>..., 'dpk'=>...]
             $prevPack = [
                 'os_total' => (int) ($summaryM1['os']  ?? 0),
                 'os_l0'    => (int) ($summaryM1['l0']  ?? 0),
                 'os_lt'    => (int) ($summaryM1['lt']  ?? 0),
-                'os_dpk'   => (int) ($summaryM1['dpk'] ?? 0), // ✅ tambah ini
+                'os_dpk'   => (int) ($summaryM1['dpk'] ?? 0),
             ];
-
 
             // kalau snapshot monthly kosong banget, anggap n/a
             if ((int)($prevPack['os_total'] ?? 0) <= 0) {
                 $prevPack = null;
             }
-
         } else {
             // ✅ baseline harian dari compareDate (prevDataDate)
             if ($compareDate) {
-                $prevPack = ['os_total' => 0, 'os_l0' => 0, 'os_lt' => 0,'os_dpk'   => 0];
+                $prevPack = [
+                    'os_total' => 0,
+                    'os_l0'    => 0,
+                    'os_lt'    => 0,
+                    'os_dpk'   => 0,
+                ];
                 $hasPrev = false;
 
                 foreach ($aoCodes as $ao) {
@@ -420,7 +464,6 @@ class TlOsDailyDashboardController extends Controller
                     $prevPack['os_lt']    += (int) ($row['os_lt'] ?? 0);
                     $prevPack['os_dpk']   += (int) ($row['os_dpk'] ?? 0);
 
-
                     $hasPrev = true;
                 }
 
@@ -428,48 +471,60 @@ class TlOsDailyDashboardController extends Controller
             }
         }
 
+        \Log::info('TLRO CARD PACKS', [
+            'sumMode' => $sumMode,
+            'latestDataDate' => $latestDataDate,
+            'prevDataDate' => $prevDataDate,
+            'latestPack' => $latestPack,
+            'prevPack' => $prevPack,
+            // 'cards' => $cards,
+        ]);
+
+        // ===== Normalisasi latest/prev agar cards aman =====
+        $latestOsTotal = (int)($latestPack['os_total'] ?? 0);
+        $latestOsL0    = (int)($latestPack['os_l0'] ?? 0);
+        $latestOsLt    = (int)($latestPack['os_lt'] ?? 0);
+        $latestOsDpk   = (int)($latestPack['os_dpk'] ?? 0);
+
+        $prevOsTotal = is_array($prevPack) ? (int)($prevPack['os_total'] ?? 0) : null;
+        $prevOsL0    = is_array($prevPack) ? (int)($prevPack['os_l0'] ?? 0) : null;
+        $prevOsLt    = is_array($prevPack) ? (int)($prevPack['os_lt'] ?? 0) : null;
+        $prevOsDpk   = is_array($prevPack) ? (int)($prevPack['os_dpk'] ?? 0) : null;
+
         // ===== RR / %LT (delta points) =====
-        $latestRR = (is_array($latestPack) && (int)($latestPack['os_total'] ?? 0) > 0)
-            ? round(((int)$latestPack['os_l0'] / (int)$latestPack['os_total']) * 100, 2)
+        $latestRR = ($latestOsTotal > 0)
+            ? round(($latestOsL0 / $latestOsTotal) * 100, 2)
             : null;
 
-        $latestPL = (is_array($latestPack) && (int)($latestPack['os_total'] ?? 0) > 0)
-            ? round(((int)$latestPack['os_lt'] / (int)$latestPack['os_total']) * 100, 2)
+        $latestPL = ($latestOsTotal > 0)
+            ? round(($latestOsLt / $latestOsTotal) * 100, 2)
             : null;
 
-        $prevRR = (is_array($prevPack) && (int)($prevPack['os_total'] ?? 0) > 0)
-            ? round(((int)$prevPack['os_l0'] / (int)$prevPack['os_total']) * 100, 2)
+        $prevRR = (!is_null($prevOsTotal) && $prevOsTotal > 0)
+            ? round(($prevOsL0 / $prevOsTotal) * 100, 2)
             : null;
 
-        $prevPL = (is_array($prevPack) && (int)($prevPack['os_total'] ?? 0) > 0)
-            ? round(((int)$prevPack['os_lt'] / (int)$prevPack['os_total']) * 100, 2)
+        $prevPL = (!is_null($prevOsTotal) && $prevOsTotal > 0)
+            ? round(($prevOsLt / $prevOsTotal) * 100, 2)
             : null;
 
         // ===== Cards =====
         $cards = [
             'os' => [
-                'value' => (int) ($latestPack['os_total'] ?? 0),
-                'delta' => is_array($prevPack)
-                    ? ((int) ($latestPack['os_total'] ?? 0) - (int) ($prevPack['os_total'] ?? 0))
-                    : null,
+                'value' => $latestOsTotal,
+                'delta' => is_null($prevOsTotal) ? null : ($latestOsTotal - $prevOsTotal),
             ],
             'l0' => [
-                'value' => (int) ($latestPack['os_l0'] ?? 0),
-                'delta' => is_array($prevPack)
-                    ? ((int) ($latestPack['os_l0'] ?? 0) - (int) ($prevPack['os_l0'] ?? 0))
-                    : null,
+                'value' => $latestOsL0,
+                'delta' => is_null($prevOsL0) ? null : ($latestOsL0 - $prevOsL0),
             ],
             'lt' => [
-                'value' => (int) ($latestPack['os_lt'] ?? 0),
-                'delta' => is_array($prevPack)
-                    ? ((int) ($latestPack['os_lt'] ?? 0) - (int) ($prevPack['os_lt'] ?? 0))
-                    : null,
+                'value' => $latestOsLt,
+                'delta' => is_null($prevOsLt) ? null : ($latestOsLt - $prevOsLt),
             ],
-
-             // ✅ NEW: DPK
             'dpk' => [
-                'value' => (int) ($latestPack['os_dpk'] ?? 0),
-                'delta' => is_null($prevPack['os_dpk'] ?? null) ? null : ((int) $latestPack['os_dpk'] - (int) $prevPack['os_dpk']),
+                'value' => $latestOsDpk,
+                'delta' => is_null($prevOsDpk) ? null : ($latestOsDpk - $prevOsDpk),
             ],
             'rr' => [
                 'value' => $latestRR,
@@ -486,7 +541,7 @@ class TlOsDailyDashboardController extends Controller
          * 9) VISIT META (Last visit + Planned Today) - no N+1
          * =========================================================
          */
-        $subUserIds = $staff->pluck('id')->map(fn ($v) => (int) $v)->values()->all();
+        $subUserIds = $staff->pluck('id')->map(fn($v) => (int) $v)->values()->all();
         $today = now()->toDateString();
 
         $lastVisitMap = RoVisit::query()
@@ -498,10 +553,10 @@ class TlOsDailyDashboardController extends Controller
         $plannedTodayMap = RoVisit::query()
             ->select(['account_no', 'status', 'visit_date', 'user_id'])
             ->whereDate('visit_date', $today)
-            ->when(!empty($subUserIds), fn ($q) => $q->whereIn('user_id', $subUserIds))
+            ->when(!empty($subUserIds), fn($q) => $q->whereIn('user_id', $subUserIds))
             ->get()
             ->groupBy('account_no')
-            ->map(fn ($rows) => $rows->first());
+            ->map(fn($rows) => $rows->first());
 
         $attachVisitMeta = function ($rows) use ($lastVisitMap, $plannedTodayMap) {
             return collect($rows)->map(function ($r) use ($lastVisitMap, $plannedTodayMap) {
@@ -553,7 +608,7 @@ class TlOsDailyDashboardController extends Controller
             ])
             ->whereNotNull('la.maturity_date')
             ->whereBetween('la.maturity_date', [$monthStart, $monthEnd])
-            ->when(!empty($aoCodes), fn ($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
             ->orderBy('la.maturity_date')
             ->orderByDesc('la.outstanding')
             ->limit(300)
@@ -567,7 +622,7 @@ class TlOsDailyDashboardController extends Controller
         $ltEom = DB::table('loan_account_snapshots_monthly as m')
             ->join('loan_accounts as la', function ($j) use ($latestPosDate) {
                 $j->on('la.account_no', '=', 'm.account_no')
-                  ->whereDate('la.position_date', $latestPosDate);
+                    ->whereDate('la.position_date', $latestPosDate);
             })
             ->leftJoin('users as u', DB::raw("LPAD(TRIM(u.ao_code),6,'0')"), '=', DB::raw("LPAD(TRIM(la.ao_code),6,'0')"))
             ->select([
@@ -584,7 +639,7 @@ class TlOsDailyDashboardController extends Controller
                 DB::raw("COALESCE(u.name,'') as ao_name"),
             ])
             ->whereDate('m.snapshot_month', $prevSnapMonth)
-            ->when(!empty($aoCodes), fn ($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
             ->where(function ($q) {
                 $q->where('m.ft_pokok', 1)->orWhere('m.ft_bunga', 1);
             })
@@ -621,7 +676,7 @@ class TlOsDailyDashboardController extends Controller
             ])
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->whereDate('la.position_date', $latestPosDate)
-            ->when(!empty($aoCodes), fn ($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
             ->where('la.outstanding', '>', 0)
             ->where('m.ft_pokok', 0)
             ->where('m.ft_bunga', 0)
@@ -660,7 +715,7 @@ class TlOsDailyDashboardController extends Controller
                 DB::raw("$dueDateExpr as due_date"),
             ])
             ->whereDate('la.position_date', $latestPosDate)
-            ->when(!empty($aoCodes), fn ($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
             ->whereNotNull('la.installment_day')
             ->where('la.installment_day', '>=', 1)
             ->where('la.installment_day', '<=', 31)
@@ -687,7 +742,7 @@ class TlOsDailyDashboardController extends Controller
                 'la.kolek',
             ])
             ->whereDate('la.position_date', $latestPosDate)
-            ->when(!empty($aoCodes), fn ($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
             ->where('la.outstanding', '>=', $bigThreshold)
             ->orderByDesc('la.outstanding')
             ->limit(300)
@@ -732,12 +787,39 @@ class TlOsDailyDashboardController extends Controller
             END
         ";
 
+        // =============================
+        // PARTISI: LT EOM -> (DPK only) + (LT only) ; L0 drop
+        // gunakan $ltEom hasil query di atas, jangan re-query lagi
+        // =============================
+        $isDpk = function ($r) {
+            return ((int)($r->ft_pokok ?? 0) === 2)
+                || ((int)($r->ft_bunga ?? 0) === 2)
+                || ((int)($r->kolek ?? 0) === 2);
+        };
+
+        $isL0 = function ($r) {
+            return ((int)($r->ft_pokok ?? 0) === 0)
+                && ((int)($r->ft_bunga ?? 0) === 0);
+        };
+
+        $isLtOnly = function ($r) use ($isDpk, $isL0) {
+            if ($isDpk($r)) return false;
+            if ($isL0($r))  return false;
+            return ((int)($r->ft_pokok ?? 0) === 1) || ((int)($r->ft_bunga ?? 0) === 1);
+        };
+
+        $ltToDpk   = collect($ltEom)->filter($isDpk)->values();
+        $ltStillLt = collect($ltEom)->filter($isLtOnly)->values();
+
+        $ltToDpkNoa = (int) $ltToDpk->count();
+        $ltToDpkOs  = (int) $ltToDpk->sum(fn($r) => (int)($r->os ?? 0));
+
         // A) LT -> L0 list (butuh prevPosDate)
         if ($prevPosDate) {
             $ltToL0List = DB::table('loan_accounts as cur')
                 ->join('loan_accounts as prev', function ($j) use ($prevPosDate) {
                     $j->on('prev.account_no', '=', 'cur.account_no')
-                      ->whereDate('prev.position_date', $prevPosDate);
+                        ->whereDate('prev.position_date', $prevPosDate);
                 })
                 ->select([
                     'cur.account_no',
@@ -755,7 +837,7 @@ class TlOsDailyDashboardController extends Controller
                     'prev.ft_bunga as prev_ft_bunga',
                 ])
                 ->whereDate('cur.position_date', $latestPosDate)
-                ->when(!empty($aoCodes), fn ($q) => $q->whereIn(DB::raw("LPAD(TRIM(cur.ao_code),6,'0')"), $aoCodes))
+                ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(cur.ao_code),6,'0')"), $aoCodes))
                 ->where(function ($q) {
                     $q->where('prev.ft_pokok', '>', 0)->orWhere('prev.ft_bunga', '>', 0);
                 })
@@ -768,7 +850,7 @@ class TlOsDailyDashboardController extends Controller
             $ltToL0List = $attachVisitMeta($ltToL0List);
 
             $bounce['lt_to_l0_noa'] = $ltToL0List->count();
-            $bounce['lt_to_l0_os']  = (int) $ltToL0List->sum(fn ($r) => (int) ($r->os ?? 0));
+            $bounce['lt_to_l0_os']  = (int) $ltToL0List->sum(fn($r) => (int) ($r->os ?? 0));
         }
 
         // B) JT next2 list (posisi latestPosDate)
@@ -786,7 +868,7 @@ class TlOsDailyDashboardController extends Controller
                 'la.ft_bunga',
             ])
             ->whereDate('la.position_date', $latestPosDate)
-            ->when(!empty($aoCodes), fn ($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
+            ->when(!empty($aoCodes), fn($q) => $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes))
             ->whereNotNull('la.installment_day')
             ->where('la.installment_day', '>=', 1)
             ->where('la.installment_day', '<=', 31)
@@ -799,7 +881,7 @@ class TlOsDailyDashboardController extends Controller
         $jtNext2List = $attachVisitMeta($jtNext2List);
 
         $bounce['jt_next2_noa'] = $jtNext2List->count();
-        $bounce['jt_next2_os']  = (int) $jtNext2List->sum(fn ($r) => (int) ($r->os ?? 0));
+        $bounce['jt_next2_os']  = (int) $jtNext2List->sum(fn($r) => (int) ($r->os ?? 0));
 
         // C) signal bounce risk (rule TLRO)
         $l0Up   = !is_null($cards['l0']['delta']) && (int) $cards['l0']['delta'] > 0;
@@ -807,7 +889,7 @@ class TlOsDailyDashboardController extends Controller
         $bounce['signal_bounce_risk'] = ($l0Up && $ltDown && $bounce['jt_next2_noa'] > 0);
 
         // D) mini table "Top Risiko Besok"
-        $jtIndex = $jtNext2List->keyBy(fn ($r) => (string) $r->account_no);
+        $jtIndex = $jtNext2List->keyBy(fn($r) => (string) $r->account_no);
 
         $riskRows = collect();
 
@@ -868,7 +950,7 @@ class TlOsDailyDashboardController extends Controller
         $ltToDpkQ = DB::table('loan_account_snapshots_monthly as m')
             ->join('loan_accounts as la', function ($j) use ($latestPosDate) {
                 $j->on('la.account_no', '=', 'm.account_no')
-                  ->whereDate('la.position_date', $latestPosDate);
+                    ->whereDate('la.position_date', $latestPosDate);
             })
             ->whereDate('m.snapshot_month', $prevSnapMonth)
             ->where(function ($q) {
@@ -877,12 +959,20 @@ class TlOsDailyDashboardController extends Controller
             ->where(function ($q) {
                 $q->where('la.ft_pokok', 2)->orWhere('la.ft_bunga', 2)->orWhere('la.kolek', 2);
             })
-            ->when(!empty($aoCodes), fn ($q) =>
+            ->when(!empty($aoCodes), fn($q) =>
                 $q->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $aoCodes)
             );
 
         $bounce['lt_to_dpk_noa'] = (int) (clone $ltToDpkQ)->count();
         $bounce['lt_to_dpk_os']  = (int) (clone $ltToDpkQ)->sum('la.outstanding');
+
+        \Log::info('TLRO LT_TO_DPK DEBUG', [
+            'prevSnapMonth' => $prevSnapMonth,
+            'latestPosDate' => $latestPosDate,
+            'aoCodes' => $aoCodes,
+            'count' => (clone $ltToDpkQ)->count(),
+            'sum_os' => (clone $ltToDpkQ)->sum('la.outstanding'),
+        ]);
 
         $ltToDpkList = (clone $ltToDpkQ)
             ->select([
@@ -903,8 +993,18 @@ class TlOsDailyDashboardController extends Controller
 
         $ltToDpkList = $attachVisitMeta($ltToDpkList);
 
+        // ✅ hitung summary dari list yang sama dengan tabel
+        $ltToDpkNoa = $ltToDpkList->count();
+        $ltToDpkOs  = (int) $ltToDpkList->sum(fn($r) => (int)($r->os ?? 0));
+
+        \Log::info('TLRO LT_TO_DPK LIST FINAL', [
+            'count' => $ltToDpkNoa,
+            'sum_os' => $ltToDpkOs,
+            'sample' => $ltToDpkList->take(5)->values()->all(),
+        ]);
+
         $topRiskTomorrow = $riskRows
-            ->sortByDesc(fn ($r) => (int) ($r->os ?? 0))
+            ->sortByDesc(fn($r) => (int) ($r->os ?? 0))
             ->take(12)
             ->values();
 
@@ -982,11 +1082,16 @@ class TlOsDailyDashboardController extends Controller
             'ltToDpkList'  => $ltToDpkList,
             'prevEomMonth' => $prevEomMonth,
 
-            'summaryM1' => $summaryM1,
+            'summaryM1'            => $summaryM1,
             'visitCoverageSummary' => $visitCoverageSummary,
             'visitCoverageRows'    => $visitCoverageRows,
-            'coverageTo'          => $coverageTo,
-            'latestPosDate'       => $latestPosDate,
+            'coverageTo'           => $coverageTo,
+            'latestPosDate'        => $latestPosDate,
+            'ltToDpk'              => $ltToDpk,
+            'ltStillLt'            => $ltStillLt,
+            'ltToDpkNoa'   => $ltToDpkNoa,
+            'ltToDpkOs'    => $ltToDpkOs,
+            'ltToDpkList'  => $ltToDpkList,
         ]);
     }
 
@@ -1017,7 +1122,7 @@ class TlOsDailyDashboardController extends Controller
         // ============================================
         $osCol = null;
         foreach (['outstanding', 'os', 'baki_debet', 'saldo_pokok'] as $c) {
-            if (\Illuminate\Support\Facades\Schema::hasColumn('loan_accounts', $c)) {
+            if (Schema::hasColumn('loan_accounts', $c)) {
                 $osCol = $c;
                 break;
             }
@@ -1025,7 +1130,7 @@ class TlOsDailyDashboardController extends Controller
 
         $dpdCol = null;
         foreach (['dpd', 'hari_tunggakan', 'days_past_due'] as $c) {
-            if (\Illuminate\Support\Facades\Schema::hasColumn('loan_accounts', $c)) {
+            if (Schema::hasColumn('loan_accounts', $c)) {
                 $dpdCol = $c;
                 break;
             }
@@ -1033,7 +1138,7 @@ class TlOsDailyDashboardController extends Controller
 
         $kolekCol = null;
         foreach (['kolek', 'kolektibilitas'] as $c) {
-            if (\Illuminate\Support\Facades\Schema::hasColumn('loan_accounts', $c)) {
+            if (Schema::hasColumn('loan_accounts', $c)) {
                 $kolekCol = $c;
                 break;
             }
@@ -1041,7 +1146,7 @@ class TlOsDailyDashboardController extends Controller
 
         $customerCol = null;
         foreach (['customer_name', 'nama_nasabah'] as $c) {
-            if (\Illuminate\Support\Facades\Schema::hasColumn('loan_accounts', $c)) {
+            if (Schema::hasColumn('loan_accounts', $c)) {
                 $customerCol = $c;
                 break;
             }
@@ -1050,7 +1155,7 @@ class TlOsDailyDashboardController extends Controller
         // ============================================
         // 2) base portfolio per posisi terakhir
         // ============================================
-        $portfolio = \Illuminate\Support\Facades\DB::table('loan_accounts as la')
+        $portfolio = DB::table('loan_accounts as la')
             ->selectRaw("
                 la.account_no,
                 la.ao_code,
@@ -1070,7 +1175,7 @@ class TlOsDailyDashboardController extends Controller
                     $aoTrim = $aoTrim === '' ? '0' : $aoTrim;
 
                     $q->orWhere('la.ao_code', $ao)
-                    ->orWhereRaw("TRIM(LEADING '0' FROM la.ao_code) = ?", [$aoTrim]);
+                        ->orWhereRaw("TRIM(LEADING '0' FROM la.ao_code) = ?", [$aoTrim]);
                 }
             })
             ->get();
@@ -1133,9 +1238,9 @@ class TlOsDailyDashboardController extends Controller
         // ============================================
         // 4) mapping AO -> RO user
         // ============================================
-        $staff = \Illuminate\Support\Facades\DB::table('users')
-            ->select('id', 'name', 'ao_code')
-            ->whereIn('ao_code', $scopeAoCodes)
+        $staff = DB::table('users')
+            ->selectRaw("id, name, LPAD(TRIM(ao_code),6,'0') as ao_code")
+            ->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $scopeAoCodes)
             ->get();
 
         $staffByAo = $staff->keyBy('ao_code');
@@ -1289,20 +1394,31 @@ class TlOsDailyDashboardController extends Controller
             ->values()
             ->all();
 
+        \Log::info('TLRO SUBORDINATE DEBUG', [
+            'leaderUserId' => $leaderUserId,
+            'subIds' => $subIds,
+        ]);
+
         if (empty($subIds)) return collect();
 
-        return DB::table('users')
+        $rows = DB::table('users')
             ->select(['id', 'name', 'level', 'ao_code'])
             ->whereIn('id', $subIds)
-            ->whereNotNull('ao_code')
-            ->whereRaw("TRIM(ao_code) <> ''")
             ->orderBy('name')
-            ->get()
+            ->get();
+
+        \Log::info('TLRO SUBORDINATE USERS RAW', [
+            'leaderUserId' => $leaderUserId,
+            'rows' => $rows->toArray(),
+        ]);
+
+        return $rows
+            ->filter(fn ($u) => !is_null($u->ao_code) && trim((string)$u->ao_code) !== '')
             ->map(function ($u) {
                 $u->ao_code = str_pad(trim((string) $u->ao_code), 6, '0', STR_PAD_LEFT);
                 return $u;
             })
-            ->filter(fn ($u) => $u->ao_code !== '' && $u->ao_code !== '000000')
+            ->filter(fn ($u) => $u->ao_code !== '000000')
             ->values();
     }
 }

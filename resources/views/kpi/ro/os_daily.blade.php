@@ -936,7 +936,7 @@
               </td>
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
-                {{ is_null($ageDays) ? '-' : ($ageDays.' hari') }}
+                {{ is_null($ageDays) ? '-' : (floor($ageDays).' hari') }}
               </td>
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
@@ -1059,7 +1059,7 @@
 
               {{-- Age Visit --}}
               <td class="px-3 py-2 text-center whitespace-nowrap">
-                {{ is_null($ageDays) ? '-' : ($ageDays.' hari') }}
+                {{ is_null($ageDays) ? '-' : (floor($ageDays).' hari') }}
               </td>
 
               {{-- PLAN BUTTON --}}
@@ -1218,7 +1218,7 @@
                     try { $ageDays = \Carbon\Carbon::parse($r->last_visit_at)->diffInDays(now()); } catch (\Throwable $e) {}
                   }
                 @endphp
-                {{ is_null($ageDays) ? '-' : ($ageDays.' hari') }}
+                {{ is_null($ageDays) ? '-' : (floor($ageDays).' hari') }}
               </td>
 
               
@@ -1342,7 +1342,7 @@
               </td>
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
-                {{ is_null($ageDays) ? '-' : ($ageDays.' hari') }}
+                {{ is_null($ageDays) ? '-' : (floor($ageDays).' hari') }}
               </td>
 
               {{-- PLAN BUTTON: seragam tabel A --}}
@@ -1464,7 +1464,7 @@
               </td>
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
-                {{ is_null($ageDays) ? '-' : ($ageDays.' hari') }}
+                {{ is_null($ageDays) ? '-' : (floor($ageDays).' hari') }}
               </td>
 
               {{-- PLAN BUTTON: seragam tabel A --}}
@@ -1586,7 +1586,7 @@
               </td>
 
               <td class="px-3 py-2 text-center whitespace-nowrap">
-                {{ is_null($ageDays) ? '-' : ($ageDays.' hari') }}
+                {{ is_null($ageDays) ? '-' : (floor($ageDays).' hari') }}
               </td>
 
               {{-- PLAN BUTTON: seragam tabel A --}}
