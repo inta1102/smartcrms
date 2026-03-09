@@ -180,8 +180,16 @@ class TlOsDailyDashboardController extends Controller
             $latestPosDate
         );
 
-        $visitCoverageSummary = $visitCoveragePack['summary'];
-        $visitCoverageRows    = $visitCoveragePack['rows'];
+        $visitCoverageSummary     = $visitCoveragePack['summary'] ?? [];
+        $visitCoveragePerformance = $visitCoveragePack['performance'] ?? [];
+        $visitCoverageRows        = $visitCoveragePack['rows'] ?? collect();
+
+       \Log::info('TLRO VISIT COVERAGE PACK CHECK', [
+            'keys' => array_keys($visitCoveragePack),
+            'summary' => $visitCoveragePack['summary'] ?? null,
+            'performance' => $visitCoveragePack['performance'] ?? null,
+            'rows_count' => isset($visitCoveragePack['rows']) ? collect($visitCoveragePack['rows'])->count() : null,
+        ]);
 
         \Log::info('TLRO COVERAGE CALL', [
             'coverageFrom'  => $coverageFrom,
@@ -1059,6 +1067,12 @@ class TlOsDailyDashboardController extends Controller
             ->take(12)
             ->values();
 
+
+            \Log::info('BUILD VISIT COVERAGE RETURN CHECK', [
+    'summary' => $summary ?? null,
+    'performance' => $performance ?? null,
+    'rows_count' => isset($rows) ? collect($rows)->count() : null,
+]);
         /**
          * =========================================================
          * 11) RETURN VIEW
@@ -1143,268 +1157,390 @@ class TlOsDailyDashboardController extends Controller
             'ltToDpkNoa'           => $ltToDpkNoa,
             'ltToDpkOs'            => $ltToDpkOs,
             'ltToDpkList'          => $ltToDpkList,
+
+            'visitCoverageSummary'      => $visitCoverageSummary,
+            'visitCoveragePerformance'  => $visitCoveragePerformance,
+            'visitCoverageRows'         => $visitCoverageRows,
+
+            'coverageFrom'              => $coverageFrom,
+            'coverageTo'                => $coverageTo,
+            'latestPosDate'             => $latestPosDate,
         ]);
     }
 
-    private function buildVisitCoverageByRo(array $scopeAoCodes, string $from, string $to, ?string $latestPosDate): array
-    {
-        if (empty($scopeAoCodes) || empty($latestPosDate)) {
-            return [
-                'summary' => [
-                    'total_noa' => 0,
-                    'done_visit' => 0,
-                    'plan_only' => 0,
-                    'belum_visit' => 0,
-                    'coverage_pct' => 0,
-                ],
-                'rows' => collect(),
-            ];
-        }
+private function buildVisitCoverageByRo(array $scopeAoCodes, string $from, string $to, ?string $latestPosDate): array
+{
+    \Log::info('BUILD VISIT COVERAGE BY RO >>> FINAL VERSION HIT <<<', [
+        'file' => __FILE__,
+        'line' => __LINE__,
+        'scopeAoCodes' => $scopeAoCodes,
+        'from' => $from,
+        'to' => $to,
+        'latestPosDate' => $latestPosDate,
+    ]);
 
-        /*
-        |--------------------------------------------------
-        | helper normalisasi account
-        |--------------------------------------------------
-        */
-        $normAcc = function ($acc) {
-            $acc = trim((string)$acc);
-            $acc = ltrim($acc, '0');
-            return $acc === '' ? '0' : $acc;
-        };
-
-        /*
-        |--------------------------------------------------
-        | 1 detect kolom loan_accounts
-        |--------------------------------------------------
-        */
-        $osCol = null;
-        foreach (['outstanding', 'os', 'baki_debet', 'saldo_pokok'] as $c) {
-            if (Schema::hasColumn('loan_accounts', $c)) {
-                $osCol = $c;
-                break;
-            }
-        }
-
-        $dpdCol = null;
-        foreach (['dpd', 'hari_tunggakan', 'days_past_due'] as $c) {
-            if (Schema::hasColumn('loan_accounts', $c)) {
-                $dpdCol = $c;
-                break;
-            }
-        }
-
-        $kolekCol = null;
-        foreach (['kolek', 'kolektibilitas'] as $c) {
-            if (Schema::hasColumn('loan_accounts', $c)) {
-                $kolekCol = $c;
-                break;
-            }
-        }
-
-        $customerCol = null;
-        foreach (['customer_name', 'nama_nasabah'] as $c) {
-            if (Schema::hasColumn('loan_accounts', $c)) {
-                $customerCol = $c;
-                break;
-            }
-        }
-
-        /*
-        |--------------------------------------------------
-        | 2 portfolio snapshot
-        |--------------------------------------------------
-        */
-        $portfolio = DB::table('loan_accounts as la')
-            ->selectRaw("
-                la.account_no,
-                LPAD(TRIM(la.ao_code),6,'0') as ao_code,
-                " . ($customerCol ? "la.$customerCol as customer_name" : "NULL as customer_name") . ",
-                " . ($osCol ? "COALESCE(la.$osCol,0)" : "0") . " as os,
-                " . ($dpdCol ? "COALESCE(la.$dpdCol,0)" : "0") . " as dpd,
-                " . ($kolekCol ? "COALESCE(la.$kolekCol,0)" : "0") . " as kolek,
-                COALESCE(la.ft_pokok,0) as ft_pokok,
-                COALESCE(la.ft_bunga,0) as ft_bunga
-            ")
-            ->whereDate('la.position_date', $latestPosDate)
-            ->whereNotNull('la.account_no')
-            ->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $scopeAoCodes)
-            ->get();
-
-        if ($portfolio->isEmpty()) {
-            return [
-                'summary' => [
-                    'total_noa' => 0,
-                    'done_visit' => 0,
-                    'plan_only' => 0,
-                    'belum_visit' => 0,
-                    'coverage_pct' => 0,
-                ],
-                'rows' => collect(),
-            ];
-        }
-
-        /*
-        |--------------------------------------------------
-        | 3 ambil visit
-        |--------------------------------------------------
-        */
-        $visitRows = DB::table('ro_visits')
-            ->selectRaw("
-                account_no,
-                LPAD(TRIM(ao_code),6,'0') as ao_code,
-                status,
-                visit_date,
-                visited_at
-            ")
-            ->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $scopeAoCodes)
-            ->whereIn('status', ['planned','done'])
-            ->whereRaw("DATE(COALESCE(visited_at, visit_date)) >= ?", [$from])
-            ->whereRaw("DATE(COALESCE(visited_at, visit_date)) <= ?", [$to])
-            ->get();
-
-        /*
-        |--------------------------------------------------
-        | 4 build visit map
-        |--------------------------------------------------
-        */
-        $visitMap = [];
-
-        foreach ($visitRows as $v) {
-
-            $accKey = $normAcc($v->account_no ?? null);
-            if ($accKey === '0') continue;
-
-            $status = strtolower(trim((string)$v->status));
-
-            if (!isset($visitMap[$accKey])) {
-                $visitMap[$accKey] = $status;
-                continue;
-            }
-
-            if ($visitMap[$accKey] !== 'done' && $status === 'done') {
-                $visitMap[$accKey] = 'done';
-            }
-        }
-
-        /*
-        |--------------------------------------------------
-        | 5 mapping AO -> RO
-        |--------------------------------------------------
-        */
-        $staff = DB::table('users')
-            ->selectRaw("id,name,LPAD(TRIM(ao_code),6,'0') as ao_code")
-            ->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $scopeAoCodes)
-            ->get();
-
-        $staffByAo = $staff->keyBy('ao_code');
-
-        /*
-        |--------------------------------------------------
-        | 6 aggregate per AO
-        |--------------------------------------------------
-        */
-        $rows = [];
-
-        foreach ($portfolio as $p) {
-
-            $ao = str_pad(trim((string)$p->ao_code),6,'0',STR_PAD_LEFT);
-
-            $staffRow = $staffByAo->get($ao);
-
-            $roName = $staffRow->name ?? $ao;
-
-            $accKey = $normAcc($p->account_no ?? null);
-
-            if (!isset($rows[$ao])) {
-
-                $rows[$ao] = [
-                    'ro_name' => $roName,
-                    'ao_code' => $ao,
-                    'total_noa' => 0,
-                    'done_visit' => 0,
-                    'plan_only' => 0,
-                    'belum_visit' => 0,
-                    'coverage_pct' => 0,
-                    'lt_noa' => 0,
-                    'dpk_noa' => 0,
-                    'os_total' => 0,
-                    'os_belum_visit' => 0,
-                ];
-            }
-
-            $rows[$ao]['total_noa']++;
-            $rows[$ao]['os_total'] += (float)$p->os;
-
-            $status = $visitMap[$accKey] ?? null;
-
-            if ($status === 'done') {
-
-                $rows[$ao]['done_visit']++;
-
-            } elseif ($status === 'planned') {
-
-                $rows[$ao]['plan_only']++;
-                $rows[$ao]['os_belum_visit'] += (float)$p->os;
-
-            } else {
-
-                $rows[$ao]['belum_visit']++;
-                $rows[$ao]['os_belum_visit'] += (float)$p->os;
-            }
-
-            if ($this->rowIsLt($p)) {
-                $rows[$ao]['lt_noa']++;
-            }
-
-            if ($this->rowIsDpk($p)) {
-                $rows[$ao]['dpk_noa']++;
-            }
-        }
-
-        $rows = collect($rows)
-            ->map(function ($r) {
-
-                $r['coverage_pct'] = $r['total_noa'] > 0
-                    ? round(($r['done_visit'] / $r['total_noa']) * 100,2)
-                    : 0;
-
-                return (object)$r;
-            })
-            ->sortByDesc('os_belum_visit')
-            ->values();
-
-        /*
-        |--------------------------------------------------
-        | 7 summary TL
-        |--------------------------------------------------
-        */
-        $summary = [
-            'total_noa' => (int)$rows->sum('total_noa'),
-            'done_visit' => (int)$rows->sum('done_visit'),
-            'plan_only' => (int)$rows->sum('plan_only'),
-            'belum_visit' => (int)$rows->sum('belum_visit'),
-            'coverage_pct' => $rows->sum('total_noa') > 0
-                ? round(($rows->sum('done_visit') / $rows->sum('total_noa')) * 100,2)
-                : 0,
-        ];
-
-        /*
-        |--------------------------------------------------
-        | debug log
-        |--------------------------------------------------
-        */
-        \Log::info('VISIT COVERAGE DEBUG', [
-            'portfolio_count' => $portfolio->count(),
-            'visit_rows' => $visitRows->count(),
-            'visit_map' => count($visitMap),
-            'summary' => $summary
-        ]);
-
+    if (empty($scopeAoCodes) || empty($latestPosDate)) {
         return [
-            'summary' => $summary,
-            'rows' => $rows,
+            'summary' => [
+                'total_noa'      => 0,
+                'done_visit'     => 0,
+                'plan_only'      => 0,
+                'belum_visit'    => 0,
+                'coverage_pct'   => 0,
+                'os_total'       => 0,
+                'os_belum_visit' => 0,
+                'lt_noa'         => 0,
+                'dpk_noa'        => 0,
+            ],
+            'performance' => [
+                'visit_today'          => 0,
+                'visit_week'           => 0,
+                'visit_mtd'            => 0,
+                'visit_ytd'            => 0,
+                'avg_visit_per_ro'     => 0,
+                'plan_today'           => 0,
+                'plan_realization_pct' => 0,
+            ],
+            'rows' => collect(),
         ];
     }
+
+    $normAcc = function ($acc) {
+        $acc = trim((string)$acc);
+        $acc = ltrim($acc, '0');
+        return $acc === '' ? '0' : $acc;
+    };
+
+    $anchorDateC = Carbon::parse($to)->startOfDay();
+
+    $today      = $anchorDateC->toDateString();
+    $weekStart  = $anchorDateC->copy()->startOfWeek(Carbon::MONDAY)->toDateString();
+    $weekEnd    = $anchorDateC->copy()->endOfWeek(Carbon::SUNDAY)->toDateString();
+    $monthStart = $anchorDateC->copy()->startOfMonth()->toDateString();
+    $yearStart  = $anchorDateC->copy()->startOfYear()->toDateString();
+
+    // =========================
+    // detect kolom loan_accounts
+    // =========================
+    $osCol = null;
+    foreach (['outstanding', 'os', 'baki_debet', 'saldo_pokok'] as $c) {
+        if (Schema::hasColumn('loan_accounts', $c)) {
+            $osCol = $c;
+            break;
+        }
+    }
+
+    $dpdCol = null;
+    foreach (['dpd', 'hari_tunggakan', 'days_past_due'] as $c) {
+        if (Schema::hasColumn('loan_accounts', $c)) {
+            $dpdCol = $c;
+            break;
+        }
+    }
+
+    $kolekCol = null;
+    foreach (['kolek', 'kolektibilitas'] as $c) {
+        if (Schema::hasColumn('loan_accounts', $c)) {
+            $kolekCol = $c;
+            break;
+        }
+    }
+
+    $customerCol = null;
+    foreach (['customer_name', 'nama_nasabah'] as $c) {
+        if (Schema::hasColumn('loan_accounts', $c)) {
+            $customerCol = $c;
+            break;
+        }
+    }
+
+    // =========================
+    // portfolio snapshot
+    // =========================
+    $portfolio = DB::table('loan_accounts as la')
+        ->selectRaw("
+            la.account_no,
+            LPAD(TRIM(la.ao_code),6,'0') as ao_code,
+            " . ($customerCol ? "la.$customerCol as customer_name" : "NULL as customer_name") . ",
+            " . ($osCol ? "COALESCE(la.$osCol,0)" : "0") . " as os,
+            " . ($dpdCol ? "COALESCE(la.$dpdCol,0)" : "0") . " as dpd,
+            " . ($kolekCol ? "COALESCE(la.$kolekCol,0)" : "0") . " as kolek,
+            COALESCE(la.ft_pokok,0) as ft_pokok,
+            COALESCE(la.ft_bunga,0) as ft_bunga
+        ")
+        ->whereDate('la.position_date', $latestPosDate)
+        ->whereNotNull('la.account_no')
+        ->whereIn(DB::raw("LPAD(TRIM(la.ao_code),6,'0')"), $scopeAoCodes)
+        ->get();
+
+    if ($portfolio->isEmpty()) {
+        return [
+            'summary' => [
+                'total_noa'      => 0,
+                'done_visit'     => 0,
+                'plan_only'      => 0,
+                'belum_visit'    => 0,
+                'coverage_pct'   => 0,
+                'os_total'       => 0,
+                'os_belum_visit' => 0,
+                'lt_noa'         => 0,
+                'dpk_noa'        => 0,
+            ],
+            'performance' => [
+                'visit_today'          => 0,
+                'visit_week'           => 0,
+                'visit_mtd'            => 0,
+                'visit_ytd'            => 0,
+                'avg_visit_per_ro'     => 0,
+                'plan_today'           => 0,
+                'plan_realization_pct' => 0,
+            ],
+            'rows' => collect(),
+        ];
+    }
+
+    // =========================
+    // visit rows for selected range
+    // =========================
+    $visitRowsRange = DB::table('ro_visits')
+        ->selectRaw("
+            account_no,
+            LPAD(TRIM(ao_code),6,'0') as ao_code,
+            user_id,
+            status,
+            visit_date,
+            visited_at,
+            DATE(COALESCE(visited_at, visit_date)) as activity_date
+        ")
+        ->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $scopeAoCodes)
+        ->whereIn('status', ['planned', 'done'])
+        ->whereRaw("DATE(COALESCE(visited_at, visit_date)) >= ?", [$from])
+        ->whereRaw("DATE(COALESCE(visited_at, visit_date)) <= ?", [$to])
+        ->get();
+
+    // =========================
+    // visit rows YTD
+    // =========================
+    $visitRowsYtd = DB::table('ro_visits')
+        ->selectRaw("
+            account_no,
+            LPAD(TRIM(ao_code),6,'0') as ao_code,
+            user_id,
+            status,
+            visit_date,
+            visited_at,
+            DATE(COALESCE(visited_at, visit_date)) as activity_date
+        ")
+        ->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $scopeAoCodes)
+        ->whereIn('status', ['planned', 'done'])
+        ->whereRaw("DATE(COALESCE(visited_at, visit_date)) >= ?", [$yearStart])
+        ->whereRaw("DATE(COALESCE(visited_at, visit_date)) <= ?", [$today])
+        ->get();
+
+    // =========================
+    // visit map for coverage
+    // done > planned
+    // =========================
+    $visitMap = [];
+
+    foreach ($visitRowsRange as $v) {
+        $accKey = $normAcc($v->account_no ?? null);
+        if ($accKey === '0') continue;
+
+        $status = strtolower(trim((string)($v->status ?? '')));
+        if (!in_array($status, ['planned', 'done'], true)) continue;
+
+        if (!isset($visitMap[$accKey])) {
+            $visitMap[$accKey] = $status;
+            continue;
+        }
+
+        if ($visitMap[$accKey] !== 'done' && $status === 'done') {
+            $visitMap[$accKey] = 'done';
+        }
+    }
+
+    // =========================
+    // AO -> RO mapping
+    // =========================
+    $staff = DB::table('users')
+        ->selectRaw("id, name, LPAD(TRIM(ao_code),6,'0') as ao_code")
+        ->whereIn(DB::raw("LPAD(TRIM(ao_code),6,'0')"), $scopeAoCodes)
+        ->get();
+
+    $staffByAo = $staff->keyBy('ao_code');
+    $roCount = max(1, $staff->count());
+
+    // =========================
+    // performance buckets
+    // =========================
+    $perfByAo = [];
+    foreach ($scopeAoCodes as $ao) {
+        $ao = str_pad(trim((string)$ao), 6, '0', STR_PAD_LEFT);
+        $perfByAo[$ao] = [
+            'visit_today_accounts' => [],
+            'visit_week_accounts'  => [],
+            'visit_mtd_accounts'   => [],
+            'visit_ytd_accounts'   => [],
+            'plan_today_accounts'  => [],
+        ];
+    }
+
+    foreach ($visitRowsYtd as $v) {
+        $ao = str_pad(trim((string)($v->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
+        if (!isset($perfByAo[$ao])) continue;
+
+        $accKey = $normAcc($v->account_no ?? null);
+        if ($accKey === '0') continue;
+
+        $status = strtolower(trim((string)($v->status ?? '')));
+        $actDate = trim((string)($v->activity_date ?? ''));
+        if ($actDate === '') continue;
+
+        if ($status === 'done') {
+            if ($actDate === $today) {
+                $perfByAo[$ao]['visit_today_accounts'][$accKey] = true;
+            }
+            if ($actDate >= $weekStart && $actDate <= $weekEnd) {
+                $perfByAo[$ao]['visit_week_accounts'][$accKey] = true;
+            }
+            if ($actDate >= $monthStart && $actDate <= $today) {
+                $perfByAo[$ao]['visit_mtd_accounts'][$accKey] = true;
+            }
+            if ($actDate >= $yearStart && $actDate <= $today) {
+                $perfByAo[$ao]['visit_ytd_accounts'][$accKey] = true;
+            }
+        }
+
+        if ($status === 'planned' && $actDate === $today) {
+            $perfByAo[$ao]['plan_today_accounts'][$accKey] = true;
+        }
+    }
+
+    // =========================
+    // aggregate per AO
+    // =========================
+    $rows = [];
+
+    foreach ($portfolio as $p) {
+        $ao = str_pad(trim((string)($p->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
+        $staffRow = $staffByAo->get($ao);
+        $roName = $staffRow->name ?? $ao;
+        $accKey = $normAcc($p->account_no ?? null);
+
+        if (!isset($rows[$ao])) {
+            $rows[$ao] = [
+                'ro_name'        => $roName,
+                'ao_code'        => $ao,
+                'total_noa'      => 0,
+                'done_visit'     => 0,
+                'plan_only'      => 0,
+                'belum_visit'    => 0,
+                'coverage_pct'   => 0,
+                'lt_noa'         => 0,
+                'dpk_noa'        => 0,
+                'os_total'       => 0,
+                'os_belum_visit' => 0,
+                'visit_today'    => 0,
+                'visit_week'     => 0,
+                'visit_mtd'      => 0,
+                'visit_ytd'      => 0,
+                'plan_today'     => 0,
+            ];
+        }
+
+        $rows[$ao]['total_noa']++;
+        $rows[$ao]['os_total'] += (float)($p->os ?? 0);
+
+        $status = $visitMap[$accKey] ?? null;
+
+        if ($status === 'done') {
+            $rows[$ao]['done_visit']++;
+        } elseif ($status === 'planned') {
+            $rows[$ao]['plan_only']++;
+            $rows[$ao]['os_belum_visit'] += (float)($p->os ?? 0);
+        } else {
+            $rows[$ao]['belum_visit']++;
+            $rows[$ao]['os_belum_visit'] += (float)($p->os ?? 0);
+        }
+
+        if ($this->rowIsLt($p)) {
+            $rows[$ao]['lt_noa']++;
+        }
+
+        if ($this->rowIsDpk($p)) {
+            $rows[$ao]['dpk_noa']++;
+        }
+    }
+
+    foreach ($rows as $ao => &$r) {
+        $stat = $perfByAo[$ao] ?? null;
+        if (!$stat) continue;
+
+        $r['visit_today'] = count($stat['visit_today_accounts']);
+        $r['visit_week']  = count($stat['visit_week_accounts']);
+        $r['visit_mtd']   = count($stat['visit_mtd_accounts']);
+        $r['visit_ytd']   = count($stat['visit_ytd_accounts']);
+        $r['plan_today']  = count($stat['plan_today_accounts']);
+    }
+    unset($r);
+
+    $rows = collect($rows)
+        ->map(function ($r) {
+            $r['coverage_pct'] = $r['total_noa'] > 0
+                ? round(($r['done_visit'] / $r['total_noa']) * 100, 2)
+                : 0;
+
+            return (object)$r;
+        })
+        ->sortByDesc('os_belum_visit')
+        ->values();
+
+    $summary = [
+        'total_noa'      => (int)$rows->sum('total_noa'),
+        'done_visit'     => (int)$rows->sum('done_visit'),
+        'plan_only'      => (int)$rows->sum('plan_only'),
+        'belum_visit'    => (int)$rows->sum('belum_visit'),
+        'coverage_pct'   => $rows->sum('total_noa') > 0
+            ? round(($rows->sum('done_visit') / $rows->sum('total_noa')) * 100, 2)
+            : 0,
+        'os_total'       => (float)$rows->sum('os_total'),
+        'os_belum_visit' => (float)$rows->sum('os_belum_visit'),
+        'lt_noa'         => (int)$rows->sum('lt_noa'),
+        'dpk_noa'        => (int)$rows->sum('dpk_noa'),
+    ];
+
+    $performance = [
+        'visit_today'          => (int)$rows->sum('visit_today'),
+        'visit_week'           => (int)$rows->sum('visit_week'),
+        'visit_mtd'            => (int)$rows->sum('visit_mtd'),
+        'visit_ytd'            => (int)$rows->sum('visit_ytd'),
+        'avg_visit_per_ro'     => $roCount > 0
+            ? round($rows->sum('visit_mtd') / $roCount, 2)
+            : 0,
+        'plan_today'           => (int)$rows->sum('plan_today'),
+        'plan_realization_pct' => $rows->sum('plan_today') > 0
+            ? round(($rows->sum('visit_today') / $rows->sum('plan_today')) * 100, 2)
+            : 0,
+    ];
+
+    \Log::info('VISIT COVERAGE DEBUG FINAL', [
+        'portfolio_count'  => $portfolio->count(),
+        'visit_rows_range' => $visitRowsRange->count(),
+        'visit_rows_ytd'   => $visitRowsYtd->count(),
+        'visit_map'        => count($visitMap),
+        'summary'          => $summary,
+        'performance'      => $performance,
+        'rows_count'       => $rows->count(),
+        'rows_sample'      => $rows->take(4)->values()->all(),
+    ]);
+
+    return [
+        'summary'     => $summary,
+        'performance' => $performance,
+        'rows'        => $rows,
+    ];
+}
 
     private function buildVisitDisciplineSummary(array $scopeAoCodes, string $from, string $to, ?string $aoFilter = null)
     {
