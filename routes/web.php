@@ -121,6 +121,11 @@ use App\Http\Controllers\Kpi\RoTopupAdjustmentController;
 use App\Http\Controllers\Kpi\KpiSummaryController;
 use App\Http\Controllers\Kpi\TlfeOsDailyDashboardController;
 
+use App\Http\Controllers\Dashboard\DekonDashboardController;
+
+
+
+
 /**
  * =======================================================
  * Model binding
@@ -934,6 +939,10 @@ Route::middleware('auth')->group(function () {
     // NPL assessment
     Route::post('/cases/{case}/assessment', [NplCaseAssessmentController::class, 'store'])
         ->name('cases.assessment.store');
+
+    Route::get('/dashboard/dekom', [DekonDashboardController::class, 'index'])
+    ->name('dashboard.dekom.index');
+
 });
 
 /**

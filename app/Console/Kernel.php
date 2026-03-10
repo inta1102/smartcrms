@@ -31,6 +31,7 @@ class Kernel extends ConsoleKernel
         \App\Console\Commands\KpiRoRealtime::class,
         \App\Console\Commands\KpiRoLock::class,
         \App\Console\Commands\KpiVisitDailySnapshot::class,
+        \App\Console\Commands\BuildDekonDashboard::class,
     ];
 
     protected function schedule(Schedule $schedule): void

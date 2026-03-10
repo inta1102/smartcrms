@@ -31,6 +31,60 @@
 
     return '<span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Low</span>';
   };
+
+  $todayDate     = now()->startOfDay()->toDateString();
+  $tomorrowDate  = now()->copy()->addDay()->startOfDay()->toDateString();
+  $plus2Date     = now()->copy()->addDays(2)->startOfDay()->toDateString();
+
+  $dueHighlight = $dueHighlight ?? function($maturityDate) use ($todayDate, $tomorrowDate, $plus2Date) {
+    if (empty($maturityDate)) {
+      return [
+        'rowClass'  => '',
+        'cellClass' => '',
+        'badge'     => '',
+      ];
+    }
+
+    try {
+      $dueDate = \Carbon\Carbon::parse($maturityDate)->startOfDay()->toDateString();
+
+      if ($dueDate === $todayDate) {
+        return [
+          'rowClass'  => 'bg-rose-100',
+          'cellClass' => 'bg-rose-100 text-rose-900',
+          'badge'     => '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold bg-rose-600 text-white">Hari Ini</span>',
+        ];
+      }
+
+      if ($dueDate === $tomorrowDate) {
+        return [
+          'rowClass'  => 'bg-orange-100',
+          'cellClass' => 'bg-orange-100 text-orange-900',
+          'badge'     => '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold bg-orange-500 text-white">H-1</span>',
+        ];
+      }
+
+      if ($dueDate === $plus2Date) {
+        return [
+          'rowClass'  => 'bg-yellow-100',
+          'cellClass' => 'bg-yellow-100 text-yellow-900',
+          'badge'     => '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold bg-yellow-400 text-yellow-900">H-2</span>',
+        ];
+      }
+
+      return [
+        'rowClass'  => '',
+        'cellClass' => '',
+        'badge'     => '',
+      ];
+    } catch (\Throwable $e) {
+      return [
+        'rowClass'  => '',
+        'cellClass' => '',
+        'badge'     => '',
+      ];
+    }
+  };
 @endphp
 
 <div class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
@@ -38,6 +92,18 @@
     <div class="font-bold text-slate-900">Debitur Jatuh Tempo – {{ $dueMonthLabel ?? now()->translatedFormat('F Y') }}</div>
     <div class="text-xs text-slate-500 mt-1">
       Sumber: maturity_date (tgl_jto). Scope mengikuti bawahan TL.
+    </div>
+
+    <div class="mt-3 flex flex-wrap gap-2 text-xs">
+      <span class="inline-flex items-center rounded-full px-2.5 py-1 font-semibold bg-rose-100 text-rose-800 border border-rose-200">
+        Merah = Jatuh tempo hari ini
+      </span>
+      <span class="inline-flex items-center rounded-full px-2.5 py-1 font-semibold bg-orange-100 text-orange-800 border border-orange-200">
+        Oranye = H-1
+      </span>
+      <span class="inline-flex items-center rounded-full px-2.5 py-1 font-semibold bg-yellow-100 text-yellow-800 border border-yellow-200">
+        Kuning = H-2
+      </span>
     </div>
   </div>
 
@@ -59,6 +125,7 @@
           <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
         </tr>
       </thead>
+
       <tbody class="divide-y divide-slate-200">
         @forelse(($dueThisMonth ?? []) as $r)
           @php
@@ -75,28 +142,43 @@
             $ao  = (string)($r->ao_code ?? '');
             $os  = (int)($r->outstanding ?? 0);
 
-            $rowEmphasis = ($os >= (int)($bigThreshold ?? 500000000) || (int)($r->dpd ?? 0) >= 8)
+            $baseEmphasis = ($os >= (int)($bigThreshold ?? 500000000) || (int)($r->dpd ?? 0) >= 8)
               ? 'bg-amber-50/30'
               : '';
+
+            $dueUi = $dueHighlight($r->maturity_date ?? null);
+
+            // warna jatuh tempo lebih prioritas
+            $cellBgClass = $dueUi['cellClass'] ?: $baseEmphasis;
           @endphp
 
-          <tr class="{{ $rowEmphasis }}">
-            <td class="px-3 py-2 whitespace-nowrap">
-              {{ !empty($r->maturity_date) ? \Carbon\Carbon::parse($r->maturity_date)->format('d/m/Y') : '-' }}
+          <tr>
+            <td class="px-3 py-2 whitespace-nowrap {{ $cellBgClass }}">
+              <div class="flex items-center gap-2">
+                <span class="{{ !empty($dueUi['cellClass']) ? 'font-bold' : '' }}">
+                  {{ !empty($r->maturity_date) ? \Carbon\Carbon::parse($r->maturity_date)->format('d/m/Y') : '-' }}
+                </span>
+                @if(!empty($dueUi['badge']))
+                  {!! $dueUi['badge'] !!}
+                @endif
+              </div>
             </td>
-            <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
-            <td class="px-3 py-2 font-mono">{{ $r->ao_code ?? '-' }}</td>
-            <td class="px-3 py-2 text-right">Rp {{ number_format($os,0,',','.') }}</td>
-            <td class="px-3 py-2 text-right">{{ (int)($r->dpd ?? 0) }}</td>
-            <td class="px-3 py-2 text-right">{{ $r->kolek ?? '-' }}</td>
-            <td class="px-3 py-2 whitespace-nowrap">{!! $riskBadge($r->dpd ?? 0, $r->kolek ?? '-', false) !!}</td>
-            <td class="px-3 py-2 whitespace-nowrap">{{ $lastVisit }}</td>
-            <td class="px-4 py-3 text-sm text-slate-700">
-                <div title="{{ $r->hasil_kunjungan ?? '-' }}">
-                    {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
-                </div>
+
+            <td class="px-3 py-2 {{ $cellBgClass }}">{{ $r->customer_name ?? '-' }}</td>
+            <td class="px-3 py-2 font-mono {{ $cellBgClass }}">{{ $r->ao_code ?? '-' }}</td>
+            <td class="px-3 py-2 text-right {{ $cellBgClass }}">Rp {{ number_format($os,0,',','.') }}</td>
+            <td class="px-3 py-2 text-right {{ $cellBgClass }}">{{ (int)($r->dpd ?? 0) }}</td>
+            <td class="px-3 py-2 text-right {{ $cellBgClass }}">{{ $r->kolek ?? '-' }}</td>
+            <td class="px-3 py-2 whitespace-nowrap {{ $cellBgClass }}">{!! $riskBadge($r->dpd ?? 0, $r->kolek ?? '-', false) !!}</td>
+            <td class="px-3 py-2 whitespace-nowrap {{ $cellBgClass }}">{{ $lastVisit }}</td>
+
+            <td class="px-4 py-3 text-sm text-slate-700 {{ $cellBgClass }}">
+              <div title="{{ $r->hasil_kunjungan ?? '-' }}">
+                {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
+              </div>
             </td>
-            <td class="px-3 py-2 text-right whitespace-nowrap">
+
+            <td class="px-3 py-2 text-right whitespace-nowrap {{ $cellBgClass }}">
               @if($age === null)
                 <span class="text-slate-400">-</span>
               @else
@@ -105,7 +187,8 @@
                 </span>
               @endif
             </td>
-            <td class="px-3 py-2 text-center whitespace-nowrap">
+
+            <td class="px-3 py-2 text-center whitespace-nowrap {{ $cellBgClass }}">
               @if($isDone)
                 <span class="inline-flex items-center rounded-full px-2.5 py-1 text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">Done</span>
               @else
@@ -118,13 +201,14 @@
                 </button>
               @endif
             </td>
-            <td class="px-3 py-2 whitespace-nowrap">
+
+            <td class="px-3 py-2 whitespace-nowrap {{ $cellBgClass }}">
               <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
             </td>
           </tr>
         @empty
           <tr>
-            <td colspan="11" class="px-3 py-6 text-center text-slate-500">
+            <td colspan="12" class="px-3 py-6 text-center text-slate-500">
               Belum ada data jatuh tempo bulan ini.
             </td>
           </tr>

@@ -858,6 +858,56 @@
   {{-- ===========================
     1) JT bulan ini
     =========================== --}}
+  @php
+    $todayDate    = now()->startOfDay()->toDateString();
+    $tomorrowDate = now()->copy()->addDay()->startOfDay()->toDateString();
+    $plus2Date    = now()->copy()->addDays(2)->startOfDay()->toDateString();
+
+    $dueHighlight = $dueHighlight ?? function ($maturityDate) use ($todayDate, $tomorrowDate, $plus2Date) {
+      if (empty($maturityDate)) {
+        return [
+          'cellClass' => '',
+          'badge'     => '',
+        ];
+      }
+
+      try {
+        $dueDate = \Carbon\Carbon::parse($maturityDate)->startOfDay()->toDateString();
+
+        if ($dueDate === $todayDate) {
+          return [
+            'cellClass' => 'bg-rose-100 text-rose-900',
+            'badge'     => '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold bg-rose-600 text-white">Hari Ini</span>',
+          ];
+        }
+
+        if ($dueDate === $tomorrowDate) {
+          return [
+            'cellClass' => 'bg-orange-100 text-orange-900',
+            'badge'     => '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold bg-orange-500 text-white">H-1</span>',
+          ];
+        }
+
+        if ($dueDate === $plus2Date) {
+          return [
+            'cellClass' => 'bg-yellow-100 text-yellow-900',
+            'badge'     => '<span class="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-bold bg-yellow-400 text-yellow-900">H-2</span>',
+          ];
+        }
+
+        return [
+          'cellClass' => '',
+          'badge'     => '',
+        ];
+      } catch (\Throwable $e) {
+        return [
+          'cellClass' => '',
+          'badge'     => '',
+        ];
+      }
+    };
+  @endphp
+
   <div class="rounded-2xl border border-slate-200 bg-white overflow-hidden">
     <div class="p-3 sm:p-4 border-b border-slate-200">
       <div class="font-bold text-slate-900 text-sm sm:text-base">
@@ -865,6 +915,18 @@
       </div>
       <div class="text-[11px] sm:text-xs text-slate-500 mt-1">
         Sumber: maturity_date (tgl_jto). Scope RO sendiri.
+      </div>
+
+      <div class="mt-3 flex flex-wrap gap-2 text-[11px] sm:text-xs">
+        <span class="inline-flex items-center rounded-full px-2.5 py-1 font-semibold bg-rose-100 text-rose-800 border border-rose-200">
+          Merah = Jatuh tempo hari ini
+        </span>
+        <span class="inline-flex items-center rounded-full px-2.5 py-1 font-semibold bg-orange-100 text-orange-800 border border-orange-200">
+          Oranye = H-1
+        </span>
+        <span class="inline-flex items-center rounded-full px-2.5 py-1 font-semibold bg-yellow-100 text-yellow-800 border border-yellow-200">
+          Kuning = H-2
+        </span>
       </div>
     </div>
 
@@ -886,72 +948,89 @@
             <th class="text-left px-3 py-2 whitespace-nowrap">Tgl Plan Visit</th>
           </tr>
         </thead>
+
         <tbody class="divide-y divide-slate-200">
           @forelse(($dueThisMonth ?? []) as $r)
             @php
-              $plannedToday = (int)($r->planned_today ?? 0) === 1;
+              $plannedToday     = (int)($r->planned_today ?? 0) === 1;
               $planVisitDateRaw = $r->plan_visit_date ?? null;
-              $planVisit = !empty($planVisitDateRaw) ? \Carbon\Carbon::parse($planVisitDateRaw)->format('d/m/Y') : '-';
-              $acc = (string)($r->account_no ?? '');
-              $locked = (string)($r->plan_status ?? '') === 'done';
+              $planVisit        = !empty($planVisitDateRaw) ? \Carbon\Carbon::parse($planVisitDateRaw)->format('d/m/Y') : '-';
+
+              $acc        = trim((string)($r->account_no ?? ''));
+              $planStatus = strtolower(trim((string)($r->plan_status ?? '')));
+              $locked     = ($planStatus === 'done' || $plannedToday);
+
+              $lastVisitAt = $r->last_visit_at ?? null;
+              $ageDays = null;
+              if ($lastVisitAt) {
+                try {
+                  $ageDays = \Carbon\Carbon::parse($lastVisitAt)->diffInDays(now());
+                } catch (\Throwable $e) {
+                  $ageDays = null;
+                }
+              }
 
               $prog = $progressText($r);
               $progClass = $progressBadgeClass((string)$prog);
-            @endphp
-            <tr>
-              <td class="px-3 py-2 whitespace-nowrap">{{ \Carbon\Carbon::parse($r->maturity_date)->format('d/m/Y') }}</td>
-              <td class="px-3 py-2 font-mono whitespace-nowrap">{{ $r->account_no ?? '-' }}</td>
-              <td class="px-3 py-2">{{ $r->customer_name ?? '-' }}</td>
-              <td class="px-3 py-2 text-right whitespace-nowrap">Rp {{ number_format((int)($r->outstanding ?? 0),0,',','.') }}</td>
-              <td class="px-3 py-2 text-right whitespace-nowrap">{{ (int)($r->dpd ?? 0) }}</td>
-              <td class="px-3 py-2 text-right whitespace-nowrap">{{ $r->kolek ?? '-' }}</td>
 
-              <td class="px-3 py-2 text-center whitespace-nowrap">
+              $dueUi = $dueHighlight($r->maturity_date ?? null);
+              $cellBgClass = $dueUi['cellClass'];
+              $isPlanned = $plannedToday;
+            @endphp
+
+            <tr>
+              <td class="px-3 py-2 whitespace-nowrap {{ $cellBgClass }}">
+                <div class="flex items-center gap-2">
+                  <span class="{{ !empty($cellBgClass) ? 'font-bold' : '' }}">
+                    {{ !empty($r->maturity_date) ? \Carbon\Carbon::parse($r->maturity_date)->format('d/m/Y') : '-' }}
+                  </span>
+                  @if(!empty($dueUi['badge']))
+                    {!! $dueUi['badge'] !!}
+                  @endif
+                </div>
+              </td>
+
+              <td class="px-3 py-2 font-mono whitespace-nowrap {{ $cellBgClass }}">
+                {{ $r->account_no ?? '-' }}
+              </td>
+
+              <td class="px-3 py-2 {{ $cellBgClass }}">
+                {{ $r->customer_name ?? '-' }}
+              </td>
+
+              <td class="px-3 py-2 text-right whitespace-nowrap {{ $cellBgClass }}">
+                Rp {{ number_format((int)($r->outstanding ?? 0),0,',','.') }}
+              </td>
+
+              <td class="px-3 py-2 text-right whitespace-nowrap {{ $cellBgClass }}">
+                {{ (int)($r->dpd ?? 0) }}
+              </td>
+
+              <td class="px-3 py-2 text-right whitespace-nowrap {{ $cellBgClass }}">
+                {{ $r->kolek ?? '-' }}
+              </td>
+
+              <td class="px-3 py-2 text-center whitespace-nowrap {{ $cellBgClass }}">
                 <span class="inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-bold {{ $progClass }}">
                   {{ $prog }}
                 </span>
               </td>
 
-              @php
-                $plannedToday = (int)($r->planned_today ?? 0) === 1;
-                $planVisitDateRaw = $r->plan_visit_date ?? null;
-                $planVisit = !empty($planVisitDateRaw) ? \Carbon\Carbon::parse($planVisitDateRaw)->format('d/m/Y') : '-';
-
-                $acc = (string)($r->account_no ?? '');
-
-                $planStatus = strtolower(trim((string)($r->plan_status ?? '')));
-                $locked = ($planStatus === 'done' || $plannedToday);
-
-                $lastVisitAt = $r->last_visit_at ?? null;
-                $ageDays = null;
-                if ($lastVisitAt) {
-                  try { $ageDays = \Carbon\Carbon::parse($lastVisitAt)->diffInDays(now()); } catch (\Throwable $e) {}
-                }
-
-                $prog = $progressText($r);
-                $progClass = $progressBadgeClass((string)$prog);
-              @endphp
-
-              <td class="px-3 py-2 text-center whitespace-nowrap">
+              <td class="px-3 py-2 text-center whitespace-nowrap {{ $cellBgClass }}">
                 {{ $lastVisitAt ? \Carbon\Carbon::parse($lastVisitAt)->format('d/m/Y') : '-' }}
               </td>
-              
-               <td class="px-3 py-2 text-sm">
-                  <div title="{{ $r->hasil_kunjungan ?? '-' }}">
-                      {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
-                  </div>
+
+              <td class="px-3 py-2 text-sm {{ $cellBgClass }}">
+                <div title="{{ $r->hasil_kunjungan ?? '-' }}">
+                  {{ \Illuminate\Support\Str::limit($r->hasil_kunjungan ?? '-', 60) }}
+                </div>
               </td>
 
-              <td class="px-3 py-2 text-center whitespace-nowrap">
-                {{ is_null($ageDays) ? '-' : (floor($ageDays).' hari') }}
+              <td class="px-3 py-2 text-center whitespace-nowrap {{ $cellBgClass }}">
+                {{ is_null($ageDays) ? '-' : (floor($ageDays) . ' hari') }}
               </td>
 
-              <td class="px-3 py-2 text-center whitespace-nowrap">
-                 @php
-                  $isPlanned = (int)($plannedToday ?? 0) === 1;
-                  $acc = trim((string)($r->account_no ?? ''));
-                @endphp
-
+              <td class="px-3 py-2 text-center whitespace-nowrap {{ $cellBgClass }}">
                 <button
                   type="button"
                   class="ro-plan-today-btn inline-flex items-center justify-center rounded-full px-4 py-2 text-xs font-bold border
@@ -964,13 +1043,15 @@
                 </button>
               </td>
 
-              <td class="px-3 py-2 whitespace-nowrap">
+              <td class="px-3 py-2 whitespace-nowrap {{ $cellBgClass }}">
                 <span class="ro-plan-date" data-account="{{ $acc }}">{{ $planVisit }}</span>
               </td>
             </tr>
           @empty
             <tr>
-              <td colspan="10" class="px-3 py-6 text-center text-slate-500">Tidak ada JT bulan ini.</td>
+              <td colspan="12" class="px-3 py-6 text-center text-slate-500">
+                Tidak ada JT bulan ini.
+              </td>
             </tr>
           @endforelse
         </tbody>

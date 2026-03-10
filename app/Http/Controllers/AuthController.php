@@ -86,7 +86,7 @@ class AuthController extends Controller
 
         // 1) Executive dulu
         if ((method_exists($user, 'hasAnyRole') && $user->hasAnyRole(['DIR', 'KOM'])) || in_array($role, ['DIR','KOM'], true)) {
-            return 'executive.targets.index';
+            return 'dashboard.dekom.index';
         }
 
         // 2) BE khusus legal
