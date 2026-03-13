@@ -332,8 +332,11 @@ class DekomCreditConditionBuilderService
 
     protected function isRestructured(object $row): bool
     {
-        return (int) ($row->is_restructured ?? 0) === 1
-            || !empty($row->last_restructure_date ?? null);
+        $isRestructured = (int) ($row->is_restructured ?? 0) === 1;
+        $restructureFreq = (int) ($row->restructure_freq ?? 0) > 0;
+        $hasRestructureDate = !empty($row->last_restructure_date ?? null);
+
+        return $isRestructured || $restructureFreq || $hasRestructureDate;
     }
 
     protected function isCurrentMonth(Carbon $period): bool

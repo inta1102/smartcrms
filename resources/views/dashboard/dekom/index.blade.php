@@ -92,14 +92,17 @@
             'creditCondition' => $creditCondition ?? [],
         ])
 
-        {{-- 2. Insight eksekutif --}}
+
+        <!-- {{-- 2. Insight eksekutif --}}
         @include('dashboard.dekom.partials._risk_radar', [
             'riskRadar' => $riskRadar ?? [],
         ])
 
         @include('dashboard.dekom.partials._executive_narrative', [
             'executiveNarrative' => $executiveNarrative ?? '',
-        ])
+        ]) -->
+
+        @include('dashboard.dekom.partials._chart_target_achievement')
 
         {{-- 3. Grafik utama --}}
         @include('dashboard.dekom.partials._charts_main')

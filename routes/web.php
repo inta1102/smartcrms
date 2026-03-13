@@ -122,7 +122,7 @@ use App\Http\Controllers\Kpi\KpiSummaryController;
 use App\Http\Controllers\Kpi\TlfeOsDailyDashboardController;
 
 use App\Http\Controllers\Dashboard\DekonDashboardController;
-
+use App\Http\Controllers\Dashboard\DekonTargetController;
 
 
 
@@ -1126,3 +1126,9 @@ Route::middleware(['auth', 'can:recalcMarketingKpi'])->group(function () {
         ->name('kpi.marketing.ranking.recalc');
 });
 
+
+
+Route::prefix('dashboard/dekom/targets')->name('dashboard.dekom.targets.')->group(function () {
+    Route::get('/', [DekonTargetController::class, 'index'])->name('index');
+    Route::post('/', [DekonTargetController::class, 'store'])->name('store');
+});

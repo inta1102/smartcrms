@@ -35,8 +35,11 @@
                 <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5">
                     Periode
                 </label>
-                <select name="period"
-                        class="w-full rounded-2xl border-slate-300 text-sm font-medium focus:border-slate-400 focus:ring-slate-400">
+                <select
+                    name="period"
+                    id="period-select"
+                    class="w-full rounded-2xl border-slate-300 text-sm font-medium focus:border-slate-400 focus:ring-slate-400"
+                >
                     @forelse($availablePeriods as $p)
                         <option value="{{ $p }}" @selected($p === $period)>{{ $p }}</option>
                     @empty
@@ -49,11 +52,14 @@
                 <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1.5">
                     Mode
                 </label>
-                <select name="mode"
-                        class="w-full rounded-2xl border-slate-300 text-sm font-medium focus:border-slate-400 focus:ring-slate-400">
-                    <option value="eom" @selected($mode==='eom')>EOM</option>
-                    <option value="realtime" @selected($mode==='realtime')>Realtime</option>
-                    <option value="hybrid" @selected($mode==='hybrid')>Hybrid</option>
+                <select
+                    name="mode"
+                    id="mode-select"
+                    class="w-full rounded-2xl border-slate-300 text-sm font-medium focus:border-slate-400 focus:ring-slate-400"
+                >
+                    <option value="eom" @selected($mode === 'eom')>EOM</option>
+                    <option value="realtime" @selected($mode === 'realtime')>Realtime</option>
+                    <option value="hybrid" @selected($mode === 'hybrid')>Hybrid</option>
                 </select>
             </div>
 
@@ -66,3 +72,32 @@
         </form>
     </div>
 </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const periodEl = document.getElementById('period-select');
+    const modeEl = document.getElementById('mode-select');
+
+    if (!periodEl || !modeEl) return;
+
+    function currentYm() {
+        const now = new Date();
+        const y = now.getFullYear();
+        const m = String(now.getMonth() + 1).padStart(2, '0');
+        return `${y}-${m}`;
+    }
+
+    function autoAdjustMode() {
+        const selectedPeriod = periodEl.value;
+        const currentPeriod = currentYm();
+
+        // default otomatis:
+        // - bulan berjalan => realtime
+        // - bulan lampau   => eom
+        // hybrid tetap bisa dipilih manual, tapi tidak dijadikan auto default
+        modeEl.value = (selectedPeriod === currentPeriod) ? 'realtime' : 'eom';
+    }
+
+    periodEl.addEventListener('change', autoAdjustMode);
+});
+</script>

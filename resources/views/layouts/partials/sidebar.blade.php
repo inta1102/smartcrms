@@ -304,7 +304,7 @@
     // default dashboard route
     $dashboardRouteName = 'lending.performance.index';
     if ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['KOM', 'DIR', 'DIREKSI'])) {
-        $dashboardRouteName = 'executive.targets.index';
+        $dashboardRouteName = 'dashboard.dekom.index';
     } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['BE'])) {
         $dashboardRouteName = 'legal-actions.index';
     } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['RO'])) {
@@ -479,7 +479,7 @@
 
 
         // ================= SUPERVISI =================
-        'supervisi' => ($isSupervisor || $isPimpinan) && !$isBE ? [
+        'supervisi' => ($isSupervisor) && !$isPimpinan && !$isBE ? [
             [
                 'label'  => 'Dashboard Supervisi',
                 'icon'   => '🧭',
@@ -767,6 +767,12 @@
                 'icon'   => '🎯',
                 'href'   => route('kti.targets.index'),
                 'active' => $is('kti.targets.index.*'),
+            ],
+            [
+                'label'  => 'Input Target Dekom',
+                'icon'   => '🎯',
+                'href'   => route('dashboard.dekom.targets.index'),
+                'active' => $is('dashboard.dekom.targets.index.*'),
             ],
             [
                 'label'  => 'KPI Thresholds',

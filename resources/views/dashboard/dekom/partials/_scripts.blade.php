@@ -4,19 +4,48 @@
     const trendLabels = @json($trendLabels ?? []);
     const trendTotalOs = @json($trendTotalOs ?? []);
     const trendNplPct = @json($trendNplPct ?? []);
+    const trendNplTarget = @json($trendNplTarget ?? []);
     const trendKolek = @json($trendKolek ?? []);
     const trendFt = @json($trendFt ?? []);
     const trendTargetActual = @json($trendTargetActual ?? ['target_ytd' => [], 'actual_ytd' => []]);
-
-    const moneyTick = (value) => {
-        const n = Number(value || 0);
-        if (Math.abs(n) >= 1_000_000_000_000) return (n / 1_000_000_000_000).toFixed(1) + ' T';
-        if (Math.abs(n) >= 1_000_000_000) return (n / 1_000_000_000).toFixed(1) + ' M';
-        if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(1) + ' Jt';
-        return n.toLocaleString('id-ID');
-    };
-
     const portfolioComposition = {{ \Illuminate\Support\Js::from($portfolioComposition ?? ['labels' => [], 'values' => []]) }};
+    const targetAchievement = @json($targetAchievement ?? []);
+
+    function compactMoney(value) {
+        const n = Number(value || 0);
+        const abs = Math.abs(n);
+
+        if (abs >= 1_000_000_000_000) {
+            const v = n / 1_000_000_000_000;
+            return (Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)) + 'T';
+        }
+
+        // M = Miliar
+        if (abs >= 1_000_000_000) {
+            const v = n / 1_000_000_000;
+            return (Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)) + 'M';
+        }
+
+        if (abs >= 1_000_000) {
+            const v = n / 1_000_000;
+            return (Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)) + 'Jt';
+        }
+
+        if (abs >= 1_000) {
+            const v = n / 1_000;
+            return (Number.isInteger(v) ? v.toFixed(0) : v.toFixed(1)) + 'Rb';
+        }
+
+        return n.toLocaleString('id-ID');
+    }
+
+    function fullMoney(value) {
+        return Number(value || 0).toLocaleString('id-ID');
+    }
+
+    function percentTick(value) {
+        return Number(value || 0).toLocaleString('id-ID') + '%';
+    }
 
     const baseOptions = {
         responsive: true,
@@ -49,9 +78,23 @@
             },
             options: {
                 ...baseOptions,
+                plugins: {
+                    ...baseOptions.plugins,
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return `${context.dataset.label}: ${compactMoney(context.raw)} (${fullMoney(context.raw)})`;
+                            }
+                        }
+                    }
+                },
                 scales: {
                     y: {
-                        ticks: { callback: moneyTick }
+                        ticks: {
+                            callback: function(value) {
+                                return compactMoney(value);
+                            }
+                        }
                     }
                 }
             }
@@ -81,10 +124,12 @@
                     },
                     {
                         label: 'Target NPL',
-                        data: trendLabels.map(() => 5),
+                        data: trendNplTarget ?? [],
                         borderColor: '#f59e0b',
+                        backgroundColor: '#f59e0b',
                         borderDash: [6, 6],
-                        pointRadius: 0,
+                        pointRadius: 3,
+                        pointHoverRadius: 4,
                         borderWidth: 2,
                         fill: false
                     }
@@ -92,10 +137,22 @@
             },
             options: {
                 ...baseOptions,
+                plugins: {
+                    ...baseOptions.plugins,
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return `${context.dataset.label}: ${Number(context.raw || 0).toLocaleString('id-ID')}%`;
+                            }
+                        }
+                    }
+                },
                 scales: {
                     y: {
+                        min: 0,
+                        max: 30,
                         ticks: {
-                            callback: (value) => Number(value || 0).toLocaleString('id-ID') + '%'
+                            callback: percentTick
                         }
                     }
                 }
@@ -128,9 +185,23 @@
             },
             options: {
                 ...baseOptions,
+                plugins: {
+                    ...baseOptions.plugins,
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return `${context.dataset.label}: ${compactMoney(context.raw)} (${fullMoney(context.raw)})`;
+                            }
+                        }
+                    }
+                },
                 scales: {
                     y: {
-                        ticks: { callback: moneyTick }
+                        ticks: {
+                            callback: function(value) {
+                                return compactMoney(value);
+                            }
+                        }
                     }
                 }
             }
@@ -153,11 +224,25 @@
             },
             options: {
                 ...baseOptions,
+                plugins: {
+                    ...baseOptions.plugins,
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return `${context.dataset.label}: ${compactMoney(context.raw)} (${fullMoney(context.raw)})`;
+                            }
+                        }
+                    }
+                },
                 scales: {
                     x: { stacked: true },
                     y: {
                         stacked: true,
-                        ticks: { callback: moneyTick }
+                        ticks: {
+                            callback: function(value) {
+                                return compactMoney(value);
+                            }
+                        }
                     }
                 }
             }
@@ -179,11 +264,25 @@
             },
             options: {
                 ...baseOptions,
+                plugins: {
+                    ...baseOptions.plugins,
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return `${context.dataset.label}: ${compactMoney(context.raw)} (${fullMoney(context.raw)})`;
+                            }
+                        }
+                    }
+                },
                 scales: {
                     x: { stacked: true },
                     y: {
                         stacked: true,
-                        ticks: { callback: moneyTick }
+                        ticks: {
+                            callback: function(value) {
+                                return compactMoney(value);
+                            }
+                        }
                     }
                 }
             }
@@ -196,8 +295,8 @@
             type: 'doughnut',
             data: {
                 labels: portfolioComposition.labels ?? [],
-               datasets: [{
-                    data: portfolioComposition.values,
+                datasets: [{
+                    data: portfolioComposition.values ?? [],
                     backgroundColor: [
                         '#60a87d', // L
                         '#facc15', // DPK
@@ -205,7 +304,6 @@
                         '#ef4444', // D
                         '#7f1d1d'  // M
                     ],
-                
                     borderColor: '#ffffff',
                     borderWidth: 2,
                     hoverOffset: 6
@@ -221,10 +319,113 @@
                         labels: {
                             boxWidth: 12
                         }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const label = context.label || '';
+                                const val = context.raw || 0;
+                                return `${label}: ${compactMoney(val)} (${fullMoney(val)})`;
+                            }
+                        }
                     }
                 }
             }
         });
     }
+
+    function buildBarLineChart(el, labels, actual, target, actualLabel, targetLabel, valueType = 'money') {
+        const canvas = document.getElementById(el);
+        if (!canvas) return;
+
+        const isPercent = valueType === 'percent';
+
+        new Chart(canvas, {
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: actualLabel,
+                        data: actual,
+                        borderWidth: 1,
+                        backgroundColor: 'rgba(96, 165, 250, 0.55)',
+                        borderColor: '#60a5fa',
+                    },
+                    {
+                        type: 'line',
+                        label: targetLabel,
+                        data: target,
+                        tension: 0.25,
+                        fill: false,
+                        borderWidth: 2,
+                        backgroundColor: '#fb7185',
+                        borderColor: '#fb7185',
+                        pointRadius: 4,
+                        pointHoverRadius: 5,
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                if (isPercent) {
+                                    return `${context.dataset.label}: ${Number(context.raw || 0).toLocaleString('id-ID')}%`;
+                                }
+
+                                return `${context.dataset.label}: ${compactMoney(context.raw)} (${fullMoney(context.raw)})`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            callback: function(value) {
+                                return isPercent ? percentTick(value) : compactMoney(value);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    buildBarLineChart(
+        'chartDisbursementVsTarget',
+        targetAchievement.labels ?? [],
+        targetAchievement.disbursement_actual ?? [],
+        targetAchievement.disbursement_target ?? [],
+        'Realisasi Pencairan',
+        'Target Pencairan',
+        'money'
+    );
+
+    buildBarLineChart(
+        'chartOsVsTarget',
+        targetAchievement.labels ?? [],
+        targetAchievement.os_actual ?? [],
+        targetAchievement.os_target ?? [],
+        'Aktual OS',
+        'Target OS',
+        'money'
+    );
+
+    buildBarLineChart(
+        'chartNplVsTarget',
+        targetAchievement.labels ?? [],
+        targetAchievement.npl_actual ?? [],
+        targetAchievement.npl_target ?? [],
+        'Aktual NPL %',
+        'Target NPL %',
+        'percent'
+    );
 </script>
 @endpush
