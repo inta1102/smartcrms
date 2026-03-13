@@ -20,7 +20,7 @@ class SnapshotMonthlyLoanAccounts extends Command
     {
         $monthOpt        = $this->option('month');
         $positionDateOpt = $this->option('position_date');
-        $force           = (bool)$this->option('force');
+        $force           = (bool) $this->option('force');
 
         // 1) Tentukan source position_date
         $sourcePositionDate = $positionDateOpt ?: LoanAccount::query()
@@ -82,6 +82,11 @@ class SnapshotMonthlyLoanAccounts extends Command
                 'kolek',
                 'ft_pokok',
                 'ft_bunga',
+
+                // tambahan restruktur
+                'is_restructured',
+                'restructure_freq',
+                'last_restructure_date',
             ])
             ->chunkById(500, function ($rows) use ($snapshotMonth, $sourceCarbon, $bar) {
                 $payload = [];
@@ -98,8 +103,14 @@ class SnapshotMonthlyLoanAccounts extends Command
                         'outstanding'          => $r->outstanding ?? 0,
                         'dpd'                  => $r->dpd ?? 0,
                         'kolek'                => $r->kolek ?? null,
-                        'ft_pokok'             => (int)($r->ft_pokok ?? 0),
-                        'ft_bunga'             => (int)($r->ft_bunga ?? 0),
+                        'ft_pokok'             => (int) ($r->ft_pokok ?? 0),
+                        'ft_bunga'             => (int) ($r->ft_bunga ?? 0),
+
+                        // tambahan restruktur
+                        'is_restructured'      => (int) ($r->is_restructured ?? 0),
+                        'restructure_freq'     => (int) ($r->restructure_freq ?? 0),
+                        'last_restructure_date'=> $r->last_restructure_date ?? null,
+
                         'source_position_date' => $sourceCarbon->toDateString(),
                         'created_at'           => $now,
                         'updated_at'           => $now,

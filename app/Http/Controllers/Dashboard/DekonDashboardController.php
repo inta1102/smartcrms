@@ -3,11 +3,14 @@
 namespace App\Http\Controllers\Dashboard;
 
 use App\Http\Controllers\Controller;
+use App\Models\DashboardDekomMovement;
 use App\Models\DashboardDekomSnapshot;
+use App\Services\Dashboard\DekomCreditConditionBuilderService;
+use App\Services\Dashboard\DekonExecutiveNarrativeService;
+use App\Services\Dashboard\DekonRiskRadarService;
+use App\Services\Dashboard\DekonWaterfallBuilderService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
-use App\Services\Dashboard\DekonRiskRadarService;
-use App\Services\Dashboard\DekonExecutiveNarrativeService;
 
 class DekonDashboardController extends Controller
 {
@@ -15,8 +18,7 @@ class DekonDashboardController extends Controller
         Request $request,
         DekonRiskRadarService $riskRadar,
         DekonExecutiveNarrativeService $narrativeService
-    )
-    {
+    ) {
         $periodInput = trim((string) $request->get('period', now()->format('Y-m')));
         $mode = strtolower(trim((string) $request->get('mode', 'eom')));
 
@@ -25,35 +27,15 @@ class DekonDashboardController extends Controller
         }
 
         try {
-            $period = Carbon::createFromFormat('Y-m', $periodInput)->startOfMonth();
+            $selectedPeriod = Carbon::createFromFormat('Y-m', $periodInput)->startOfMonth();
         } catch (\Throwable $e) {
-            $period = now()->startOfMonth();
-            $periodInput = $period->format('Y-m');
+            $selectedPeriod = now()->startOfMonth();
+            $periodInput = $selectedPeriod->format('Y-m');
         }
 
-        $row = DashboardDekomSnapshot::query()
-            ->whereDate('period_month', $period->toDateString())
-            ->where('mode', $mode)
-            ->first();
-
-        if (!$row) {
-            $latest = DashboardDekomSnapshot::query()
-                ->where('mode', $mode)
-                ->orderByDesc('period_month')
-                ->first();
-
-            if ($latest) {
-                $row = $latest;
-                $period = Carbon::parse($latest->period_month)->startOfMonth();
-                $periodInput = $period->format('Y-m');
-            }
-        }
-
-        $trendRows = DashboardDekomSnapshot::query()
-            ->where('mode', $mode)
-            ->orderBy('period_month')
-            ->get();
-
+        // =========================================
+        // Available period list (untuk dropdown)
+        // =========================================
         $availablePeriods = DashboardDekomSnapshot::query()
             ->where('mode', $mode)
             ->orderByDesc('period_month')
@@ -61,20 +43,86 @@ class DekonDashboardController extends Controller
             ->map(fn ($d) => Carbon::parse($d)->format('Y-m'))
             ->values();
 
+        // =========================================
+        // Snapshot row harus mengikuti periode pilihan user
+        // TIDAK fallback ke latest, supaya dashboard benar-benar
+        // merefleksikan bulan yang dipilih
+        // =========================================
+        $row = DashboardDekomSnapshot::query()
+            ->whereDate('period_month', $selectedPeriod->toDateString())
+            ->where('mode', $mode)
+            ->first();
+
         $meta = is_array($row?->meta ?? null) ? $row->meta : [];
 
-        $selectedPeriod = $row?->period_month
-            ? Carbon::parse($row->period_month)->startOfMonth()
-            : $period->copy()->startOfMonth();
+        // =========================================
+        // Previous month row untuk insight / radar
+        // =========================================
+        $prevPeriod = $selectedPeriod->copy()->subMonthNoOverflow()->startOfMonth();
 
         $prevRow = DashboardDekomSnapshot::query()
             ->where('mode', $mode)
-            ->whereDate('period_month', $selectedPeriod->copy()->subMonthNoOverflow()->toDateString())
+            ->whereDate('period_month', $prevPeriod->toDateString())
             ->first();
 
+        // =========================================
+        // Trend rows dibatasi sampai periode pilihan
+        // supaya grafik tidak lewat dari bulan yang dipilih
+        // =========================================
+        $trendRows = DashboardDekomSnapshot::query()
+            ->where('mode', $mode)
+            ->whereDate('period_month', '<=', $selectedPeriod->toDateString())
+            ->orderBy('period_month')
+            ->get();
+
+        // =========================================
+        // Insight / risk / narrative
+        // =========================================
         $insights = $this->buildInsights($row, $prevRow);
         $riskRadarData = $riskRadar->evaluate($row, $prevRow);
         $executiveNarrative = $narrativeService->generate($row, $prevRow);
+
+        // =========================================
+        // Movement rows harus mengikuti periode pilihan,
+        // bukan latest row
+        // =========================================
+        $movementRows = DashboardDekomMovement::query()
+            ->whereDate('period_month', $selectedPeriod->toDateString())
+            ->where('mode', $mode)
+            ->orderBy('section')
+            ->orderBy('subgroup')
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get();
+
+        $movementSections = [
+            'npl_improvement' => $movementRows
+                ->where('section', 'npl_improvement')
+                ->values(),
+
+            'quality_improvement' => $movementRows
+                ->where('section', 'quality_improvement')
+                ->values(),
+
+            'quality_deterioration' => $movementRows
+                ->where('section', 'quality_deterioration')
+                ->values(),
+
+            'credit_activity' => $movementRows
+                ->where('section', 'credit_activity')
+                ->values(),
+        ];
+
+        // =========================================
+        // Builder section lain ikut selected period
+        // =========================================
+       
+
+        $waterfall = app(DekonWaterfallBuilderService::class)
+            ->build($selectedPeriod, $mode);
+
+        $creditCondition = app(DekomCreditConditionBuilderService::class)
+            ->build($selectedPeriod);
 
         $viewData = [
             'period' => $periodInput,
@@ -85,30 +133,63 @@ class DekonDashboardController extends Controller
             'insights' => $insights,
             'riskRadar' => $riskRadarData,
             'executiveNarrative' => $executiveNarrative,
+            'movementSections' => $movementSections,
+            'waterfall' => $waterfall,
+            'periodLabel' => $selectedPeriod->translatedFormat('F Y'),
+            'creditCondition' => $creditCondition,
 
-            'trendLabels' => $trendRows->map(fn ($r) => Carbon::parse($r->period_month)->format('M y'))->values(),
+            'trendLabels' => $trendRows
+                ->map(fn ($r) => Carbon::parse($r->period_month)->format('M y'))
+                ->values(),
 
-            'trendTotalOs' => $trendRows->map(fn ($r) => (float) $r->total_os)->values(),
-            'trendNplPct'  => $trendRows->map(fn ($r) => (float) $r->npl_pct)->values(),
+            'trendTotalOs' => $trendRows
+                ->map(fn ($r) => (float) $r->total_os)
+                ->values(),
+
+            'trendNplPct' => $trendRows
+                ->map(fn ($r) => (float) $r->npl_pct)
+                ->values(),
 
             'trendTargetActual' => [
-                'target_ytd' => $trendRows->map(fn ($r) => (float) $r->target_ytd)->values(),
-                'actual_ytd' => $trendRows->map(fn ($r) => (float) $r->realisasi_ytd)->values(),
+                'target_ytd' => $trendRows
+                    ->map(fn ($r) => (float) $r->target_ytd)
+                    ->values(),
+                'actual_ytd' => $trendRows
+                    ->map(fn ($r) => (float) $r->realisasi_ytd)
+                    ->values(),
             ],
 
             'trendKolek' => [
-                'l_os'   => $trendRows->map(fn ($r) => (float) $r->l_os)->values(),
-                'dpk_os' => $trendRows->map(fn ($r) => (float) $r->dpk_os)->values(),
-                'kl_os'  => $trendRows->map(fn ($r) => (float) $r->kl_os)->values(),
-                'd_os'   => $trendRows->map(fn ($r) => (float) $r->d_os)->values(),
-                'm_os'   => $trendRows->map(fn ($r) => (float) $r->m_os)->values(),
+                'l_os' => $trendRows
+                    ->map(fn ($r) => (float) $r->l_os)
+                    ->values(),
+                'dpk_os' => $trendRows
+                    ->map(fn ($r) => (float) $r->dpk_os)
+                    ->values(),
+                'kl_os' => $trendRows
+                    ->map(fn ($r) => (float) $r->kl_os)
+                    ->values(),
+                'd_os' => $trendRows
+                    ->map(fn ($r) => (float) $r->d_os)
+                    ->values(),
+                'm_os' => $trendRows
+                    ->map(fn ($r) => (float) $r->m_os)
+                    ->values(),
             ],
 
             'trendFt' => [
-                'ft0_os' => $trendRows->map(fn ($r) => (float) $r->ft0_os)->values(),
-                'ft1_os' => $trendRows->map(fn ($r) => (float) $r->ft1_os)->values(),
-                'ft2_os' => $trendRows->map(fn ($r) => (float) $r->ft2_os)->values(),
-                'ft3_os' => $trendRows->map(fn ($r) => (float) $r->ft3_os)->values(),
+                'ft0_os' => $trendRows
+                    ->map(fn ($r) => (float) $r->ft0_os)
+                    ->values(),
+                'ft1_os' => $trendRows
+                    ->map(fn ($r) => (float) $r->ft1_os)
+                    ->values(),
+                'ft2_os' => $trendRows
+                    ->map(fn ($r) => (float) $r->ft2_os)
+                    ->values(),
+                'ft3_os' => $trendRows
+                    ->map(fn ($r) => (float) $r->ft3_os)
+                    ->values(),
             ],
 
             'portfolioComposition' => [
@@ -143,6 +224,7 @@ class DekonDashboardController extends Controller
 
         if ($prevRow) {
             $prevTotalOs = (float) ($prevRow->total_os ?? 0);
+
             if ($prevTotalOs > 0) {
                 $deltaOsPct = (($totalOs - $prevTotalOs) / $prevTotalOs) * 100;
                 $insights[] = [
@@ -153,6 +235,7 @@ class DekonDashboardController extends Controller
 
             $prevNplPct = (float) ($prevRow->npl_pct ?? 0);
             $deltaNpl = $nplPct - $prevNplPct;
+
             $insights[] = [
                 'type' => $deltaNpl <= 0 ? 'positive' : 'danger',
                 'text' => 'NPL bergerak ' . ($deltaNpl > 0 ? 'naik' : 'turun') . ' ' . number_format(abs($deltaNpl), 2, ',', '.') . ' p.p dibanding bulan lalu.',

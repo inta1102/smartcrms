@@ -60,6 +60,7 @@
 @endphp
 
 <div class="space-y-5 sm:space-y-6">
+    {{-- Header --}}
     @include('dashboard.dekom.partials._header', [
         'safeRow' => $safeRow,
         'period' => $period,
@@ -77,6 +78,8 @@
             Data Dashboard Dekom belum tersedia untuk mode/periode yang dipilih.
         </div>
     @else
+
+        {{-- 1. Kartu ringkasan utama --}}
         @include('dashboard.dekom.partials._summary_cards', [
             'safeRow' => $safeRow,
             'fmtMoney' => $fmtMoney,
@@ -86,8 +89,10 @@
             'achOsPct' => $achOsPct,
             'momGrowthPct' => $momGrowthPct,
             'yoyGrowthPct' => $yoyGrowthPct,
+            'creditCondition' => $creditCondition ?? [],
         ])
 
+        {{-- 2. Insight eksekutif --}}
         @include('dashboard.dekom.partials._risk_radar', [
             'riskRadar' => $riskRadar ?? [],
         ])
@@ -95,10 +100,8 @@
         @include('dashboard.dekom.partials._executive_narrative', [
             'executiveNarrative' => $executiveNarrative ?? '',
         ])
-        <!-- @include('dashboard.dekom.partials._insights', [
-            'insights' => $insights ?? [],
-        ]) -->
 
+        {{-- 3. Grafik utama --}}
         @include('dashboard.dekom.partials._charts_main')
 
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
@@ -108,14 +111,27 @@
 
         @include('dashboard.dekom.partials._charts_secondary')
 
-        @include('dashboard.dekom.partials._credit_recap', [
+        {{-- 4. Rekap tabel analitik --}}
+        @include('dashboard.dekom.partials._credit_condition')
+
+        {{-- 5. Pergerakan kredit --}}
+        @include('dashboard.dekom.partials._credit_movements', [
+            'movementSections' => $movementSections ?? [],
+        ])
+
+        @include('dashboard.dekom.partials._credit_waterfall')
+
+        {{-- 6. Rekap ringkas bawah --}}
+        <!-- @include('dashboard.dekom.partials._credit_recap', [
             'safeRow' => $safeRow,
             'fmtMoney' => $fmtMoney,
             'fmtPct' => $fmtPct,
             'periodLabel' => $periodLabel,
-        ])
+        ]) -->
     @endif
 </div>
 @endsection
 
-@include('dashboard.dekom.partials._scripts')
+@push('scripts')
+    @include('dashboard.dekom.partials._scripts')
+@endpush

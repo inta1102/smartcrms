@@ -16,24 +16,27 @@ class TlfeOsDailyDashboardController extends Controller
         $me = auth()->user();
         abort_unless($me, 403);
 
-        /*
-         * ============================================================
-         * 0) RESOLVE SCOPE TLFE -> FE STAFF
-         * ============================================================
-         */
-        $todayRef = now()->startOfDay();
-        $scopeMembers = $this->resolveTlfeScopeMembers($me, $todayRef);
+        $role = strtoupper(trim((string) ($me->roleValue() ?? $me->level ?? '')));
+        abort_unless(in_array($role, ['TLFE', 'KSFE'], true), 403, 'Role tidak berhak mengakses dashboard ini.');
 
-        \Log::info('TLFE scope debug', [
+        /*
+        * ============================================================
+        * 0) RESOLVE SCOPE LEADER -> FE STAFF
+        * ============================================================
+        */
+        $todayRef = now()->startOfDay();
+        $scopeMembers = $this->resolveFeScopeMembersForLeader($me, $todayRef);
+
+        \Log::info('FE leader scope debug', [
             'leader_id' => $me->id,
             'leader_name' => $me->name,
+            'leader_role' => $role,
             'leader_ao' => $me->ao_code,
             'scope_count' => $scopeMembers->count(),
             'scope_members' => $scopeMembers->values()->all(),
         ]);
 
-        // fallback aman: kalau mapping org belum ada / belum terbaca, minimal pakai diri sendiri bila punya ao_code
-        abort_if($scopeMembers->isEmpty(), 403, 'Scope FE untuk TLFE tidak ditemukan / mapping org_assignments kosong.');
+        abort_if($scopeMembers->isEmpty(), 403, 'Scope FE untuk leader ini tidak ditemukan / mapping org_assignments kosong.');
 
         $scopeAoCodes = $scopeMembers
             ->pluck('ao_code')
@@ -43,7 +46,7 @@ class TlfeOsDailyDashboardController extends Controller
             ->values()
             ->all();
 
-        abort_unless(!empty($scopeAoCodes), 403, 'AO code FE dalam scope TLFE tidak ditemukan.');
+        abort_unless(!empty($scopeAoCodes), 403, 'AO code FE dalam scope tidak ditemukan.');
 
         $scopeUserIds = $scopeMembers
             ->pluck('user_id')
@@ -54,10 +57,10 @@ class TlfeOsDailyDashboardController extends Controller
             ->all();
 
         /*
-         * ============================================================
-         * 1) FILTER PILIH FE / AO
-         * ============================================================
-         */
+        * ============================================================
+        * 1) FILTER PILIH FE / AO
+        * ============================================================
+        */
         $selectedAoCode = $this->normalizeAoCode($request->input('ao_code'));
         $selectedFeUserId = (int)$request->input('fe_user_id', 0);
 
@@ -88,7 +91,7 @@ class TlfeOsDailyDashboardController extends Controller
             $activeAoCodes = $scopeAoCodes;
             $selectedFeName = null;
             $scopeMode      = 'all';
-            $scopeLabel     = 'Scope TLFE';
+            $scopeLabel     = 'Scope ' . $role;
         }
 
         /*
@@ -1521,6 +1524,99 @@ class TlfeOsDailyDashboardController extends Controller
             'selectedFeUserId'=> $selectedFeUserId,
             'selectedFeName'  => $selectedFeName,
         ]);
+    }
+
+    private function resolveFeScopeMembersForLeader($leader, Carbon $todayRef): \Illuminate\Support\Collection
+    {
+        $leaderId = (int) ($leader->id ?? 0);
+        $leaderRole = strtoupper(trim((string) ($leader->roleValue() ?? $leader->level ?? '')));
+
+        if ($leaderId <= 0) {
+            return collect();
+        }
+
+        // =========================
+        // TLFE -> FE langsung
+        // =========================
+        if ($leaderRole === 'TLFE') {
+            return DB::table('org_assignments as oa')
+                ->join('users as u', 'u.id', '=', 'oa.user_id')
+                ->selectRaw("
+                    u.id as user_id,
+                    u.name,
+                    LPAD(TRIM(u.ao_code),6,'0') as ao_code,
+                    UPPER(TRIM(COALESCE(u.level,''))) as level
+                ")
+                ->where('oa.leader_id', $leaderId)
+                ->whereRaw("UPPER(TRIM(COALESCE(u.level,''))) = 'FE'")
+                ->whereNotNull('u.ao_code')
+                ->get()
+                ->map(function ($row) {
+                    return [
+                        'user_id' => (int) $row->user_id,
+                        'name'    => (string) $row->name,
+                        'ao_code' => (string) $row->ao_code,
+                        'level'   => (string) $row->level,
+                    ];
+                });
+        }
+
+        // =========================
+        // KSFE -> FE langsung + FE di bawah TLFE
+        // =========================
+        if ($leaderRole === 'KSFE') {
+            $tlfeIds = DB::table('org_assignments as oa')
+                ->join('users as u', 'u.id', '=', 'oa.user_id')
+                ->where('oa.leader_id', $leaderId)
+                ->whereRaw("UPPER(TRIM(COALESCE(u.level,''))) = 'TLFE'")
+                ->pluck('u.id')
+                ->map(fn ($v) => (int) $v)
+                ->values();
+
+            $directFe = DB::table('org_assignments as oa')
+                ->join('users as u', 'u.id', '=', 'oa.user_id')
+                ->selectRaw("
+                    u.id as user_id,
+                    u.name,
+                    LPAD(TRIM(u.ao_code),6,'0') as ao_code,
+                    UPPER(TRIM(COALESCE(u.level,''))) as level
+                ")
+                ->where('oa.leader_id', $leaderId)
+                ->whereRaw("UPPER(TRIM(COALESCE(u.level,''))) = 'FE'")
+                ->whereNotNull('u.ao_code')
+                ->get();
+
+            $feUnderTlfe = collect();
+            if ($tlfeIds->isNotEmpty()) {
+                $feUnderTlfe = DB::table('org_assignments as oa')
+                    ->join('users as u', 'u.id', '=', 'oa.user_id')
+                    ->selectRaw("
+                        u.id as user_id,
+                        u.name,
+                        LPAD(TRIM(u.ao_code),6,'0') as ao_code,
+                        UPPER(TRIM(COALESCE(u.level,''))) as level
+                    ")
+                    ->whereIn('oa.leader_id', $tlfeIds->all())
+                    ->whereRaw("UPPER(TRIM(COALESCE(u.level,''))) = 'FE'")
+                    ->whereNotNull('u.ao_code')
+                    ->get();
+            }
+
+            return $directFe
+                ->concat($feUnderTlfe)
+                ->map(function ($row) {
+                    return [
+                        'user_id' => (int) $row->user_id,
+                        'name'    => (string) $row->name,
+                        'ao_code' => (string) $row->ao_code,
+                        'level'   => (string) $row->level,
+                    ];
+                })
+                ->unique('user_id')
+                ->values();
+        }
+
+        return collect();
     }
 
     private function subLastVisitMeta(array $scopeUserIds)

@@ -44,26 +44,24 @@
 </div>
 
 <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
-    <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm overflow-hidden">
-        <div class="text-[11px] font-bold uppercase tracking-wide text-slate-500">Realisasi MTD</div>
-        <div class="mt-2 text-lg sm:text-xl font-bold leading-tight tracking-tight text-slate-900 break-words">
-            {{ $fmtMoneyShort($safeRow->realisasi_mtd) }}
-        </div>
-        <div class="mt-2 text-xs text-slate-500 truncate" title="{{ $fmtMoney($safeRow->realisasi_mtd) }}">
-            {{ $fmtMoney($safeRow->realisasi_mtd) }}
-        </div>
-        <div class="mt-1 text-sm text-slate-500">{{ $periodLabel }}</div>
-    </div>
-
+    @php
+        $restrOsCard = (float) data_get($creditCondition ?? [], 'totals.restruktur_os', 0);
+        $restrNoaCard = (int) data_get($creditCondition ?? [], 'totals.restruktur_noa', 0);
+    @endphp
     <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm overflow-hidden">
         <div class="text-[11px] font-bold uppercase tracking-wide text-slate-500">Restrukturisasi</div>
+
         <div class="mt-2 text-lg sm:text-xl font-bold leading-tight tracking-tight text-slate-900 break-words">
-            {{ $fmtMoneyShort($safeRow->restr_os) }}
+            {{ $fmtMoneyShort($restrOsCard) }}
         </div>
-        <div class="mt-2 text-xs text-slate-500 truncate" title="{{ $fmtMoney($safeRow->restr_os) }}">
-            {{ $fmtMoney($safeRow->restr_os) }}
+
+        <div class="mt-2 text-xs text-slate-500 truncate" title="{{ $fmtMoney($restrOsCard) }}">
+            {{ $fmtMoney($restrOsCard) }}
         </div>
-        <div class="mt-1 text-sm text-slate-500">NOA: {{ number_format((int) $safeRow->restr_noa, 0, ',', '.') }}</div>
+
+        <div class="mt-1 text-sm text-slate-500">
+            NOA: {{ number_format($restrNoaCard, 0, ',', '.') }}
+        </div>
     </div>
 
     <div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm overflow-hidden">

@@ -95,7 +95,7 @@ class AuthController extends Controller
         }
 
         // ✅ TLRO landing ke dashboard TL RO
-        if (method_exists($user, 'hasRole') && $user->hasRole('TLRO')) {
+        if (method_exists($user, 'hasRole') && $user->hasRole('TLRO','KSLR')) {
             return 'kpi.tl.os-daily';
         }
 
@@ -105,7 +105,7 @@ class AuthController extends Controller
         }
 
         // ✅ TLFE landing ke dashboard TL FE
-        if (method_exists($user, 'hasRole') && $user->hasRole('TLFE')) {
+        if (method_exists($user, 'hasRole') && $user->hasRole('TLFE','KSFE')) {
             return 'kpi.tlfe.os-daily';
         }
 

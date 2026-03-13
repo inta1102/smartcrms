@@ -309,11 +309,11 @@
         $dashboardRouteName = 'legal-actions.index';
     } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['RO'])) {
         $dashboardRouteName = 'kpi.ro.os-daily';
-    } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['TLRO'])) {
+    } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['TLRO','KSLR'])) {
         $dashboardRouteName = 'kpi.tl.os-daily';
     } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['FE'])) {
         $dashboardRouteName = 'kpi.fe.os-daily';
-    } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['TLFE'])) {
+    } elseif ($u && method_exists($u, 'hasAnyRole') && $u->hasAnyRole(['TLFE','KSFE'])) {
         $dashboardRouteName = 'kpi.tlfe.os-daily';
     }
 
@@ -329,6 +329,11 @@
         ? ($roleEnum === UserRole::TLRO)
         : ($roleValue === 'TLRO');
 
+    $isKSLR = ($roleEnum instanceof UserRole)
+        ? ($roleEnum === UserRole::KSLR)
+        : ($roleValue === 'KSLR');
+
+
     $canRkh = ($u && ($isRO || $isTLRO));
 
      // ====== Role checks utk RKH FE (enum-first, fallback string) ======
@@ -340,7 +345,11 @@
         ? ($roleEnum === UserRole::TLFE)
         : ($roleValue === 'TLFE');
 
-    $canRkhFE = ($u && ($isFE || $isTLFE));
+    $isKSFE = ($roleEnum instanceof UserRole)
+        ? ($roleEnum === UserRole::KSFE)
+        : ($roleValue === 'KSFE');
+
+    $canRkhFE = ($u && ($isFE || $isTLFE || $isKSFE));
 
     // active checker
     $isRkhActive = $is('rkh.*') || $is('lkh.*') || $is('lkh.recap.*');

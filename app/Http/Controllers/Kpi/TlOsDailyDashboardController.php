@@ -9,6 +9,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Collection;
 
 class TlOsDailyDashboardController extends Controller
 {
@@ -16,6 +17,9 @@ class TlOsDailyDashboardController extends Controller
     {
         $me = auth()->user();
         abort_unless($me, 403);
+
+        $role = strtoupper(trim((string) ($me->roleValue() ?? $me->level ?? '')));
+        abort_unless(in_array($role, ['TLRO', 'KSLR'], true), 403, 'Role tidak berhak mengakses dashboard ini.');
 
         /**
          * =========================================================
@@ -57,21 +61,11 @@ class TlOsDailyDashboardController extends Controller
          * 2) STAFF SCOPE (bawahan TL)
          * =========================================================
          */
-        $staff = $this->subordinateStaffForLeader((int) $me->id);
+        $staff = $this->resolveRoScopeMembersForLeader($me, now()->startOfDay());
 
         // fallback: kalau tidak ada bawahan, pakai TL sendiri jika punya ao_code
         if ($staff->isEmpty()) {
-            $selfAo = str_pad(trim((string) ($me->ao_code ?? '')), 6, '0', STR_PAD_LEFT);
-            if ($selfAo !== '' && $selfAo !== '000000') {
-                $staff = collect([(object) [
-                    'id'      => (int) $me->id,
-                    'name'    => (string) ($me->name ?? 'Saya'),
-                    'level' => method_exists($me, 'roleValue')
-                        ? (string) $me->roleValue()
-                        : (($me->level instanceof \App\Enums\UserRole) ? $me->level->value : (string)($me->level ?? '')),
-                    'ao_code' => $selfAo,
-                ]]);
-            }
+            abort(403, 'Scope RO untuk leader ini tidak ditemukan / mapping org_assignments kosong.');
         }
 
         // ===== AO filter (optional) =====
@@ -1779,6 +1773,140 @@ private function buildVisitCoverageByRo(array $scopeAoCodes, string $from, strin
             })
             ->filter(fn ($u) => $u->ao_code !== '000000')
             ->values();
+    }
+
+    private function resolveRoScopeMembersForLeader($leader, Carbon $asOf): Collection
+    {
+        $asOfDate = $asOf->toDateString();
+        $leaderId = (int) ($leader->id ?? 0);
+        $leaderRole = strtoupper(trim((string) ($leader->roleValue() ?? $leader->level ?? '')));
+
+        if ($leaderId <= 0) {
+            return collect();
+        }
+
+        $baseMemberMap = function ($rows) {
+            return collect($rows)
+                ->map(function ($r) {
+                    return (object) [
+                        'id'      => (int) ($r->user_id ?? 0),
+                        'name'    => (string) ($r->name ?? ''),
+                        'level'   => (string) ($r->level ?? ''),
+                        'ao_code' => str_pad(trim((string) ($r->ao_code ?? '')), 6, '0', STR_PAD_LEFT),
+                    ];
+                })
+                ->filter(fn ($r) => filled($r->ao_code) && $r->ao_code !== '000000')
+                ->unique('ao_code')
+                ->values();
+        };
+
+        $applyActiveOrgScope = function ($q) use ($asOfDate) {
+            return $q
+                ->where('oa.is_active', 1)
+                ->whereDate('oa.effective_from', '<=', $asOfDate)
+                ->where(function ($w) use ($asOfDate) {
+                    $w->whereNull('oa.effective_to')
+                    ->orWhereDate('oa.effective_to', '>=', $asOfDate);
+                });
+        };
+
+        // =========================================================
+        // TLRO -> RO direct
+        // =========================================================
+        if ($leaderRole === 'TLRO') {
+            $rows = $applyActiveOrgScope(
+                DB::table('org_assignments as oa')
+                    ->join('users as u', 'u.id', '=', 'oa.user_id')
+                    ->selectRaw("
+                        u.id as user_id,
+                        u.name,
+                        UPPER(TRIM(COALESCE(u.level,''))) as level,
+                        LPAD(TRIM(u.ao_code),6,'0') as ao_code
+                    ")
+                    ->where('oa.leader_id', $leaderId)
+                    ->whereNotNull('u.ao_code')
+                    ->whereRaw("TRIM(COALESCE(u.ao_code,'')) <> ''")
+                    ->whereRaw("UPPER(TRIM(COALESCE(u.level,''))) = 'RO'")
+            )
+            ->orderBy('u.name')
+            ->get();
+
+            return $baseMemberMap($rows);
+        }
+
+        // =========================================================
+        // KSLR -> TLRO -> RO (+ RO direct jika ada)
+        // =========================================================
+        if ($leaderRole === 'KSLR') {
+            // TLRO direct di bawah KSLR
+            $tlroRows = $applyActiveOrgScope(
+                DB::table('org_assignments as oa')
+                    ->join('users as u', 'u.id', '=', 'oa.user_id')
+                    ->selectRaw("
+                        u.id as user_id,
+                        u.name,
+                        UPPER(TRIM(COALESCE(u.level,''))) as level,
+                        LPAD(TRIM(u.ao_code),6,'0') as ao_code
+                    ")
+                    ->where('oa.leader_id', $leaderId)
+                    ->whereRaw("UPPER(TRIM(COALESCE(u.level,''))) = 'TLRO'")
+            )
+            ->orderBy('u.name')
+            ->get();
+
+            $tlroIds = collect($tlroRows)
+                ->pluck('user_id')
+                ->map(fn ($v) => (int) $v)
+                ->filter(fn ($v) => $v > 0)
+                ->unique()
+                ->values()
+                ->all();
+
+            // RO direct ke KSLR (jika ada)
+            $directRoRows = $applyActiveOrgScope(
+                DB::table('org_assignments as oa')
+                    ->join('users as u', 'u.id', '=', 'oa.user_id')
+                    ->selectRaw("
+                        u.id as user_id,
+                        u.name,
+                        UPPER(TRIM(COALESCE(u.level,''))) as level,
+                        LPAD(TRIM(u.ao_code),6,'0') as ao_code
+                    ")
+                    ->where('oa.leader_id', $leaderId)
+                    ->whereNotNull('u.ao_code')
+                    ->whereRaw("TRIM(COALESCE(u.ao_code,'')) <> ''")
+                    ->whereRaw("UPPER(TRIM(COALESCE(u.level,''))) = 'RO'")
+            )
+            ->orderBy('u.name')
+            ->get();
+
+            // RO di bawah TLRO
+            $roUnderTlroRows = collect();
+            if (!empty($tlroIds)) {
+                $roUnderTlroRows = $applyActiveOrgScope(
+                    DB::table('org_assignments as oa')
+                        ->join('users as u', 'u.id', '=', 'oa.user_id')
+                        ->selectRaw("
+                            u.id as user_id,
+                            u.name,
+                            UPPER(TRIM(COALESCE(u.level,''))) as level,
+                            LPAD(TRIM(u.ao_code),6,'0') as ao_code
+                        ")
+                        ->whereIn('oa.leader_id', $tlroIds)
+                        ->whereNotNull('u.ao_code')
+                        ->whereRaw("TRIM(COALESCE(u.ao_code,'')) <> ''")
+                        ->whereRaw("UPPER(TRIM(COALESCE(u.level,''))) = 'RO'")
+                )
+                ->orderBy('u.name')
+                ->get();
+            }
+
+            return $baseMemberMap(
+                collect($directRoRows)->concat($roUnderTlroRows)
+            );
+        }
+
+        return collect();
     }
 
     /**
